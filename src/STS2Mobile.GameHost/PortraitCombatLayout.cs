@@ -118,6 +118,9 @@ internal sealed class PortraitCombatLayout
     private readonly HashSet<ulong> _alignedVfx = new();
     private int _vfxPasses;
 
+    // Rooms whose portrait pass threw: they are left as last placed and skipped, so a layout bug cannot take the app down.
+    private readonly HashSet<ulong> _failedRooms = new();
+
     public void OnProcessFrame(SceneTree tree, float capHeight)
     {
         if (!SafeAreaCanvas.IsPortrait || !GodotObject.IsInstanceValid(tree.Root))
@@ -127,16 +130,46 @@ internal sealed class PortraitCombatLayout
         Node? activeRoom = refl.GetActiveCombatRoom();
         if (activeRoom is not Control roomControl || !GodotObject.IsInstanceValid(roomControl) || !roomControl.IsInsideTree())
             return;
+        if (_failedRooms.Contains(roomControl.GetInstanceId()))
+            return;
 
         float canvasHeight = Math.Max(tree.Root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
-        ApplyCombatRoomPortrait(roomControl, refl, capHeight, canvasHeight);
-        FitCombatFtueModal(tree.Root, portrait: true);
+        try
+        {
+            ApplyCombatRoomPortrait(roomControl, refl, capHeight, canvasHeight);
+            FitCombatFtueModal(tree.Root, portrait: true);
+        }
+        catch (Exception error)
+        {
+            FailRoom(roomControl, error);
+        }
     }
 
     public void ApplyRoomImmediate(Control roomControl, float capHeight, float canvasHeight)
     {
+        if (_failedRooms.Contains(roomControl.GetInstanceId()))
+            return;
         CombatReflection refl = EnsureReflection();
-        ApplyCombatRoomPortrait(roomControl, refl, capHeight, canvasHeight);
+        try
+        {
+            ApplyCombatRoomPortrait(roomControl, refl, capHeight, canvasHeight);
+        }
+        catch (Exception error)
+        {
+            FailRoom(roomControl, error);
+        }
+    }
+
+    /// <summary>
+    /// A layout exception leaves the room as last placed and skips it from then on; the first failure per room is logged
+    /// with its stack. This keeps a portrait bug from crashing the whole app.
+    /// </summary>
+    private void FailRoom(Control room, Exception error)
+    {
+        ulong id = room.GetInstanceId();
+        if (!_failedRooms.Add(id))
+            return;
+        GD.PrintErr($"Portrait combat layout failed; the room is left as last placed and will not be laid out again: {error}");
     }
 
     public void RestoreLandscape(Node root)
@@ -169,6 +202,7 @@ internal sealed class PortraitCombatLayout
                 roomState.Restore(room, refl);
         }
         _rooms.Clear();
+        _failedRooms.Clear();
     }
 
     public void PruneDead()
@@ -177,6 +211,10 @@ internal sealed class PortraitCombatLayout
         foreach (ulong id in _rooms.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _rooms.Remove(id);
+        dead.Clear();
+        foreach (ulong id in _failedRooms)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _failedRooms.Remove(id);
 
         dead.Clear();
         foreach (ulong id in _creatures.Keys)
@@ -1702,6 +1740,53 @@ internal sealed class PortraitCombatLayout
             plan.RowScale = rowScale > 0f ? Math.Max(rowScale, PortraitCombatMath.MinBodyScale) : 0.82f;
             plan.RowScaleComputed = true;
 
+            // A1: one shared body scale for the encounter (plus the authored-size floor), then TouchSpireUI's per-encounter
+            // multiplier. It is still capped by the tightest cell so bodies cannot leave their cells; the boss keeps its own
+            // frame (and the Ovicopter its back rank).
+            float target = plan.BodyTargetScale > 0f
+                ? plan.BodyTargetScale
+                : PortraitCombatMath.MaxBodyScale;
+            float tightestFit = 0f;
+            for (int i = 0; i < plan.Capacity && i < plan.EnemySlots.Length; i++)
+            {
+                if (i == plan.BossSlot)
+                    continue;
+                float width, height;
+                if (plan.Staggered && i < plan.StaggerWidths.Length)
+                {
+                    width = plan.StaggerWidths[i];
+                    height = plan.StaggerHeights[i];
+                }
+                else if (plan.Segmented && plan.ChainComputed)
+                {
+                    width = plan.ChainMaxW;
+                    height = 900f;
+                }
+                else if (i < plan.Crowd.Widths.Length)
+                {
+                    int cell = plan.CrowdMap.Length > i ? plan.CrowdMap[i] : i;
+                    if (cell < 0 || cell >= plan.Crowd.Widths.Length)
+                        continue;
+                    width = plan.Crowd.Widths[cell];
+                    height = plan.Crowd.Heights[cell];
+                }
+                else
+                {
+                    continue;
+                }
+                foreach (Control enemy in currentEnemies)
+                {
+                    if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex) || slotIndex != i)
+                        continue;
+                    float fit = CellFit(enemy, width, height, refl, bands);
+                    tightestFit = tightestFit <= 0f ? fit : Math.Min(tightestFit, fit);
+                    break;
+                }
+            }
+            plan.SharedBodyScale = tightestFit > 0f
+                ? Math.Clamp(Math.Min(target, tightestFit), PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale)
+                : Math.Clamp(target, PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+
             if (!bands.Compact && !plan.BackBoss && plan.Capacity is 4 or 5 && plan.CrowdBoss < 0 &&
                 plan.HorizonY > 0f && bands.FrontFeetY - plan.HorizonY >= 420f)
             {
@@ -1772,6 +1857,49 @@ internal sealed class PortraitCombatLayout
             }
         }
 
+        // The shared body scale is only meaningful once the encounter's peers exist (the Ovicopter freezes its plan with
+        // only the boss). Lock it on the first frame with peers, as the tightest of their cell fits, so every peer uses one
+        // value rather than each one's own (slightly different) fit.
+        if (plan.CrowdEnabled && plan.CrowdComputed && !plan.SharedLocked)
+        {
+            float tight = 0f;
+            int peers = 0;
+            foreach (Control enemy in currentEnemies)
+            {
+                if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex) || slotIndex >= plan.Capacity)
+                    continue;
+                if (slotIndex == plan.CrowdBoss)
+                    continue;
+                int cell = plan.CrowdMap.Length > slotIndex ? plan.CrowdMap[slotIndex] : slotIndex;
+                if (cell < 0 || cell >= plan.Crowd.Widths.Length)
+                    continue;
+                float fit = CrowdCellFit(enemy, plan.Crowd, cell, refl, bands);
+                tight = tight <= 0f ? fit : Math.Min(tight, fit);
+                peers++;
+            }
+            if (peers > 0)
+            {
+                plan.SharedBodyScale = Math.Clamp(Math.Min(plan.BodyTargetScale, tight),
+                    PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+                plan.SharedLocked = true;
+            }
+        }
+
+        if (!plan.StageLogged)
+        {
+            var cellWidths = new List<string>();
+            if (plan.Crowd.Widths != null)
+            {
+                for (int i = 0; i < plan.Crowd.Widths.Length && i < 8; i++)
+                    cellWidths.Add(plan.Crowd.Widths[i].ToString("F0"));
+            }
+            GD.Print($"Portrait stage: capacity={plan.Capacity} dominant={plan.Dominant} crowd={plan.CrowdEnabled}/{plan.CrowdComputed} " +
+                     $"backBoss={plan.BackBoss} stagger={plan.Staggered} chain={plan.Segmented} target={plan.BodyTargetScale:F3} " +
+                     $"shared={plan.SharedBodyScale:F3} locked={plan.SharedLocked} left={plan.CrowdLeft:F0} " +
+                     $"cells=[{string.Join(",", cellWidths)}]");
+            plan.StageLogged = true;
+        }
+
         foreach (Control enemy in currentEnemies)
         {
             if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex))
@@ -1799,6 +1927,12 @@ internal sealed class PortraitCombatLayout
                     maxBar = 300f;
                     minLeft = StageSideMargin;
                     maxRight = SafeAreaCanvas.PortraitWidth - StageSideMargin;
+                    Vector2 bossNative = refl.GetCreatureRawBoundsSize(enemy);
+                    forceScale = Math.Min(plan.BodyTargetScale,
+                        FittedCreatureScale(enemy, refl, slot, maxW, maxH, bands, isAlly: false,
+                            segmented: plan.Segmented, peerScale: 1f));
+                    if (bossNative.Y < 1f)
+                        forceScale = Math.Min(forceScale, plan.BodyTargetScale);
                 }
                 else
                 {
@@ -1814,7 +1948,15 @@ internal sealed class PortraitCombatLayout
                     if (!boss)
                     {
                         float cellFit = CrowdCellFit(enemy, plan.Crowd, cell, refl, bands);
-                        forceScale = plan.RowScale > 0f ? Math.Min(plan.RowScale, cellFit) : cellFit;
+                        float shared = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
+                        // One value for every peer: the shared scale already came from the tightest cell; a later body
+                        // larger than that cell still fits itself in.
+                        forceScale = cellFit >= shared - 0.02f ? shared : Math.Min(shared, cellFit);
+                    }
+                    else
+                    {
+                        float cellFit = CrowdCellFit(enemy, plan.Crowd, cell, refl, bands);
+                        forceScale = Math.Min(plan.BodyTargetScale, cellFit);
                     }
                 }
             }
@@ -1825,7 +1967,8 @@ internal sealed class PortraitCombatLayout
                 maxH = plan.StaggerHeights[slotIndex];
                 maxBar = plan.StaggerBars[slotIndex];
                 float fit = CellFit(enemy, maxW, maxH, refl, bands);
-                forceScale = Math.Min(plan.StaggerScales[slotIndex], fit);
+                float shared = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
+                forceScale = Math.Min(shared, fit);
                 minLeft = plan.CrowdLeft;
                 maxRight = SafeAreaCanvas.PortraitWidth - 8f;
             }
@@ -1838,12 +1981,26 @@ internal sealed class PortraitCombatLayout
                 maxBar = Math.Max(MinHealthBarWidth * 0.6f, plan.ChainLane - 14f);
                 minLeft = plan.ChainLeft;
                 maxRight = 1066f;
+                float chainFit = CellFit(enemy, maxW, maxH, refl, bands);
+                float shared = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
+                forceScale = Math.Min(shared, chainFit);
+            }
+            if (!overflow && forceScale <= 0.01f && plan.BodyTargetScale > 0f && !plan.EmbeddedCrab)
+            {
+                // One shared authored-size scale for the encounter (TouchSpireUI's rule), still bounded by the frame.
+                forceScale = Math.Min(plan.BodyTargetScale, CellFit(enemy, maxW, maxH, refl, bands));
             }
             if (overflow)
             {
                 maxW = 225f;
                 maxH = 300f;
                 maxBar = Math.Max(MinHealthBarWidth, 150f);
+            }
+            if (plan.PlacementLogged.Add(enemy.GetInstanceId()))
+            {
+                Vector2 footprint = refl.GetCreatureFootprintSize(enemy);
+                GD.Print($"Portrait stage place {refl.GetMonsterTypeName(enemy)} slot={slotIndex} x={slot.CanvasX:F0} " +
+                         $"forced={(forceScale > 0f ? forceScale : -1f):F3} max=({maxW:F0},{maxH:F0}) footprint={footprint.X:F0}x{footprint.Y:F0}");
             }
             ApplyCreatureSlot(enemy, refl, slot, centerOrigin, maxW, maxH, maxBar, bands, isAlly: false,
                 peerScale: plan.PeerScale, segmented: plan.Segmented, minLeft: minLeft, maxRight: maxRight,
@@ -1915,7 +2072,7 @@ internal sealed class PortraitCombatLayout
         if (!isAlly)
             maxH = Math.Min(maxH, EnemyHeightBudget(slot, bands, maxH));
 
-        Vector2 native = segmented ? refl.GetCreatureFootprintSize(creature) : refl.GetCreatureRawBoundsSize(creature);
+        Vector2 native = refl.GetCreatureFootprintSize(creature);
         return PortraitCombatMath.FitCreatureScale(slot.BaseScale, peerScale, native.X, native.Y, maxW, maxH);
     }
 
@@ -2553,6 +2710,12 @@ internal sealed class PortraitCombatLayout
 
         AssignCreatureSlots(plan, refl, enemies);
         plan.BossSlot = LargestEnemySlot(plan, refl, enemies);
+        var targetTypes = new List<string>(enemies.Count);
+        foreach (Control enemy in enemies)
+            targetTypes.Add(refl.GetMonsterTypeName(enemy));
+        plan.BodyTargetScale = Math.Clamp(
+            PortraitCombatMath.PreferredSharedBodyScale * PortraitCombatMath.EncounterBodyMultiplier(string.Join("|", targetTypes)),
+            PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
         int oviSlot = plan.SlotNames.IndexOf("ovicopter");
         plan.OviFight = oviSlot >= 0;
         if (!plan.OviFight)
@@ -2783,7 +2946,7 @@ internal sealed class PortraitCombatLayout
         bool segmented)
     {
         float height = isAlly ? maxH : EnemyHeightBudget(slot, bands, maxH);
-        Vector2 native = segmented ? refl.GetCreatureFootprintSize(creature) : refl.GetCreatureRawBoundsSize(creature);
+        Vector2 native = refl.GetCreatureFootprintSize(creature);
         fits[count++] = new PortraitCombatMath.PortraitFrameFit(native.X, native.Y, maxW, height, slot.BaseScale);
     }
 
@@ -2824,13 +2987,17 @@ internal sealed class PortraitCombatLayout
     {
         if (cell < 0 || cell >= cells.Widths.Length)
             return 0.82f;
-        Vector2 native = refl.GetCreatureRawBoundsSize(creature);
-        float fit = 0.82f;
+        // Fit the drawn footprint (hit box merged with the visual bounds): the hit box can be wider than the art's
+        // bounds (Exoskeleton arms), and using only the bounds let bodies overhang their cells.
+        Vector2 native = refl.GetCreatureFootprintSize(creature);
+        float fit = PortraitCombatMath.MaxBodyScale;
+        float heightBudget = Math.Min(cells.Heights[cell], bands.FrontFeetY - bands.StageTopY) -
+                             (bands.Compact ? 0f : IntentBandHeight);
         if (native.X > 1f)
             fit = Math.Min(fit, cells.Widths[cell] / native.X);
         if (native.Y > 1f)
-            fit = Math.Min(fit, Math.Min(cells.Heights[cell], bands.FrontFeetY - bands.StageTopY) / native.Y);
-        return Math.Clamp(fit, PortraitCombatMath.MinBodyScale, 0.94f);
+            fit = Math.Min(fit, Math.Max(60f, heightBudget) / native.Y);
+        return Math.Clamp(fit, PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
     }
 
     private static float CellFit(
@@ -2840,13 +3007,15 @@ internal sealed class PortraitCombatLayout
         CombatReflection refl,
         PortraitCombatBands bands)
     {
-        Vector2 native = refl.GetCreatureRawBoundsSize(creature);
-        float fit = 0.94f;
+        Vector2 native = refl.GetCreatureFootprintSize(creature);
+        float fit = PortraitCombatMath.MaxBodyScale;
+        float heightBudget = Math.Min(height, bands.FrontFeetY - bands.StageTopY) -
+                             (bands.Compact ? 0f : IntentBandHeight);
         if (native.X > 1f)
             fit = Math.Min(fit, width / native.X);
         if (native.Y > 1f)
-            fit = Math.Min(fit, Math.Min(height, bands.FrontFeetY - bands.StageTopY) / native.Y);
-        return Math.Clamp(fit, PortraitCombatMath.MinBodyScale, 0.94f);
+            fit = Math.Min(fit, Math.Max(60f, heightBudget) / native.Y);
+        return Math.Clamp(fit, PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
     }
 
     /// <summary>The frame an enemy at a frozen slot may use: a dominant boss's upper frame, a summon's lane, or the group table.</summary>
@@ -3386,6 +3555,11 @@ internal sealed class PortraitCombatLayout
         public readonly Dictionary<ulong, PortraitCreatureSlot> CrabSlots = new();
         public readonly Dictionary<ulong, (float MinLeft, float MaxLeft)> CrabBounds = new();
         public float RowScale;
+        public float SharedBodyScale;
+        public bool SharedLocked;
+        public bool StageLogged;
+        public readonly HashSet<ulong> PlacementLogged = new();
+        public float BodyTargetScale;
         public bool RowScaleComputed;
         public TextureRect? Seam;
         public bool Provisional;

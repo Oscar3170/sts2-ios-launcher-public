@@ -42,6 +42,10 @@ internal sealed class PhoneTouchCards
     private const string HandHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder";
     private const int DraggedZIndex = 8;
 
+    /// <summary>Marks the inspect screen's upgrade box while our combat hold owns its portrait placement, so the overlay
+    /// layout leaves it alone instead of growing/repositioning it over the hand.</summary>
+    internal const string CombatInspectMeta = "phone_combat_inspect_tickbox";
+
     /// <summary>How many times a stationary hold opened the inspect screen since launch (for the proof runs): 0 in landscape.</summary>
     public static int InspectsOpened { get; private set; }
 
@@ -84,7 +88,14 @@ internal sealed class PhoneTouchCards
     private bool _aimStarted;
     private bool _aimLogged;
     private Control? _inspectShield;
+    private Control? _placedInspectScreen;
+    private Control? _placedUpgrade;
+    private Vector2 _placedUpgradePivot;
+    private Vector2 _placedUpgradeScale;
+    private float _placedUpgradeLeft, _placedUpgradeTop, _placedUpgradeRight, _placedUpgradeBottom;
     private Node.ProcessModeEnum _inspectShieldMode;
+    private bool _inspectShieldArmed;
+    private bool _inspectShieldApplied;
     private ulong _inspectShieldReleaseFrame = ulong.MaxValue;
     private int _renderErrors;
 
@@ -136,6 +147,9 @@ internal sealed class PhoneTouchCards
         try
         {
             if (_inspectShield != null && Engine.GetProcessFrames() > _inspectShieldReleaseFrame) RestoreInspectShield();
+            if (_placedInspectScreen != null &&
+                (!GodotObject.IsInstanceValid(_placedInspectScreen) || !_placedInspectScreen.IsVisibleInTree()))
+                RestoreInspectUpgrade();
             if (!SafeAreaCanvas.IsPortrait)
             {
                 if (_dragHolder != null || CardIsBeingDragged || _down || _pendingHolder != null || _inspectShield != null)
@@ -180,6 +194,13 @@ internal sealed class PhoneTouchCards
             ReleaseEverything();
             return;
         }
+        // A hold-opened inspector must not be dismissed by the release that ends the hold. The engine dispatches the
+        // emulated mouse release before the touch release, and both reach this signal before GUI/_Input dispatch, so
+        // arming the input shield here covers both without freezing the screen while the finger is down.
+        if (_inspectShieldArmed &&
+            (input is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: false } ||
+             input is InputEventScreenTouch { Pressed: false }))
+            ShieldInspectInput();
         if (input is InputEventScreenTouch touch && touch.Index == 0)
         {
             _fingerCanvas = ToCanvas(touch.Position);
@@ -257,10 +278,10 @@ internal sealed class PhoneTouchCards
             _pendingHolder = null;
             PressedHolder = null;
         }
-        // A hold-opened inspector was put in the shield when it opened. Keep it there for the rest of this frame: this
-        // touch's emulated mouse release has already been dispatched by the engine, and the touch release itself is still
-        // to come. The next frame re-enables the screen, so only this gesture's release is ignored.
-        if (_inspectShield != null) _inspectShieldReleaseFrame = Engine.GetProcessFrames();
+        // Keep the input shield (armed above for this release) through this frame's dispatch; the next frame re-enables
+        // the screen, so only this gesture's release is ignored.
+        if (_inspectShieldArmed || _inspectShieldApplied)
+            _inspectShieldReleaseFrame = Engine.GetProcessFrames();
     }
 
     /// <summary>Called each frame in portrait only.</summary>
@@ -658,6 +679,7 @@ internal sealed class PhoneTouchCards
     {
         EndDrag();
         ResetGesture();
+        RestoreInspectUpgrade();
         HandPickupGate.Disable();
         PhoneHoverTips.UnparkEndTurn();
     }
@@ -716,37 +738,107 @@ internal sealed class PhoneTouchCards
             InspectsOpened++;
             if (how == "hold")
             {
-                // A hold opens the screen while the finger is still down. The finger's release must not dismiss it, so the
-                // screen ignores input until the release has been dispatched (re-enabled on the next frame).
-                ShieldInspectRelease(r);
+                // Keep the native screen fully processing (its open tween draws the dim, card and arrows) and only shield
+                // its input for the later release.
+                ArmInspectShield(r);
             }
             GD.Print($"Phone touch cards: {how} opened card {index + 1} of {cards.Count} large.");
         }
     }
 
     /// <summary>
-    /// Makes the just-opened inspector ignore input for the rest of this gesture. Godot dispatches the emulated mouse
-    /// release of a touch before the touch release itself, and both happen after this frame's process-frame callbacks, so
-    /// a screen opened under the finger would otherwise receive a release it never saw press. A disabled process mode
-    /// takes the screen's nodes out of input picking (<c>Viewport</c> skips controls that cannot process); the screen's
-    /// tweens still run, so it opens normally. It is re-enabled after the release frame.
+    /// Remembers the inspector a hold opened and moves its native "View Upgrades" control clear of the card and hand. The
+    /// screen itself keeps processing so its open tween (dim, card, arrows) runs; only the release gets the input shield.
     /// </summary>
-    private void ShieldInspectRelease(Reflection r)
+    private void ArmInspectShield(Reflection r)
     {
         if (_inspectShield != null) RestoreInspectShield();
+        RestoreInspectUpgrade();
         if (r.InspectScreen() is not { } screen || !GodotObject.IsInstanceValid(screen)) return;
         _inspectShield = screen;
         _inspectShieldMode = screen.ProcessMode;
+        _inspectShieldArmed = true;
+        _inspectShieldApplied = false;
         _inspectShieldReleaseFrame = ulong.MaxValue;
+        PlaceInspectUpgrade(screen);
+    }
+
+    /// <summary>
+    /// Takes the screen out of input picking for exactly the release dispatch (a disabled process mode is skipped by the
+    /// viewport's GUI and _Input paths). It is re-enabled on the next frame.
+    /// </summary>
+    private void ShieldInspectInput()
+    {
+        if (!_inspectShieldArmed) return;
+        _inspectShieldArmed = false;
+        if (_inspectShield is not { } screen || !GodotObject.IsInstanceValid(screen)) return;
+        _inspectShieldMode = screen.ProcessMode;
         screen.ProcessMode = Node.ProcessModeEnum.Disabled;
+        _inspectShieldApplied = true;
+        _inspectShieldReleaseFrame = Engine.GetProcessFrames();
     }
 
     private void RestoreInspectShield()
     {
-        if (_inspectShield != null && GodotObject.IsInstanceValid(_inspectShield))
+        if (_inspectShieldApplied && _inspectShield != null && GodotObject.IsInstanceValid(_inspectShield))
             _inspectShield.ProcessMode = _inspectShieldMode;
         _inspectShield = null;
+        _inspectShieldArmed = false;
+        _inspectShieldApplied = false;
         _inspectShieldReleaseFrame = ulong.MaxValue;
+    }
+
+    /// <summary>
+    /// The native inspect screen's "View Upgrades" box sits below the centred card, which in portrait is over the hand's
+    /// upper row. Native keeps it visible for a card with an upgrade level; in portrait it is moved to the left of the
+    /// card, just above the hand-control rail, scaled to the free margin.
+    /// </summary>
+    private void PlaceInspectUpgrade(Control screen)
+    {
+        if (screen.GetNodeOrNull<Control>("%Upgrade") is not { } upgrade) return;
+        if (_placedInspectScreen != null) RestoreInspectUpgrade();
+        _placedInspectScreen = screen;
+        _placedUpgrade = upgrade;
+        upgrade.SetMeta(CombatInspectMeta, true);
+        _placedUpgradePivot = upgrade.PivotOffset;
+        _placedUpgradeScale = upgrade.Scale;
+        _placedUpgradeLeft = upgrade.OffsetLeft;
+        _placedUpgradeTop = upgrade.OffsetTop;
+        _placedUpgradeRight = upgrade.OffsetRight;
+        _placedUpgradeBottom = upgrade.OffsetBottom;
+        // The native box is 272 wide and sits under the centred card, which in portrait is over the hand. The card is
+        // 600 wide with 240 free on the left, so scale the box slightly and put it in that margin, level with the card's
+        // top and inside the stage band, clear of the card, the arrows, the rail and the hand.
+        float stageTop = screen.GetTree() is { } tree
+            ? PortraitLayout.ComputeCapHeight(tree.Root) + PortraitBands.RunContentTop
+            : 0f;
+        float cardTop = screen.Size.Y * 0.5f - PortraitCombatMath.CardDefaultHeight;
+        float top = MathF.Max(stageTop + 24f, cardTop + 24f);
+        const float width = 272f, height = 64f, scale = 0.85f;
+        upgrade.PivotOffset = Vector2.Zero;
+        upgrade.Scale = new Vector2(scale, scale);
+        float halfW = screen.Size.X * 0.5f, halfH = screen.Size.Y * 0.5f;
+        upgrade.OffsetLeft = 8f - halfW;
+        upgrade.OffsetRight = 8f - halfW + width;
+        upgrade.OffsetTop = top - halfH;
+        upgrade.OffsetBottom = top - halfH + height;
+    }
+
+    /// <summary>Puts the native upgrade box back where its other screens (deck, card grid) expect it.</summary>
+    private void RestoreInspectUpgrade()
+    {
+        if (_placedUpgrade != null && GodotObject.IsInstanceValid(_placedUpgrade))
+        {
+            _placedUpgrade.RemoveMeta(CombatInspectMeta);
+            _placedUpgrade.PivotOffset = _placedUpgradePivot;
+            _placedUpgrade.Scale = _placedUpgradeScale;
+            _placedUpgrade.OffsetLeft = _placedUpgradeLeft;
+            _placedUpgrade.OffsetTop = _placedUpgradeTop;
+            _placedUpgrade.OffsetRight = _placedUpgradeRight;
+            _placedUpgrade.OffsetBottom = _placedUpgradeBottom;
+        }
+        _placedUpgrade = null;
+        _placedInspectScreen = null;
     }
 
     private sealed class Reflection

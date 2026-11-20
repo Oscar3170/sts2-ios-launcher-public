@@ -359,16 +359,29 @@ public class PortraitCombatMathTests
         Assert.InRange(hud.DiscardShowY + 40f, bands.RailTopY, bands.HandTopY);
         Assert.InRange(hud.ExhaustShowY + 40f, bands.RailTopY, bands.HandTopY);
 
-        // 44 points a finger needs: End Turn is 90 units tall at 1.42, the piles 80 at 1.6, energy 128 at 1.12.
+        // 44 points a finger needs: End Turn is the TouchSpireUI 220x90 at 1.54 (339x139), the piles 80 at 1.6,
+        // energy 128 at 1.12.
+        Assert.Equal(1.54f, hud.EndTurnScale, 3);
+        Assert.Equal(220f * 1.54f, 220f * hud.EndTurnScale, 2);
+        Assert.Equal(90f * 1.54f, 90f * hud.EndTurnScale, 2);
         Assert.True(90f * hud.EndTurnScale >= 127f);
         Assert.True(80f * hud.PileScale >= 127f);
         Assert.True(128f * hud.EnergyScale >= 127f);
         Assert.True(hud.EndTurnShowY + 45f + 90f * hud.EndTurnScale * 0.5f <= bands.HandTopY);
         Assert.True(hud.PingShowY < bands.RailTopY);
 
-        // End Turn is centred for every character: the star is a corner badge, not a rail slot.
+        // End Turn is centred for every character, and its larger box stays clear of the energy orb, the star badge,
+        // the draw/discard/exhaust piles and the Confirm rail end.
         float endTurnVisualLeft = hud.EndTurnShowX - 110f * (hud.EndTurnScale - 1f);
+        float endTurnVisualRight = endTurnVisualLeft + 220f * hud.EndTurnScale;
+        float endTurnVisualTop = hud.EndTurnShowY + 45f * (1f - hud.EndTurnScale);
+        float endTurnVisualBottom = endTurnVisualTop + 90f * hud.EndTurnScale;
         Assert.Equal(540f, endTurnVisualLeft + 110f * hud.EndTurnScale, 3);
+        Assert.True(endTurnVisualLeft > hud.DrawShowX + 40f * (1f - hud.PileScale) + 80f * hud.PileScale);
+        Assert.True(endTurnVisualRight < hud.ExhaustShowX + 40f * (1f - hud.PileScale));
+        Assert.True(endTurnVisualRight < hud.DiscardShowX + 40f * (1f - hud.PileScale));
+        Assert.True(endTurnVisualTop >= bands.RailTopY + 0.01f);
+        Assert.True(endTurnVisualBottom <= bands.HandTopY - 0.01f);
 
         // The energy counter keeps the same rail place for every character; the star is a small corner badge on it.
         Assert.Equal(160f, hud.EnergyContainerX, 3);
@@ -393,6 +406,11 @@ public class PortraitCombatMathTests
         float starRight = hud.StarCenterX + starHalf;
         float starTop = hud.StarCenterY - starHalf;
         float starBottom = hud.StarCenterY + starHalf;
+
+        // The larger End Turn still clears the orb, the star badge and the selection Confirm's rail end.
+        Assert.True(endTurnVisualLeft > orbRight);
+        Assert.True(endTurnVisualLeft > starRight);
+        Assert.True(endTurnVisualRight < 948f - 100f * PortraitCombatMath.SelectionConfirmScale);
 
         // The badge still sits on the orb's left and overlaps its art, but it is lifted clear of the rail.
         Assert.True(starLeft < orbRight && starRight > orbLeft && starTop < orbBottom && starBottom > orbTop);
@@ -806,6 +824,18 @@ public class PortraitCombatMathTests
         var lone = new[] { (Slot: 5, Area: 900f, Type: "Ovicopter") };
         Assert.Equal(5, PortraitCombatMath.PickBossIndex(lone, capacity: 6, segmented: false));
         Assert.Equal(-1, PortraitCombatMath.PickBossIndex(lone, capacity: 2, segmented: false));
+    }
+
+    [Fact]
+    public void EncounterBodyMultipliersMatchTouchSpire()
+    {
+        Assert.Equal(1f, PortraitCombatMath.EncounterBodyMultiplier("Exoskeleton|LeafSlimeM"));
+        Assert.Equal(0.83f, PortraitCombatMath.EncounterBodyMultiplier("CeremonialBeast"));
+        Assert.Equal(0.78f, PortraitCombatMath.EncounterBodyMultiplier("WaterfallGiant"));
+        Assert.Equal(0.73f, PortraitCombatMath.EncounterBodyMultiplier("KnowledgeDemon"));
+        Assert.Equal(0.66f, PortraitCombatMath.EncounterBodyMultiplier("KinFollower|KinPriest"));
+        // The Kaiser Crab is excluded by the caller, not by a special multiplier.
+        Assert.Equal(1f, PortraitCombatMath.EncounterBodyMultiplier("Crusher|Rocket"));
     }
 
     [Fact]

@@ -378,7 +378,7 @@ public static class PortraitCombatMath
         const float energyX = 160f;
         const float energyScale = 1.12f;
         const float starScale = 0.8f;
-        const float endTurnScale = 1.42f;
+        const float endTurnScale = 1.54f;
         const float endTurnShowX = SafeAreaCanvas.PortraitWidth * 0.5f - 110f;
 
         // The star is a child of the energy counter and is drawn at the same relative size ratio as TouchSpireUI
@@ -532,6 +532,22 @@ public static class PortraitCombatMath
 
     /// <summary>The largest a creature body is drawn; a lone enemy already uses this for the stage.</summary>
     public const float MaxBodyScale = 1.15f;
+
+    /// <summary>Preferred shared body scale for an ordinary encounter, re-derived for the 1080 canvas (TouchSpireUI's 2.05).</summary>
+    public const float PreferredSharedBodyScale = 1.32f;
+
+    /// <summary>
+    /// TouchSpireUI's per-encounter body multipliers, applied to the preferred shared scale. The Kaiser Crab is excluded
+    /// (the launcher's own arm fit owns it).
+    /// </summary>
+    public static float EncounterBodyMultiplier(string encounterKey)
+    {
+        if (encounterKey.Contains("CeremonialBeast", StringComparison.OrdinalIgnoreCase)) return 0.83f;
+        if (encounterKey.Contains("WaterfallGiant", StringComparison.OrdinalIgnoreCase)) return 0.78f;
+        if (encounterKey.Contains("KnowledgeDemon", StringComparison.OrdinalIgnoreCase)) return 0.73f;
+        if (encounterKey.Contains("Kin", StringComparison.Ordinal)) return 0.66f;
+        return 1f;
+    }
 
     /// <summary>
     /// The one scale every creature body in the room shares: the smallest fit any of them needs in its slot, so a large

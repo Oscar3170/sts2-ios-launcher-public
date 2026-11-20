@@ -903,6 +903,9 @@ internal sealed class PortraitOverlayLayout
     /// </summary>
     private void GrowInspectTickbox(Control tickbox)
     {
+        // The combat hold-inspect owns this box in portrait: it places it clear of the card and hand (scaled down and
+        // beside the card), so the deck screens' 44-point growth must not move it back under the card.
+        if (tickbox.HasMeta(PhoneTouchCards.CombatInspectMeta)) return;
         PortraitControlSnapshot snap = CaptureChoice(tickbox);
         float parentScale = tickbox.GetParent() is Control parent ? Math.Max(parent.GetGlobalTransformWithCanvas().Scale.Y, 0.01f) : 1f;
         float height = MathF.Round(PortraitBands.MinTarget / parentScale);
