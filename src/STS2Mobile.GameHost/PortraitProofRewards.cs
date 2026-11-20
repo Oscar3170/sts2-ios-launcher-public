@@ -170,9 +170,9 @@ internal static partial class PortraitProof
         Vector2 at = PointOnCard(touched, 0.5f, 0.25f);
         float held = 0f, after = 0f;
         SendTouch(tree, at, pressed: true);
-        // Held by the clock, longer than a tap and shorter than a long press, so neither opens the card large. A count of
-        // frames sat on the long press boundary and crossed it when the simulator ran slow.
-        ulong heldUntil = Time.GetTicksMsec() + (ulong)((STS2Mobile.Platform.TouchCardMath.TapSeconds + STS2Mobile.Platform.TouchCardMath.LongPressSeconds) * 500.0);
+        // Held still for less than the hold-to-inspect time, so the card is neither picked up nor opened large. A count of
+        // frames sat on a threshold and crossed it when the simulator ran slow.
+        ulong heldUntil = Time.GetTicksMsec() + (ulong)(STS2Mobile.Platform.TouchCardMath.HoldSeconds * 500.0);
         while (Time.GetTicksMsec() < heldUntil)
         {
             await WaitFramesAsync(tree, 1);

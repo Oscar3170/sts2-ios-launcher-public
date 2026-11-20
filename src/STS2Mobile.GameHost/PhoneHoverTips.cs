@@ -17,10 +17,15 @@ namespace STS2Mobile.GameHost;
 /// tip's height before its text has wrapped, and the column is a flow container, so tips that do not fit flow into a second column
 /// beside the first, outside the size this pass fitted. The text column is now made one column as tall as its tips, and a column
 /// with no room above or below its item is shrunk, down to <see cref="MinFitScale"/>, to fit the larger side.</para>
+/// <para>Some tips must not show in portrait at all. While a hand card is dragged or aimed (<see cref="PhoneTouchCards.CardIsBeingDragged"/>)
+/// its card tips are removed, so the card under the finger is not covered by text; and after End Turn is pressed its tip is
+/// parked, because the finger and the engine's pointer remain on the button after the press, where a mouse would have quickly
+/// moved off. The parking lasts until the next press elsewhere (or until the button goes away), like TouchSpireUI's.</para>
 /// </summary>
 internal sealed class PhoneHoverTips
 {
     private const string TipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
+    private const string HandHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder";
     private const float Margin = 10f;
     private const float Gap = 8f;
 
@@ -30,16 +35,25 @@ internal sealed class PhoneHoverTips
     /// <summary>The smallest scale a column is shrunk to so it fits above or below its item; below that it stays readable over it.</summary>
     public const float MinFitScale = 0.9f;
 
+    private static Control? _parkedEndTurn;
+
     private readonly Dictionary<ulong, ColumnState> _columns = new();
     private FieldInfo? _ownerField;
     private FieldInfo? _textField;
     private FieldInfo? _cardField;
+    private MethodInfo? _removeMethod;
     private PropertyInfo? _containerProp;
     private PropertyInfo? _gameInstance;
     private bool _resolved;
     private bool _failed;
     private int _errors;
     private int _frame;
+
+    /// <summary>Keeps the End Turn tip from reappearing after the button was pressed until the next press elsewhere.</summary>
+    public static void ParkEndTurn(Control button) => _parkedEndTurn = button;
+
+    /// <summary>The player pressed somewhere else: the End Turn tip may show again.</summary>
+    public static void UnparkEndTurn() => _parkedEndTurn = null;
 
     private sealed class ColumnState
     {
@@ -54,6 +68,7 @@ internal sealed class PhoneHoverTips
     /// </summary>
     public void Release()
     {
+        _parkedEndTurn = null;
         foreach ((ulong id, ColumnState state) in _columns)
         {
             if (GodotObject.InstanceFromId(id) is not Control column || !GodotObject.IsInstanceValid(column)) continue;
@@ -62,6 +77,34 @@ internal sealed class PhoneHoverTips
             column.Scale = Vector2.One;
         }
         _columns.Clear();
+    }
+
+    /// <summary>
+    /// Whether a tip set should be taken down instead of fitted: a hand card's tip while that card is dragged (the card
+    /// and the finger are where the text would go), or the End Turn tip just after the button was pressed.
+    /// </summary>
+    private static bool ShouldRemove(Control owner)
+    {
+        if (PhoneTouchCards.CardIsBeingDragged && owner.GetType().FullName == HandHolderTypeName) return true;
+        if (_parkedEndTurn == null) return false;
+        if (!GodotObject.IsInstanceValid(_parkedEndTurn) || !_parkedEndTurn.IsInsideTree() || !_parkedEndTurn.IsVisibleInTree())
+        {
+            _parkedEndTurn = null;
+            return false;
+        }
+        return ReferenceEquals(owner, _parkedEndTurn);
+    }
+
+    private void RemoveTipSet(Control owner)
+    {
+        try
+        {
+            _removeMethod?.Invoke(null, [owner]);
+        }
+        catch (Exception error)
+        {
+            if (++_errors <= 3) GD.PrintErr("Phone hover tips: a tip set could not be taken down: ", error);
+        }
     }
 
     /// <summary>Called each frame in portrait only.</summary>
@@ -80,6 +123,11 @@ internal sealed class PhoneHoverTips
             foreach (Node child in container.GetChildren())
             {
                 if (child is not Control set || set.GetType().FullName != TipSetTypeName || set.IsQueuedForDeletion() || !set.Visible) continue;
+                if (_ownerField?.GetValue(set) is Control owner && GodotObject.IsInstanceValid(owner) && ShouldRemove(owner))
+                {
+                    RemoveTipSet(owner);
+                    continue;
+                }
                 try
                 {
                     FitSet(set, canvas, PortraitTipScale);
@@ -110,6 +158,8 @@ internal sealed class PhoneHoverTips
             _ownerField = setType?.GetField("_owner", inst);
             _textField = setType?.GetField("_textHoverTipContainer", inst);
             _cardField = setType?.GetField("_cardHoverTipContainer", inst);
+            _removeMethod = setType?.GetMethod("Remove", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+                null, [typeof(Control)], null);
             _containerProp = typeof(NGame).GetProperty("HoverTipsContainer", inst);
             _gameInstance = typeof(NGame).GetProperty("Instance", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             if (_textField == null || _cardField == null || _containerProp == null || _gameInstance == null)

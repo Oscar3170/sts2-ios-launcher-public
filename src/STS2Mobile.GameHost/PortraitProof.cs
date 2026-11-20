@@ -94,6 +94,9 @@ internal static partial class PortraitProof
                 case "phone-notes":
                     await RunPhoneNotesAsync(tree, game);
                     break;
+                case "crab":
+                    await RunCrabProofAsync(tree, game);
+                    break;
                 default:
                     GD.Print($"Portrait proof unknown mode: {mode}");
                     return;

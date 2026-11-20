@@ -14,6 +14,7 @@ internal static class PhonePatches
         new("No mouse cursor", false, patch =>
             patch.Noop(patch.Method("MegaCrit.Sts2.Core.Nodes.CommonUi.NCursorManager", "UpdateCursor"), "No mouse cursor on a touchscreen.")),
         new("A card let go below the play zone goes back", false, CancelCardReleasedBelowPlayZone),
+        new("A hand card is picked up when the finger moves", false, PickUpHandCardAfterTheFingerMoves),
         new("The game fills the screen", false, FillScreen),
         new("The game keeps clear of the notch and the island", false, KeepClearOfTheNotch),
         new("The game's version read from its folder", false, ReadReleaseInfoFromGameFolder),
@@ -73,6 +74,50 @@ internal static class PhonePatches
         foreach (var instruction in cancel) il.InsertBefore(resume, instruction);
         cardPlayInput.Body.OptimizeMacros();
         patch.Record(cardPlayInput.FullName, "Put a picked-up card back when the touch is released below the play zone.");
+    }
+
+    // A finger on the screen picks a hand card up on the press itself, so a tap started a card play that had to be
+    // cancelled, and the card began moving to the finger before the finger moved. Two small edits make the press wait: the
+    // game notes whether the press came from a touch (the engine's emulated mouse event has device -1), and the hand's
+    // pressed handler asks HandPickupGate whether to start the play. The launcher starts the play itself once the finger has
+    // moved, while it is still down, so the game's release-to-target path is used unchanged. Holding the play back is the
+    // robust way: cancelling one already started would still click, flash and move the card for a frame on every tap. A real
+    // mouse, landscape and the hand's selection modes are left exactly as the game has them; the dragged card's lift and
+    // fade are the launcher's presentation, drawn after the game's own move.
+    private static void PickUpHandCardAfterTheFingerMoves(GamePatch patch)
+    {
+        var notePress = patch.Adapter("HandPickupGate", "NotePress");
+        var deferPress = patch.Adapter("HandPickupGate", "Defer");
+
+        var press = patch.Method("MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder", "OnMousePressed");
+        if (press.Parameters.Count != 1 || press.Parameters[0].ParameterType.FullName != "Godot.InputEvent")
+            throw new InvalidOperationException(press.FullName + " does not take the press event.");
+        if (press.Body.HasExceptionHandlers)
+            throw new InvalidOperationException(press.FullName + " has exception handlers.");
+        int signals = press.Body.Instructions.Count(i => i.OpCode == OpCodes.Ldsfld &&
+            ((FieldReference)i.Operand).Name == "HolderMouseClicked");
+        patch.Expect(signals, 1, "hand-card press signals in NHandCardHolder.OnMousePressed");
+        // InputEvent.Device's getter, from the event type the game itself names, so no Godot assembly has to be resolved.
+        var getDevice = patch.Module.ImportReference(new MethodReference(
+            "get_Device", patch.Module.TypeSystem.Int32, press.Parameters[0].ParameterType) { HasThis = true });
+        var pressFirst = press.Body.Instructions[0];
+        var pressIl = press.Body.GetILProcessor();
+        pressIl.InsertBefore(pressFirst, pressIl.Create(OpCodes.Ldarg_1));
+        pressIl.InsertBefore(pressFirst, pressIl.Create(OpCodes.Callvirt, getDevice));
+        pressIl.InsertBefore(pressFirst, pressIl.Create(OpCodes.Call, notePress));
+        patch.Record(press.FullName, "Note whether a hand card's press came from a touch or a real mouse.");
+
+        var pressed = patch.Method("MegaCrit.Sts2.Core.Nodes.Combat.NPlayerHand", "OnHolderPressed");
+        if (pressed.Parameters.Count != 1)
+            throw new InvalidOperationException(pressed.FullName + " does not take the pressed holder.");
+        if (pressed.Body.HasExceptionHandlers)
+            throw new InvalidOperationException(pressed.FullName + " has exception handlers.");
+        var pressedFirst = pressed.Body.Instructions[0];
+        var pressedIl = pressed.Body.GetILProcessor();
+        pressedIl.InsertBefore(pressedFirst, pressedIl.Create(OpCodes.Call, deferPress));
+        pressedIl.InsertBefore(pressedFirst, pressedIl.Create(OpCodes.Brfalse, pressedFirst));
+        pressedIl.InsertBefore(pressedFirst, pressedIl.Create(OpCodes.Ret));
+        patch.Record(pressed.FullName, "Start a hand card's play only when the touch has moved past the pickup slop.");
     }
 
     // The game's automatic aspect ratio stretches its canvas over the whole window, so on a phone with a notch or a Dynamic Island

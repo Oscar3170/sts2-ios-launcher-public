@@ -13,9 +13,11 @@ namespace STS2Mobile.GameHost;
 /// <c>touch-suite</c>: a fight played with touch events, not mouse events. Each gesture goes through
 /// <c>Input.ParseInputEvent</c> as <c>InputEventScreenTouch</c> and <c>InputEventScreenDrag</c>, which the engine turns into
 /// mouse events the way it does for a finger on the phone (no hover before the press, the pointer jumps to the touch). Steps:
-/// the hand at the edges, a tap and a long press that open the card large, a short drag that puts the card back, a drag from
-/// the visible strip of each card onto every enemy, the same from the back row of a two-row hand, and hover tips at the edges.
-/// Each step logs <c>result=</c> with what the game did, then the usual audit text, and waits for the host's screenshot.
+/// the hand at the edges; a quick tap that does nothing and a stationary hold that opens the card large; a wiggle under the
+/// pickup slop that does not pick a card up; a short drag that puts the card back; a drag from the visible strip of each card
+/// onto every enemy; a near-miss release that snaps onto an enemy; the same from the back row of a two-row hand; and hover
+/// tips at the edges. Each step logs <c>result=</c> with what the game did, then the usual audit text, and waits for the
+/// host's screenshot.
 /// </summary>
 internal static partial class PortraitProof
 {
@@ -40,15 +42,35 @@ internal static partial class PortraitProof
         await TouchStepAsync(tree, "touch-hand", "five cards", results);
         await LogHandGeometry(tree, "five");
 
-        // A tap on the leftmost card's visible strip opens it large; a tap on the dimmed backdrop closes it.
+        // A quick tap on the leftmost card's visible strip does nothing: no play, no selection, no inspect.
         Control first = HandHolders(tree)[0];
+        int inspectsBefore = PhoneTouchCards.InspectsOpened;
         await TapAsync(tree, PointOnCard(first, 0.12f, 0.4f));
         await WaitFramesAsync(tree, 30);
         bool tapOpened = InspectOpen(game);
-        await TouchStepAsync(tree, "touch-tap", $"inspect={(tapOpened ? "open" : "closed")} cardplay={InCardPlay(tree)} hand={HandHolders(tree).Count}", results);
-        await TapAsync(tree, new Vector2(540f, 420f));
-        await WaitFramesAsync(tree, 40);
-        results.Add($"tap-close inspect={(InspectOpen(game) ? "open" : "closed")}");
+        int tapInspects = PhoneTouchCards.InspectsOpened - inspectsBefore;
+        await TouchStepAsync(tree, "touch-tap",
+            $"inspect={(tapOpened ? "open" : "closed")} expected=closed inspects+={tapInspects} cardplay={InCardPlay(tree)} hand={HandHolders(tree).Count}", results);
+
+        // A wiggle shorter than PickupSlop: the card stays in the hand and nothing opens.
+        Control wiggled = HandHolders(tree)[1];
+        Vector2 wiggleStart = PointOnCard(wiggled, 0.12f, 0.4f);
+        Vector2 wiggle = wiggleStart;
+        SendTouch(tree, wiggle, pressed: true);
+        for (int i = 1; i <= 3; i++)
+        {
+            Vector2 next = wiggleStart + new Vector2(i % 2 == 0 ? -5f : 5f, i * 1.5f);
+            SendTouchDrag(tree, next, wiggle);
+            wiggle = next;
+            await WaitFramesAsync(tree, 1);
+        }
+        int handBeforeWiggle = HandHolders(tree).Count;
+        await WaitFramesAsync(tree, 2);
+        string wiggleWhileDown = $"cardplay={InCardPlay(tree)} hand={HandHolders(tree).Count}";
+        SendTouch(tree, wiggle, pressed: false);
+        await WaitFramesAsync(tree, 20);
+        await TouchStepAsync(tree, "touch-wiggle",
+            $"{wiggleWhileDown} after-release cardplay={InCardPlay(tree)} inspect={(InspectOpen(game) ? "open" : "closed")} hand={HandHolders(tree).Count}->{handBeforeWiggle}", results);
 
         // A long press on the middle card: still down after 0.8 s, the card is shown large and put back in the hand.
         Control middle = HandHolders(tree)[2];
@@ -73,7 +95,7 @@ internal static partial class PortraitProof
         // A drag that is let go above the enemies but off every target: the card goes back too.
         Control third = HandHolders(tree)[0];
         start = PointOnCard(third, 0.12f, 0.4f);
-        await DragAsync(tree, start, new Vector2(540f, 520f), steps: 10);
+        await DragAsync(tree, start, new Vector2(540f, 430f), steps: 10);
         await WaitFramesAsync(tree, 30);
         await TouchStepAsync(tree, "touch-drag-off-target", $"cardplay={InCardPlay(tree)} hand={HandHolders(tree).Count}", results);
 
@@ -87,6 +109,13 @@ internal static partial class PortraitProof
             string outcome = await DragStrikeOntoEnemyAsync(tree, e, cardIndex: e == 0 ? 1 : 3);
             await TouchStepAsync(tree, $"touch-drag-enemy-{e}", outcome, results);
         }
+
+        // A Strike released just outside the first enemy's hit box, within the near-miss snap, plays on that enemy.
+        await TrimHandToAsync(Sts2, player, ["DEFEND_IRONCLAD", "STRIKE_IRONCLAD", "DEFEND_IRONCLAD", "STRIKE_IRONCLAD", "DEFEND_IRONCLAD"]);
+        await SetPlayerEnergyAsync(Sts2, player, 9m);
+        await WaitFramesAsync(tree, 45);
+        string nearMiss = await DragStrikeNearMissAsync(tree, 0, cardIndex: 1);
+        await TouchStepAsync(tree, "touch-drag-near-miss", nearMiss, results);
 
         // Eight cards in two rows: a back-row card dragged from its top strip.
         await TrimHandToAsync(Sts2, player, ["STRIKE_IRONCLAD", "DEFEND_IRONCLAD", "DEFEND_IRONCLAD", "DEFEND_IRONCLAD",
@@ -189,6 +218,34 @@ internal static partial class PortraitProof
         int handAfter = HandHolders(tree).Count;
         bool played = handAfter == handBefore - 1 && hpAfter < hpBefore;
         return $"card={card} from=({start.X:F0},{start.Y:F0}) to=({target.X:F0},{target.Y:F0}) played={played} hp={hpBefore}->{hpAfter} hand={handBefore}->{handAfter} cardplay={InCardPlay(tree)}";
+    }
+
+    /// <summary>
+    /// A Strike let go just outside the enemy's hit box, past the target padding but inside the near-miss snap: it must
+    /// still play on that enemy, and no click-to-aim may be left behind.
+    /// </summary>
+    private static async Task<string> DragStrikeNearMissAsync(SceneTree tree, int enemyIndex, int cardIndex)
+    {
+        List<Control> enemies = GetLivingEnemyNodes(tree, Sts2);
+        if (enemyIndex >= enemies.Count) return "no such enemy";
+        Control enemy = enemies[enemyIndex];
+        Control hitbox = (Control)enemy.GetType().GetProperty("Hitbox")!.GetValue(enemy)!;
+        Rect2 box = hitbox.GetGlobalRect();
+        Vector2 target = new(box.GetCenter().X, box.End.Y + 60f);
+        int hpBefore = CreatureHp(enemy);
+        List<Control> holders = HandHolders(tree);
+        int handBefore = holders.Count;
+        if (holders.Count == 0) return "no hand";
+        Control holder = holders[Math.Clamp(cardIndex, 0, holders.Count - 1)];
+        string card = CardId(holder);
+        Vector2 start = PointOnCard(holder, 0.12f, 0.4f);
+        await DragAsync(tree, start, target, steps: 14, holdFrames: 8);
+        await WaitFramesAsync(tree, 70);
+        int hpAfter = CreatureHp(enemy);
+        int handAfter = HandHolders(tree).Count;
+        bool played = handAfter == handBefore - 1 && hpAfter < hpBefore;
+        return $"card={card} from=({start.X:F0},{start.Y:F0}) near=({target.X:F0},{target.Y:F0}) gap={target.Y - box.End.Y:F0} " +
+            $"played={played} hp={hpBefore}->{hpAfter} hand={handBefore}->{handAfter} cardplay={InCardPlay(tree)}";
     }
 
     /// <summary>Where each card's hitbox and drawn card are, and which control the GUI picks at each test point.</summary>

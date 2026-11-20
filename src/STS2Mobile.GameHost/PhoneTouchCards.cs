@@ -11,37 +11,82 @@ namespace STS2Mobile.GameHost;
 /// <summary>
 /// Makes the hand work under a finger, in portrait only: in landscape the hand is the game's own, as on a desktop.
 /// The game's card play is built for a mouse: a press picks the card up and it follows the pointer until it
-/// reaches the play zone, so on a phone a tap or a short drag left the card held at the finger's last spot, and while one card
-/// is held every other card ignores touches, so a card sometimes would not drag. Here:
+/// reaches the play zone. Here one gesture decides everything:
 /// <list type="bullet">
-/// <item>Lifting the finger below the play zone, or off every target while aiming, puts the card back in the hand.</item>
-/// <item>A tap on a hand card, or a long press, opens the game's card inspect screen on that card: the card large, its keyword
-/// tips and its upgrade. A tap anywhere closes it. Dragging still plays cards as before.</item>
+/// <item>A press only arms the gesture. The card is not picked up until the finger has moved
+/// <see cref="TouchCardMath.PickupSlop"/>, so a quick tap does nothing: no play, no selection, no inspect. The play then
+/// starts with the finger still down, so the game's release-to-target path (and only that path) is used.</item>
+/// <item>A still finger held for <see cref="TouchCardMath.HoldSeconds"/> opens the game's card inspect screen on that card.
+/// Holding works for cards that cannot be played, which are never picked up by a drag.</item>
+/// <item>While aiming, the valid creature nearest the finger (inside <see cref="TouchCardMath.TargetPadding"/>, then
+/// <see cref="TouchCardMath.TargetSnap"/> for a near miss) is highlighted before the release, and the release plays on it.
+/// A release off every target puts the card back; there is no click-to-aim fallback.</item>
+/// <item>An untargeted card is drawn with its bottom edge <see cref="TouchCardMath.DragLift"/> above the finger, at the
+/// hand's pressed scale (<c>HeldCardScaleFor</c>) and slightly faded, so the creature under the finger stays visible. Its
+/// position, scale, angle, alpha and Z are written in a render-frame pass, after the game's own move for the frame, so the
+/// card follows the finger without a fight with the game's tween.</item>
+/// <item>A targeted card stops following the finger once native aiming starts: it eases to the fixed park
+/// (<see cref="TouchCardMath.AimingCardCenter"/>: top on End Turn's top, centred, fully opaque) at
+/// <see cref="TouchCardMath.AimedCardScaleFor"/> of the hand's resting scale, while the native arrow and reticle track the
+/// creature under the finger.</item>
+/// <item>In the game's hand-selection modes (Armaments and the like) a press stays the game's own: tap-to-select
+/// is unchanged.</item>
 /// </list>
-/// Keeping the other cards still under a touch is the portrait hand layout's job (<see cref="PortraitCombatLayout"/>).
+/// Keeping the other cards still under a touch is the portrait hand layout's job (<see cref="PortraitCombatLayout"/>); the
+/// dragged card's presentation belongs to this pass.
 /// </summary>
 internal sealed class PhoneTouchCards
 {
     private const BindingFlags InstAll = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private const BindingFlags StaticAll = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+    private const string HandHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder";
+    private const int DraggedZIndex = 8;
 
-    /// <summary>How many times a tap or long press opened the inspect screen since launch (for the proof runs): 0 in landscape.</summary>
+    /// <summary>How many times a stationary hold opened the inspect screen since launch (for the proof runs): 0 in landscape.</summary>
     public static int InspectsOpened { get; private set; }
+
+    /// <summary>Whether this pass is dragging a hand card right now; the hover-tip pass keeps card tips away while it is.</summary>
+    public static bool CardIsBeingDragged { get; private set; }
+
+    /// <summary>
+    /// The hand card under a finger that is down in play mode and has not been picked up yet (after
+    /// <see cref="TouchCardMath.PickupSlop"/> it is dragging instead); the portrait hand grows this card in place under
+    /// the finger. Null on release, after pickup and while the inspector is open.
+    /// </summary>
+    internal static Control? PressedHolder { get; private set; }
 
     private readonly Reflection? _r;
     private bool _failed;
     private SceneTree? _tree;
 
     private bool _down;
-    private bool _pendingRelease;
-    private bool _decided;
-    private ulong _releaseFrame;
+    private bool _pickedUp;
+    private bool _gestureDecided;
     private double _downTime;
-    private double _upTime;
     private Vector2 _downWindowPos;
     private float _maxMoveWindow;
     private Vector2? _downCanvasPos;
-    private Control? _holder;
+    private Vector2 _fingerCanvas;
+    private Control? _pendingHolder;
+    private Control? _dragHolder;
+    private bool _dragPresentation;
+    private Color _dragOriginalModulate;
+    private int _dragOriginalZ;
+    private bool _released;
+    private ulong _releaseFrame;
+    private Vector2? _releaseCanvasPos;
+    private bool _releaseHandled;
+    private bool _dragLogged;
+    private float _drawnScale;
+    private float _handScale = 1f;
+    private bool _dragJustPicked;
+    private bool _aimParked;
+    private bool _aimStarted;
+    private bool _aimLogged;
+    private Control? _inspectShield;
+    private Node.ProcessModeEnum _inspectShieldMode;
+    private ulong _inspectShieldReleaseFrame = ulong.MaxValue;
+    private int _renderErrors;
 
     public PhoneTouchCards()
     {
@@ -65,52 +110,157 @@ internal sealed class PhoneTouchCards
     {
         _tree = tree;
         tree.Root.WindowInput += OnWindowInput;
+        // One pass per frame: the gesture decisions read the hand, and a deferred call after the frame's process-frame
+        // callbacks writes the dragged card's presentation after the game's own move for that frame.
+        tree.ProcessFrame += OnFrame;
     }
 
     public void Detach()
     {
         if (_tree != null && GodotObject.IsInstanceValid(_tree.Root)) _tree.Root.WindowInput -= OnWindowInput;
+        if (_tree != null) _tree.ProcessFrame -= OnFrame;
         _tree = null;
+        ReleaseEverything();
     }
 
     private static double Now() => Time.GetTicksMsec() / 1000.0;
+
+
+    /// <summary>
+    /// Every frame, before the game's own process-frame work: in landscape the hand goes back to the game's own handling;
+    /// in portrait a dragged card's presentation is scheduled for after that work.
+    /// </summary>
+    private void OnFrame()
+    {
+        if (_failed) return;
+        try
+        {
+            if (_inspectShield != null && Engine.GetProcessFrames() > _inspectShieldReleaseFrame) RestoreInspectShield();
+            if (!SafeAreaCanvas.IsPortrait)
+            {
+                if (_dragHolder != null || CardIsBeingDragged || _down || _pendingHolder != null || _inspectShield != null)
+                    ReleaseEverything();
+                else HandPickupGate.Disable();
+                return;
+            }
+            if (_dragHolder != null) Callable.From(OnRenderFrame).CallDeferred();
+        }
+        catch (Exception error)
+        {
+            // A targeting call the game rejects leaves this card to the game's own presentation; the touch path stays on.
+            EndDrag();
+            if (++_renderErrors <= 3) GD.PrintErr("Phone touch cards: a dragged card was left to the game: ", error.Message);
+        }
+    }
+
+    /// <summary>
+    /// The dragged card's presentation and the release decision, run from the message queue just after this frame's
+    /// process-frame callbacks, so the game's own move for the frame has already happened.
+    /// </summary>
+    private void OnRenderFrame()
+    {
+        if (_failed) return;
+        try
+        {
+            if (SafeAreaCanvas.IsPortrait && _dragHolder != null) PresentDrag();
+        }
+        catch (Exception error)
+        {
+            // A targeting call the game rejects leaves this card to the game's own presentation; the touch path stays on.
+            EndDrag();
+            if (++_renderErrors <= 3) GD.PrintErr("Phone touch cards: a dragged card was left to the game: ", error.Message);
+        }
+    }
 
     private void OnWindowInput(InputEvent input)
     {
         if (_failed) return;
         if (!SafeAreaCanvas.IsPortrait)
         {
-            // Landscape is the game's own hand. A touch that began before Portrait Mode was turned off is dropped.
-            _down = false;
-            Reset();
+            ReleaseEverything();
             return;
         }
         if (input is InputEventScreenTouch touch && touch.Index == 0)
         {
+            _fingerCanvas = ToCanvas(touch.Position);
             if (touch.Pressed)
             {
-                _down = true;
-                _pendingRelease = false;
-                _decided = false;
-                _holder = null;
-                _downCanvasPos = null;
-                _downTime = Now();
-                _downWindowPos = touch.Position;
-                _maxMoveWindow = 0f;
+                if (_down) return;
+                StartGesture(touch);
             }
             else if (_down)
             {
-                _down = false;
-                _upTime = Now();
-                _maxMoveWindow = Math.Max(_maxMoveWindow, touch.Position.DistanceTo(_downWindowPos));
-                _pendingRelease = true;
-                _releaseFrame = Engine.GetProcessFrames();
+                EndGesture(touch);
             }
         }
         else if (input is InputEventScreenDrag drag && drag.Index == 0 && _down)
         {
+            _fingerCanvas = ToCanvas(drag.Position);
             _maxMoveWindow = Math.Max(_maxMoveWindow, drag.Position.DistanceTo(_downWindowPos));
+            // Pick up as soon as the finger has moved, while it is still down: the game's own play then starts in its
+            // release-to-target mode and the release event the engine sends next finishes it.
+            if (!_pickedUp && !_gestureDecided && _pendingHolder != null && MovedCanvas() >= TouchCardMath.PickupSlop)
+                TryPickUp();
         }
+    }
+
+    private void StartGesture(InputEventScreenTouch touch)
+    {
+        if (_dragHolder != null) EndDrag();
+        RestoreInspectShield();
+        _down = true;
+        _pickedUp = false;
+        _released = false;
+        _releaseHandled = false;
+        _gestureDecided = false;
+        _pendingHolder = null;
+        PressedHolder = null;
+        _dragHolder = null;
+        _downTime = Now();
+        _downWindowPos = touch.Position;
+        _maxMoveWindow = 0f;
+        _releaseCanvasPos = null;
+        _downCanvasPos = _fingerCanvas;
+
+        Reflection r = _r!;
+        Control? hand = r.Hand();
+        if (hand == null)
+        {
+            _gestureDecided = true;
+            return;
+        }
+        // The engine sent this touch's emulated mouse press before the touch itself, so the game's pressed handler has
+        // already been held back by the gate. The card the game would have picked up is the one under the press.
+        Vector2 point = _downCanvasPos ?? Vector2.Zero;
+        if (r.InPlayMode(hand) && r.OverlayCount() == 0 && r.CurrentCardPlay(hand) == null)
+        {
+            _pendingHolder = HolderUnderPress(r, hand, point);
+            PressedHolder = _pendingHolder;
+        }
+
+        Control? endTurn = EndTurnButton(r);
+        if (endTurn != null && GodotObject.IsInstanceValid(endTurn) && endTurn.GetGlobalRect().Grow(8f).HasPoint(point))
+            PhoneHoverTips.ParkEndTurn(endTurn);
+        else
+            PhoneHoverTips.UnparkEndTurn();
+    }
+
+    private void EndGesture(InputEventScreenTouch touch)
+    {
+        _down = false;
+        _maxMoveWindow = Math.Max(_maxMoveWindow, touch.Position.DistanceTo(_downWindowPos));
+        _released = true;
+        _releaseFrame = Engine.GetProcessFrames();
+        _releaseCanvasPos = _fingerCanvas;
+        if (!_pickedUp)
+        {
+            _pendingHolder = null;
+            PressedHolder = null;
+        }
+        // A hold-opened inspector was put in the shield when it opened. Keep it there for the rest of this frame: this
+        // touch's emulated mouse release has already been dispatched by the engine, and the touch release itself is still
+        // to come. The next frame re-enables the screen, so only this gesture's release is ignored.
+        if (_inspectShield != null) _inspectShieldReleaseFrame = Engine.GetProcessFrames();
     }
 
     /// <summary>Called each frame in portrait only.</summary>
@@ -119,81 +269,406 @@ internal sealed class PhoneTouchCards
         if (_failed || _r == null || !GodotObject.IsInstanceValid(tree.Root)) return;
         try
         {
-            if (!_down && !_pendingRelease) return;
-            Step(tree);
+            Step();
         }
         catch (Exception error)
         {
             _failed = true;
+            ReleaseEverything();
             GD.PrintErr("Phone touch cards: turned off after an error: ", error);
         }
     }
 
-    private void Step(SceneTree tree)
+    private void Step()
     {
         Reflection r = _r!;
         Control? hand = r.Hand();
         if (hand == null || !GodotObject.IsInstanceValid(hand) || !hand.IsVisibleInTree())
         {
-            Reset();
-            return;
-        }
-        _downCanvasPos ??= tree.Root.GetMousePosition();
-        object? play = r.CurrentCardPlay(hand);
-        if (_holder == null && play != null && r.IsMouseCardPlay(play))
-            _holder = r.PlayHolder(play);
-
-        float moved = _maxMoveWindow * CanvasPerWindowPixel(tree.Root);
-
-        if (_down)
-        {
-            // A long press: the finger rests on a held card (or on a card the game does not pick up, such as an unplayable one).
-            // Put it back and show it large.
-            if (!_decided && TouchCardMath.IsLongPress(moved, Now() - _downTime))
-            {
-                Control? holder = _holder ?? (r.OverlayCount() == 0 && r.InPlayMode(hand) ? HolderAt(r, hand, _downCanvasPos) : null);
-                if (holder == null) return;
-                _decided = true;
-                if (play != null) r.CancelAllCardPlay(hand);
-                Inspect(r, hand, holder, "long press");
-            }
+            ReleaseEverything();
             return;
         }
 
-        // Released: wait two frames so the game's own release handling (play, aim, cancel) runs first.
-        if (Engine.GetProcessFrames() < _releaseFrame + 2) return;
-        if (!_decided)
+        bool overlays = r.OverlayCount() > 0;
+        bool playInProgress = r.CurrentCardPlay(hand) != null;
+        bool playMode = r.InPlayMode(hand);
+
+        // A press waits for the finger only while it could begin an ordinary card play. Selection modes and overlays
+        // keep the game's own press handling; a play already under way does too.
+        if (playMode && !overlays && !playInProgress) HandPickupGate.Enable();
+        else HandPickupGate.Disable();
+
+        if (overlays && !_pickedUp)
         {
-            bool tap = TouchCardMath.IsTap(moved, _upTime - _downTime);
-            play = r.CurrentCardPlay(hand);
-            if (play != null && r.IsMouseCardPlay(play) && r.PlayHolder(play) is { } held && (_holder == null || held == _holder))
+            _pendingHolder = null;
+            PressedHolder = null;
+            _gestureDecided = true;
+        }
+        // A play the game started itself (a real mouse, or a press before the gate was armed): this gesture does not
+        // take it over.
+        if (playInProgress && !_pickedUp && _dragHolder == null)
+        {
+            _pendingHolder = null;
+            PressedHolder = null;
+        }
+        // A card that left the hand under the finger (a discard or a play from elsewhere) no longer receives the press.
+        if (PressedHolder is { } pressed && (!GodotObject.IsInstanceValid(pressed) || !pressed.IsInsideTree()))
+        {
+            _pendingHolder = null;
+            PressedHolder = null;
+        }
+
+        float moved = MovedCanvas();
+        if (_down && !_pickedUp && !playInProgress && _pendingHolder != null && !overlays && playMode)
+        {
+            if (TouchCardMath.HasMovedPastPickupSlop(moved))
             {
-                bool aiming = r.IsTargeting();
-                float mouseY = tree.Root.GetMousePosition().Y;
-                bool inPlayZone = r.PlayZoneThreshold(play) is float threshold && mouseY < threshold;
-                if (aiming || !inPlayZone)
-                {
-                    r.CancelAllCardPlay(hand);
-                    GD.Print($"Phone touch cards: card put back ({(aiming ? "released off every target" : "released below the play zone")}).");
-                }
+                TryPickUp();
             }
-            // Only in play mode: a tap that picks cards from the hand (discard, upgrade) stays the game's.
-            if (tap && r.OverlayCount() == 0 && r.InPlayMode(hand))
+            else if (!_gestureDecided && TouchCardMath.IsStationaryHold(moved, Now() - _downTime))
             {
-                Control? tapped = _holder ?? HolderAt(r, hand, _downCanvasPos);
-                if (tapped != null) Inspect(r, hand, tapped, "tap");
+                _gestureDecided = true;
+                Control holder = _pendingHolder;
+                _pendingHolder = null;
+                PressedHolder = null;
+                Inspect(r, hand, holder, "hold");
             }
         }
-        Reset();
+
+        if (_dragHolder == null && _released) ResetGesture();
     }
 
-    private void Reset()
+    private void TryPickUp()
     {
-        _pendingRelease = false;
-        _decided = false;
-        _holder = null;
-        _downCanvasPos = null;
+        Reflection r = _r!;
+        Control? hand = r.Hand();
+        if (hand == null || _pendingHolder is not { } holder) return;
+        if (r.OverlayCount() > 0 || !r.InPlayMode(hand) || r.CurrentCardPlay(hand) != null) return;
+        if (!GodotObject.IsInstanceValid(holder) || !holder.IsInsideTree())
+        {
+            _pendingHolder = null;
+            PressedHolder = null;
+            return;
+        }
+
+        _pendingHolder = null;
+        PressedHolder = null;
+        _gestureDecided = true;
+        // The card is about to be reparented to the hand and the game's BeginDrag raises the holder to 1. Keep the size it
+        // has under the finger now (the pressed growth) so the pickup does not pop larger.
+        float pressedCanvasScale = MathF.Abs(holder.GetGlobalTransformWithCanvas().Scale.Y);
+        try
+        {
+            r.PressHandHolder(hand, holder);
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr("Phone touch cards: the game did not start the card play: ", error.Message);
+            return;
+        }
+        if (r.CurrentCardPlay(hand) == null)
+        {
+            // The game refused the play outright (for example a card that cannot be played this turn).
+            return;
+        }
+        // The game measured the play zone from the point where it started the drag, which is now after the finger has
+        // already moved. Measure it from the press instead, as it would have with an immediate pickup: a short drag off
+        // the card stays out of the play zone and goes back, and a drag into the arena plays.
+        if (_downCanvasPos is { } down) r.SetDragStart(hand, down.Y);
+
+        _pickedUp = true;
+        _dragHolder = holder;
+        _handScale = MathF.Max(0.01f, MathF.Abs(
+            (holder.GetParent() as CanvasItem)?.GetGlobalTransformWithCanvas().Scale.Y ?? 1f));
+        float canvasHeight = _tree?.Root.GetVisibleRect().Size.Y ?? 1920f;
+        PortraitCombatBands pickupBands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 0f);
+        _drawnScale = pressedCanvasScale > 0.01f
+            ? pressedCanvasScale
+            : PortraitCombatMath.HeldCardScaleFor(pickupBands, HandCardCount(r, hand)) * _handScale;
+        _dragJustPicked = true;
+        _aimParked = false;
+        _aimStarted = false;
+        _aimLogged = false;
+        _dragOriginalModulate = holder.Modulate;
+        _dragOriginalZ = holder.ZIndex;
+        CardIsBeingDragged = true;
+        _dragPresentation = true;
+        _dragLogged = false;
+        PresentDrag(holder);
+        GD.Print("Phone touch cards: card picked up after the finger moved.");
     }
+
+    /// <summary>
+    /// Moves the dragged card's presentation to the finger, after the game's own per-frame move. Called once at pickup and
+    /// then from the render pass every frame; the game keeps writing its raw pointer target, but this pass is what is drawn.
+    /// </summary>
+    private void PresentDrag()
+    {
+        Reflection r = _r!;
+        Control? hand = r.Hand();
+        if (hand == null || _dragHolder is not { } holder) return;
+        if (!GodotObject.IsInstanceValid(holder) || !holder.IsInsideTree())
+        {
+            EndDrag();
+            return;
+        }
+        object? play = r.CurrentCardPlay(hand);
+        if (play == null || !r.IsMouseCardPlay(play) || !ReferenceEquals(r.PlayHolder(play), holder))
+        {
+            // Played, cancelled, or put back by the game: the card is the hand's again.
+            EndDrag();
+            return;
+        }
+
+        PresentDrag(holder);
+
+        if (r.IsTargeting()) HoverAssist(r);
+
+        if (!_released || _releaseHandled) return;
+        ulong age = Engine.GetProcessFrames() - _releaseFrame;
+        if (r.IsTargeting() && age >= 2)
+            _releaseHandled = ResolveTargetingRelease(r);
+        if (!_releaseHandled && age >= 12 && r.IsSingleTarget(holder))
+        {
+            // Released before the game entered targeting, or its click-to-aim fallback was entered: never leave the
+            // card waiting for a click that will not come.
+            _releaseHandled = true;
+            r.CancelAllCardPlay(hand);
+        }
+    }
+
+    private void PresentDrag(Control holder)
+    {
+        SceneTree? tree = holder.GetTree();
+        if (tree == null) return;
+        Vector2 finger = _fingerCanvas;
+        Vector2 canvas = tree.Root.GetVisibleRect().Size;
+        Control? parent = holder.GetParent() as Control;
+        Transform2D parentTransform = parent?.GetGlobalTransformWithCanvas() ?? Transform2D.Identity;
+        // The hit box is 300 x 422 at the holder's scale, and the hand container may be scaled too: the lift is measured
+        // on the card as drawn, not on its parent-local units. The size eases from the pressed card's size to the drag
+        // size (and larger while aiming) instead of jumping at pickup. Resting/pressed sizes come from the shape- and
+        // hand-count-aware helpers, not a fixed constant.
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvas.Y, 0f);
+        int count = HandCardCount(_r!, _r!.Hand());
+        float restingScale = PortraitCombatMath.HandCardScaleFor(bands, count);
+        float heldScale = PortraitCombatMath.HeldCardScaleFor(bands, count);
+        float aimScale = TouchCardMath.AimedCardScaleFor(restingScale);
+        // Like the mod's Center/Suspend latch: once native aiming starts the card stays parked until the play is over,
+        // including the release/cancel frames while the arrow is being taken down.
+        if (_r?.IsTargeting() == true) _aimStarted = true;
+        bool aiming = _aimStarted;
+        float targetCanvas = (aiming ? aimScale : heldScale) * _handScale;
+        if (_dragJustPicked) _dragJustPicked = false;
+        else _drawnScale = Mathf.Lerp(_drawnScale, targetCanvas, 0.18f);
+        float onCanvas = MathF.Max(_drawnScale, 0.01f);
+        float localScale = onCanvas / _handScale;
+        Vector2 local;
+        Vector2 canvasTarget;
+        if (aiming)
+        {
+            // The card stops following the finger and sits at a fixed park: top edge on End Turn's top, centred, while the
+            // native arrow and reticle follow the finger. It is fully opaque and clearly larger than the pressed card;
+            // the move eases, and the top edge stays aligned while the size grows.
+            float endTurnTop = EndTurnTop(_r!, canvas, bands);
+            (float px, float py) = TouchCardMath.AimingCardCenter(endTurnTop, onCanvas, canvas.X);
+            canvasTarget = new Vector2(px, py);
+            if (!_aimLogged)
+            {
+                _aimLogged = true;
+                GD.Print($"Phone touch cards: aiming park target=({px:F1},{py:F1}) endTurnTop={endTurnTop:F1} " +
+                    $"count={count} resting={restingScale:F3} held={heldScale:F3} aim={aimScale:F3} " +
+                    $"onCanvas={onCanvas:F3}");
+            }
+            Vector2 park = parentTransform.AffineInverse() * canvasTarget;
+            local = _aimParked ? park : holder.Position.Lerp(park, 0.25f);
+            if (local.DistanceTo(park) < 0.75f)
+            {
+                local = park;
+                _aimParked = true;
+            }
+        }
+        else
+        {
+            _aimParked = false;
+            (float x, float y) = TouchCardMath.DraggedCardCenter(
+                finger.X, finger.Y, onCanvas, onCanvas, canvas.X, canvas.Y);
+            canvasTarget = new Vector2(x, y);
+            local = parentTransform.AffineInverse() * canvasTarget;
+        }
+        holder.Position = local;
+        holder.Scale = Vector2.One * localScale;
+        holder.RotationDegrees = 0f;
+        holder.ZIndex = DraggedZIndex;
+        Color color = holder.Modulate;
+        color.A = aiming ? 1f : TouchCardMath.DragOpacity;
+        holder.Modulate = color;
+        // The holder's own animation runs off this target; it is put to the lift as well, after the game's raw pointer
+        // write for this frame, so the animation follows the portrait move.
+        _r?.SetTargetPosition(holder, local);
+        _r?.SetTargetScale(holder, Vector2.One * localScale);
+        if (!_dragLogged)
+        {
+            _dragLogged = true;
+            Control? hitbox = holder.GetNodeOrNull<Control>("%Hitbox") ?? holder.GetNodeOrNull<Control>("Hitbox");
+            Rect2 rect = hitbox?.GetGlobalRect() ?? default;
+            GD.Print($"Phone touch cards: drag finger=({finger.X:F1},{finger.Y:F1}) parentScale={parentTransform.Scale} " +
+                $"holderScale={holder.Scale} onCanvas={onCanvas:F3} handScale={_handScale:F3} count={count} " +
+                $"resting={restingScale:F3} held={heldScale:F3} aim={aimScale:F3} aiming={aiming} " +
+                $"canvasTarget=({canvasTarget.X:F1},{canvasTarget.Y:F1}) localTarget={local} holderPos={holder.Position} " +
+                $"hitbox={rect} bottom={rect.End.Y:F1} lift={finger.Y - rect.End.Y:F1} expected={TouchCardMath.DragLift:F0}");
+        }
+    }
+
+    private void EndDrag()
+    {
+        if (_dragHolder is { } holder && _dragPresentation && GodotObject.IsInstanceValid(holder))
+        {
+            holder.Modulate = _dragOriginalModulate;
+            holder.ZIndex = _dragOriginalZ;
+            if (_dragLogged)
+            {
+                Control? hitbox = holder.GetNodeOrNull<Control>("%Hitbox") ?? holder.GetNodeOrNull<Control>("Hitbox");
+                GD.Print($"Phone touch cards: drag ended holderPos={holder.Position} scale={holder.Scale} " +
+                    $"hitbox={(hitbox?.GetGlobalRect() ?? default)}");
+                _dragLogged = false;
+            }
+        }
+        _dragHolder = null;
+        _dragPresentation = false;
+        _pickedUp = false;
+        _aimParked = false;
+        _aimStarted = false;
+        _aimLogged = false;
+        CardIsBeingDragged = false;
+    }
+
+    /// <summary>
+    /// The finger is up while the game is still choosing a target. A near-miss release plays on the nearest valid
+    /// creature; a release further out than <see cref="TouchCardMath.TargetSnap"/> cancels the targeting, which puts the
+    /// card back. Returns whether the targeting was resolved.
+    /// </summary>
+    private bool ResolveTargetingRelease(Reflection r)
+    {
+        Vector2 point = _releaseCanvasPos ?? _fingerCanvas;
+        Control? target = FindTarget(r, point);
+        if (target != null)
+        {
+            r.Hover(target);
+            if (r.FinishTargeting(false))
+            {
+                GD.Print("Phone touch cards: released near a target; the card plays on it.");
+                return true;
+            }
+        }
+        if (r.CancelTargeting())
+        {
+            GD.Print("Phone touch cards: card put back (released off every target).");
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The valid creature nearest the finger: inside its padded hit box, else within the near-miss snap. Moves the game's
+    /// hover to it so the reticle and the highlight are on the creature the release will choose.
+    /// </summary>
+    private void HoverAssist(Reflection r)
+    {
+        if (!r.CanTarget || _tree == null) return;
+        Vector2 point = _fingerCanvas;
+        Control? target = FindTarget(r, point);
+        Node? hovered = r.HoveredNode();
+        if (ReferenceEquals(hovered, target)) return;
+        if (hovered is Control old && GodotObject.IsInstanceValid(old) && r.IsCreature(old)) r.Unhover(old);
+        if (target != null) r.Hover(target);
+    }
+
+    private static Control? FindTarget(Reflection r, Vector2 point)
+    {
+        if (!r.CanTarget) return null;
+        var creatures = new List<Control>();
+        var boxes = new List<TouchCardMath.TargetBox>();
+        foreach (object? node in r.Creatures())
+        {
+            if (node is not Control creature || !GodotObject.IsInstanceValid(creature) || !creature.IsInsideTree()) continue;
+            if (!r.AllowedToTarget(creature)) continue;
+            Control? hitbox = creature.GetNodeOrNull<Control>("%Hitbox") ?? creature.GetNodeOrNull<Control>("Hitbox");
+            if (hitbox == null || hitbox.Size.X < 1f || hitbox.Size.Y < 1f) continue;
+            Rect2 rect = hitbox.GetGlobalRect();
+            creatures.Add(creature);
+            boxes.Add(new TouchCardMath.TargetBox(
+                rect.GetCenter().X, rect.GetCenter().Y, rect.Size.X * 0.5f, rect.Size.Y * 0.5f));
+        }
+        int index = TouchCardMath.NearestTarget(boxes, point.X, point.Y);
+        return index >= 0 ? creatures[index] : null;
+    }
+
+    /// <summary>
+    /// The hand card under the press: the game's focused card when the point is on it, else the topmost holder whose hit
+    /// box contains the point (the game's own pick is by draw order, and a higher Z is drawn on top).
+    /// </summary>
+    private static Control? HolderUnderPress(Reflection r, Control hand, Vector2 point)
+    {
+        if (r.FocusedHolder(hand) is { } focused && GodotObject.IsInstanceValid(focused) && HitboxContains(focused, point))
+            return focused;
+        IList? holders = r.ActiveHolders(hand);
+        if (holders == null) return null;
+        Control? best = null;
+        int bestZ = int.MinValue;
+        int bestIndex = -1;
+        for (int i = 0; i < holders.Count; i++)
+        {
+            if (holders[i] is not Control holder || !GodotObject.IsInstanceValid(holder) || !holder.IsVisibleInTree()) continue;
+            if (!HitboxContains(holder, point)) continue;
+            if (holder.ZIndex < bestZ || (holder.ZIndex == bestZ && i <= bestIndex)) continue;
+            best = holder;
+            bestZ = holder.ZIndex;
+            bestIndex = i;
+        }
+        return best;
+    }
+
+    private static bool HitboxContains(Control holder, Vector2 point)
+    {
+        Control? hitbox = holder.GetNodeOrNull<Control>("%Hitbox") ?? holder.GetNodeOrNull<Control>("Hitbox");
+        if (hitbox == null || hitbox.Size.X < 1f) return false;
+        // The game only delivers the press to a hit box that is enabled (NClickableControl._GuiInput).
+        if (hitbox.GetType().GetProperty("IsEnabled", InstAll)?.GetValue(hitbox) is false) return false;
+        Vector2 local = hitbox.GetGlobalTransformWithCanvas().AffineInverse() * point;
+        return new Rect2(Vector2.Zero, hitbox.Size).HasPoint(local);
+    }
+
+    private void ResetGesture()
+    {
+        RestoreInspectShield();
+        _down = false;
+        _pickedUp = false;
+        _released = false;
+        _releaseHandled = false;
+        _gestureDecided = false;
+        _pendingHolder = null;
+        PressedHolder = null;
+        _downCanvasPos = null;
+        _releaseCanvasPos = null;
+        _maxMoveWindow = 0f;
+    }
+
+    private void ReleaseEverything()
+    {
+        EndDrag();
+        ResetGesture();
+        HandPickupGate.Disable();
+        PhoneHoverTips.UnparkEndTurn();
+    }
+
+    private float MovedCanvas() =>
+        _tree == null ? 0f : _maxMoveWindow * CanvasPerWindowPixel(_tree.Root);
+
+    /// <summary>The touch's position on the portrait canvas. The finger is the authority, not the engine's emulated mouse:
+    /// the host pointer can sit a little away from the injected touch, which would lift the card from the wrong point.</summary>
+    private Vector2 ToCanvas(Vector2 windowPosition) =>
+        _tree == null ? windowPosition : _tree.Root.GetFinalTransform().AffineInverse() * windowPosition;
 
     private static float CanvasPerWindowPixel(Window root)
     {
@@ -202,25 +677,26 @@ internal sealed class PhoneTouchCards
         return window.X <= 0 ? 1f : canvasWidth / window.X;
     }
 
-    private static Control? HolderAt(Reflection r, Control hand, Vector2? point)
+    /// <summary>The hand's size for the scale helpers: the visible holders plus the card being played.</summary>
+    private static int HandCardCount(Reflection r, Control? hand)
     {
-        if (point is not { } p) return null;
-        IList? holders = r.ActiveHolders(hand);
-        if (holders == null) return null;
-        // The last holder is drawn on top and gets the touch first, as the game's own input does.
-        for (int i = holders.Count - 1; i >= 0; i--)
-        {
-            if (holders[i] is not Control holder) continue;
-            Control? hitbox = holder.GetNodeOrNull<Control>("%Hitbox") ?? holder.GetNodeOrNull<Control>("Hitbox");
-            if (hitbox == null) continue;
-            Vector2 local = hitbox.GetGlobalTransformWithCanvas().AffineInverse() * p;
-            // The card must be the one under the finger, not one covered by a pile view or another screen.
-            if (new Rect2(Vector2.Zero, hitbox.Size).HasPoint(local)) return r.HolderHovered(holder) ? holder : null;
-        }
-        return null;
+        if (hand == null || !GodotObject.IsInstanceValid(hand)) return 1;
+        int active = r.ActiveHolders(hand)?.Count ?? 0;
+        return PortraitCombatMath.EffectiveCardCount(active, r.CurrentCardPlay(hand) != null);
     }
 
-    private static void Inspect(Reflection r, Control hand, Control holder, string how)
+    /// <summary>The End Turn button's visual top, preferring the live control; the HUD layout is the fallback.</summary>
+    private static float EndTurnTop(Reflection r, Vector2 canvas, PortraitCombatBands bands)
+    {
+        if (EndTurnButton(r) is { } endTurn && GodotObject.IsInstanceValid(endTurn) && endTurn.IsVisibleInTree())
+            return endTurn.GetGlobalRect().Position.Y;
+        return TouchCardMath.EndTurnTopY(PortraitCombatMath.ComputeHudLayout(canvas.Y, bands));
+    }
+
+    private static Control? EndTurnButton(Reflection r) =>
+        r.CombatUi() is { } ui ? ui.GetNodeOrNull<Control>("%EndTurnButton") ?? ui.GetNodeOrNull<Control>("EndTurnButton") : null;
+
+    private void Inspect(Reflection r, Control hand, Control holder, string how)
     {
         if (!GodotObject.IsInstanceValid(holder) || r.OverlayCount() > 0) return;
         IList? holders = r.ActiveHolders(hand);
@@ -238,8 +714,39 @@ internal sealed class PhoneTouchCards
         if (r.OpenInspect(cards, index))
         {
             InspectsOpened++;
+            if (how == "hold")
+            {
+                // A hold opens the screen while the finger is still down. The finger's release must not dismiss it, so the
+                // screen ignores input until the release has been dispatched (re-enabled on the next frame).
+                ShieldInspectRelease(r);
+            }
             GD.Print($"Phone touch cards: {how} opened card {index + 1} of {cards.Count} large.");
         }
+    }
+
+    /// <summary>
+    /// Makes the just-opened inspector ignore input for the rest of this gesture. Godot dispatches the emulated mouse
+    /// release of a touch before the touch release itself, and both happen after this frame's process-frame callbacks, so
+    /// a screen opened under the finger would otherwise receive a release it never saw press. A disabled process mode
+    /// takes the screen's nodes out of input picking (<c>Viewport</c> skips controls that cannot process); the screen's
+    /// tweens still run, so it opens normally. It is re-enabled after the release frame.
+    /// </summary>
+    private void ShieldInspectRelease(Reflection r)
+    {
+        if (_inspectShield != null) RestoreInspectShield();
+        if (r.InspectScreen() is not { } screen || !GodotObject.IsInstanceValid(screen)) return;
+        _inspectShield = screen;
+        _inspectShieldMode = screen.ProcessMode;
+        _inspectShieldReleaseFrame = ulong.MaxValue;
+        screen.ProcessMode = Node.ProcessModeEnum.Disabled;
+    }
+
+    private void RestoreInspectShield()
+    {
+        if (_inspectShield != null && GodotObject.IsInstanceValid(_inspectShield))
+            _inspectShield.ProcessMode = _inspectShieldMode;
+        _inspectShield = null;
+        _inspectShieldReleaseFrame = ulong.MaxValue;
     }
 
     private sealed class Reflection
@@ -247,59 +754,87 @@ internal sealed class PhoneTouchCards
         private readonly PropertyInfo? _roomInstance;
         private readonly PropertyInfo? _roomUi;
         private readonly PropertyInfo? _uiHand;
+        private readonly FieldInfo? _roomCreatureNodes;
         private readonly FieldInfo? _currentCardPlay;
         private readonly MethodInfo? _cancelAll;
+        private readonly MethodInfo? _pressHandHolder;
         private readonly PropertyInfo? _activeHolders;
+        private readonly PropertyInfo? _focusedHolder;
         private readonly PropertyInfo? _playHolder;
         private readonly Type? _mouseCardPlayType;
-        private readonly PropertyInfo? _playZoneThreshold;
+        private readonly FieldInfo? _dragStartY;
+        private readonly MethodInfo? _setTargetPosition;
+        private readonly MethodInfo? _setTargetScale;
         private readonly PropertyInfo? _targetManagerInstance;
         private readonly PropertyInfo? _isInSelection;
+        private readonly MethodInfo? _allowedToTarget;
+        private readonly MethodInfo? _onNodeHovered;
+        private readonly MethodInfo? _onNodeUnhovered;
+        private readonly PropertyInfo? _hoveredNode;
+        private readonly MethodInfo? _finishTargeting;
+        private readonly MethodInfo? _cancelTargeting;
         private readonly PropertyInfo? _holderCardModel;
+        private readonly PropertyInfo? _targetType;
         private readonly PropertyInfo? _overlayInstance;
         private readonly PropertyInfo? _overlayCount;
         private readonly PropertyInfo? _gameInstance;
         private readonly MethodInfo? _getInspectScreen;
         private readonly Type? _cardModelType;
         private readonly PropertyInfo? _currentMode;
-        private readonly FieldInfo? _holderHovered;
 
         public Reflection(Assembly sts2)
         {
             Type? roomType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom");
             _roomInstance = roomType?.GetProperty("Instance", StaticAll);
             _roomUi = roomType?.GetProperty("Ui", InstAll);
+            _roomCreatureNodes = roomType?.GetField("_creatureNodes", InstAll);
             _uiHand = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Combat.NCombatUi")?.GetProperty("Hand", InstAll);
             Type? handType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Combat.NPlayerHand");
             _currentCardPlay = handType?.GetField("_currentCardPlay", InstAll);
             _cancelAll = handType?.GetMethod("CancelAllCardPlay", InstAll, Type.EmptyTypes);
+            _pressHandHolder = handType?.GetMethod("OnHolderPressed", InstAll);
             _activeHolders = handType?.GetProperty("ActiveHolders", InstAll);
+            _focusedHolder = handType?.GetProperty("FocusedHolder", InstAll);
+            _currentMode = handType?.GetProperty("CurrentMode", InstAll);
             _playHolder = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Combat.NCardPlay")?.GetProperty("Holder", InstAll);
             _mouseCardPlayType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Combat.NMouseCardPlay");
-            _playZoneThreshold = _mouseCardPlayType?.GetProperty("PlayZoneThreshold", InstAll);
+            _dragStartY = _mouseCardPlayType?.GetField("_dragStartYPosition", InstAll);
+            Type? holderType = sts2.GetType(HandHolderTypeName);
+            _holderCardModel = holderType?.GetProperty("CardModel", InstAll);
+            _setTargetPosition = holderType?.GetMethod("SetTargetPosition", InstAll, [typeof(Vector2)]);
+            _setTargetScale = holderType?.GetMethod("SetTargetScale", InstAll, [typeof(Vector2)]);
             Type? targetType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Combat.NTargetManager");
             _targetManagerInstance = targetType?.GetProperty("Instance", StaticAll);
             _isInSelection = targetType?.GetProperty("IsInSelection", InstAll);
-            _holderCardModel = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Cards.Holders.NCardHolder")?.GetProperty("CardModel", InstAll);
+            _allowedToTarget = targetType?.GetMethod("AllowedToTargetNode", InstAll, [typeof(Node)]);
+            _onNodeHovered = targetType?.GetMethod("OnNodeHovered", InstAll, [typeof(Node)]);
+            _onNodeUnhovered = targetType?.GetMethod("OnNodeUnhovered", InstAll, [typeof(Node)]);
+            _hoveredNode = targetType?.GetProperty("HoveredNode", InstAll);
+            _finishTargeting = targetType?.GetMethod("FinishTargeting", InstAll, [typeof(bool)]);
+            _cancelTargeting = targetType?.GetMethod("CancelTargeting", InstAll, Type.EmptyTypes);
             Type? overlayType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Screens.Overlays.NOverlayStack");
             _overlayInstance = overlayType?.GetProperty("Instance", StaticAll);
             _overlayCount = overlayType?.GetProperty("ScreenCount", InstAll);
             _gameInstance = typeof(NGame).GetProperty("Instance", StaticAll);
             _getInspectScreen = typeof(NGame).GetMethod("GetInspectCardScreen", InstAll, Type.EmptyTypes);
             _cardModelType = sts2.GetType("MegaCrit.Sts2.Core.Models.CardModel");
-            _currentMode = handType?.GetProperty("CurrentMode", InstAll);
-            _holderHovered = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Cards.Holders.NCardHolder")?.GetField("_isHovered", InstAll);
+            _targetType = _cardModelType?.GetProperty("TargetType", InstAll);
         }
+
+        /// <summary>Whether a release can be snapped to a target at all; without the members the game's cancel handling is
+        /// used instead.</summary>
+        public bool CanTarget =>
+            _targetManagerInstance != null && _allowedToTarget != null && _onNodeHovered != null &&
+            _roomCreatureNodes != null && _cancelTargeting != null;
 
         public bool InPlayMode(Control hand) => _currentMode?.GetValue(hand)?.ToString() == "Play";
 
-        public bool HolderHovered(Control holder) => _holderHovered == null || (bool)(_holderHovered.GetValue(holder) ?? false);
-
         public bool Complete =>
-            _roomInstance != null && _roomUi != null && _uiHand != null && _currentCardPlay != null && _cancelAll != null &&
-            _activeHolders != null && _playHolder != null && _mouseCardPlayType != null && _playZoneThreshold != null &&
-            _targetManagerInstance != null && _isInSelection != null && _holderCardModel != null && _gameInstance != null &&
-            _getInspectScreen != null && _cardModelType != null;
+            _roomInstance != null && _roomUi != null && _uiHand != null && _roomCreatureNodes != null &&
+            _currentCardPlay != null && _cancelAll != null && _pressHandHolder != null && _activeHolders != null &&
+            _playHolder != null && _mouseCardPlayType != null && _targetManagerInstance != null && _isInSelection != null &&
+            _holderCardModel != null && _gameInstance != null && _getInspectScreen != null && _cardModelType != null &&
+            _cancelTargeting != null;
 
         public Control? Hand()
         {
@@ -309,6 +844,13 @@ internal sealed class PhoneTouchCards
             return ui == null ? null : _uiHand!.GetValue(ui) as Control;
         }
 
+        public Control? CombatUi()
+        {
+            object? room = _roomInstance!.GetValue(null);
+            if (room is not Node node || !GodotObject.IsInstanceValid(node)) return null;
+            return _roomUi!.GetValue(room) as Control;
+        }
+
         public object? CurrentCardPlay(Control hand) =>
             _currentCardPlay!.GetValue(hand) is Node play && GodotObject.IsInstanceValid(play) && play.IsInsideTree() ? play : null;
 
@@ -316,23 +858,120 @@ internal sealed class PhoneTouchCards
 
         public Control? PlayHolder(object play) => _playHolder!.GetValue(play) as Control;
 
-        public float? PlayZoneThreshold(object play) => _playZoneThreshold!.GetValue(play) as float?;
+        public void PressHandHolder(Control hand, Control holder) => _pressHandHolder!.Invoke(hand, [holder]);
+
+        public void SetDragStart(Control hand, float y)
+        {
+            object? play = _currentCardPlay?.GetValue(hand);
+            if (play != null && _dragStartY != null) _dragStartY.SetValue(play, y);
+        }
+
+        public void SetTargetPosition(Control holder, Vector2 position) => _setTargetPosition?.Invoke(holder, [position]);
+
+        public void SetTargetScale(Control holder, Vector2 scale) => _setTargetScale?.Invoke(holder, [scale]);
 
         public void CancelAllCardPlay(Control hand) => _cancelAll!.Invoke(hand, null);
 
         public IList? ActiveHolders(Control hand) => _activeHolders!.GetValue(hand) as IList;
 
+        public Control? FocusedHolder(Control hand) => _focusedHolder?.GetValue(hand) as Control;
+
         public object? HolderCardModel(Control holder) => _holderCardModel!.GetValue(holder);
+
+        public string TargetTypeName(Control holder)
+        {
+            object? model = HolderCardModel(holder);
+            if (model == null || _targetType == null) return "";
+            return _targetType.GetValue(model)?.ToString() ?? "";
+        }
+
+        public bool IsSingleTarget(Control holder) => TargetTypeName(holder) is "AnyEnemy" or "AnyAlly";
 
         public bool IsTargeting()
         {
             try
             {
-                object? manager = _targetManagerInstance!.GetValue(null);
+                object? manager = TargetManager();
                 return manager != null && (bool)(_isInSelection!.GetValue(manager) ?? false);
             }
             catch (TargetInvocationException)
             {
+                return false;
+            }
+        }
+
+        public object? TargetManager() => _targetManagerInstance?.GetValue(null);
+
+        public IEnumerable Creatures()
+        {
+            object? room = _roomInstance?.GetValue(null);
+            if (room == null) return Array.Empty<object>();
+            return _roomCreatureNodes?.GetValue(room) as IEnumerable ?? Array.Empty<object>();
+        }
+
+        public bool IsCreature(Control node)
+        {
+            foreach (object? creature in Creatures())
+                if (ReferenceEquals(creature, node)) return true;
+            return false;
+        }
+
+        public bool AllowedToTarget(Node node)
+        {
+            object? manager = TargetManager();
+            if (manager == null || _allowedToTarget == null) return false;
+            try
+            {
+                return (bool)(_allowedToTarget.Invoke(manager, [node]) ?? false);
+            }
+            catch (TargetInvocationException)
+            {
+                return false;
+            }
+        }
+
+        public Node? HoveredNode()
+        {
+            object? manager = TargetManager();
+            return manager == null ? null : _hoveredNode?.GetValue(manager) as Node;
+        }
+
+        public void Hover(Node node)
+        {
+            if (TargetManager() is { } manager) _onNodeHovered?.Invoke(manager, [node]);
+        }
+
+        public void Unhover(Node node)
+        {
+            if (TargetManager() is { } manager) _onNodeUnhovered?.Invoke(manager, [node]);
+        }
+
+        public bool FinishTargeting(bool cancel)
+        {
+            if (TargetManager() is not { } manager || _finishTargeting == null) return false;
+            try
+            {
+                _finishTargeting.Invoke(manager, [cancel]);
+                return true;
+            }
+            catch (Exception error)
+            {
+                GD.PrintErr("Phone touch cards: the game did not finish targeting: ", error.Message);
+                return false;
+            }
+        }
+
+        public bool CancelTargeting()
+        {
+            if (TargetManager() is not { } manager || _cancelTargeting == null) return false;
+            try
+            {
+                _cancelTargeting.Invoke(manager, null);
+                return true;
+            }
+            catch (Exception error)
+            {
+                GD.PrintErr("Phone touch cards: the game did not cancel targeting: ", error.Message);
                 return false;
             }
         }
@@ -354,6 +993,13 @@ internal sealed class PhoneTouchCards
             if (screen == null || open == null) return false;
             open.Invoke(screen, [cards, index, false]);
             return true;
+        }
+
+        public Control? InspectScreen()
+        {
+            object? game = _gameInstance?.GetValue(null);
+            if (game == null || _getInspectScreen == null) return null;
+            return _getInspectScreen.Invoke(game, null) as Control;
         }
     }
 }

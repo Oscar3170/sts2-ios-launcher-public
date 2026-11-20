@@ -3,65 +3,180 @@ namespace STS2Mobile.Platform.Tests;
 public class PortraitCombatMathTests
 {
     [Theory]
-    [InlineData(0, false, 0, 0)]
-    [InlineData(1, false, 0, 1)]
-    [InlineData(3, false, 0, 3)]
-    [InlineData(5, false, 0, 5)]
-    [InlineData(6, true, 3, 3)]
-    [InlineData(7, true, 4, 3)]
-    [InlineData(8, true, 4, 4)]
-    [InlineData(9, true, 5, 4)]
-    [InlineData(10, true, 5, 5)]
-    public void SplitHandRowsUsesSingleRowUpToFiveAndCeilFloorAboveFive(
-        int count,
-        bool expectedTwoRows,
-        int expectedBack,
-        int expectedFront)
+    [InlineData(0, 0, 0)]
+    [InlineData(1, 1, 0)]
+    [InlineData(3, 3, 0)]
+    [InlineData(4, 3, 1)]
+    [InlineData(5, 3, 2)]
+    [InlineData(6, 3, 3)]
+    [InlineData(7, 4, 3)]
+    [InlineData(8, 4, 4)]
+    [InlineData(9, 5, 4)]
+    [InlineData(10, 5, 5)]
+    [InlineData(12, 6, 6)]
+    public void UpperRowFillsFirstAndTakesAtLeastThree(int count, int expectedUpper, int expectedLower)
     {
         HandRowSplit split = PortraitCombatMath.SplitHandRows(count);
-        Assert.Equal(expectedTwoRows, split.TwoRows);
-        Assert.Equal(expectedBack, split.BackRowCount);
-        Assert.Equal(expectedFront, split.FrontRowCount);
+        Assert.Equal(expectedUpper, split.BackRowCount);
+        Assert.Equal(expectedLower, split.FrontRowCount);
         Assert.Equal(count, split.BackRowCount + split.FrontRowCount);
-    }
-
-    [Fact]
-    public void DraggingSixthCardKeepsTwoRowModeUntilCardPlayFinishes()
-    {
-        // When a 6-card hand begins dragging 1 card, 5 holders remain in CardHolderContainer while InCardPlay is true.
-        int whileDragging = PortraitCombatMath.EffectiveCardCount(activeHoldersInHand: 5, inUncommittedCardPlay: true);
-        Assert.True(PortraitCombatMath.UsesTwoCardRows(whileDragging));
-
-        // Once the card play commits, 5 holders remain with InCardPlay false, collapsing to 1 row.
-        int afterPlayed = PortraitCombatMath.EffectiveCardCount(activeHoldersInHand: 5, inUncommittedCardPlay: false);
-        Assert.False(PortraitCombatMath.UsesTwoCardRows(afterPlayed));
+        Assert.True(split.BackRowCount >= split.FrontRowCount);
     }
 
     [Theory]
     [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void OneToThreeCardsSitInTheUpperRowSoTheFirstDrawsNeverStartLow(int count)
+    {
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
+        {
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
+            for (int i = 0; i < count; i++)
+            {
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
+                Assert.Equal(0, slot.RowIndex);
+            }
+            Assert.Equal(
+                PortraitCombatMath.ComputeHandCardSlot(3, 0, focusedIndex: -1, bands).LocalY,
+                PortraitCombatMath.ComputeHandCardSlot(1, 0, focusedIndex: -1, bands).LocalY);
+        }
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void RowsKeepTheirVerticalPlacementWhateverTheCount(float canvasHeight)
+    {
+        // The two rows are a permanent reserve: every card in a row has the same centre at every hand size, so drawing a
+        // card never slides the existing rows up or down (a shrunken tall card is centred inside its reserved band).
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+        float? upper = null;
+        float? lower = null;
+        for (int count = 1; count <= 12; count++)
+        {
+            bool hasLeader = false;
+            for (int i = 0; i < count; i++)
+            {
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
+                if (slot.RowIndex == 0)
+                {
+                    if (upper is { } expectedUpper)
+                        Assert.Equal(expectedUpper, slot.LocalY, 3);
+                    else
+                        upper = slot.LocalY;
+                    hasLeader = true;
+                }
+                else
+                {
+                    if (lower is { } expectedLower)
+                        Assert.Equal(expectedLower, slot.LocalY, 3);
+                    else
+                        lower = slot.LocalY;
+                }
+
+                float top = canvasHeight + slot.LocalY - PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
+                float bottom = canvasHeight + slot.LocalY + PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
+                Assert.True(top >= bands.HandTopY - 0.01f, $"Card {i}/{count} top {top} is above hand top {bands.HandTopY}.");
+                Assert.True(bottom <= canvasHeight + 0.01f, $"Card {i}/{count} bottom {bottom} is off the canvas.");
+            }
+            Assert.True(hasLeader);
+            if (count > 3)
+                Assert.NotNull(lower);
+        }
+
+        Assert.NotNull(upper);
+        Assert.NotNull(lower);
+        Assert.True(upper.Value < lower.Value, $"Upper row centre {upper.Value} is not above lower row centre {lower.Value}.");
+    }
+
+    [Fact]
+    public void HoldingACardKeepsTheTwoRowCountUntilCardPlayFinishes()
+    {
+        // A held card's slot stays empty, so the effective count must keep the row split (and the other cards' places)
+        // exactly as they were with the card in the hand.
+        int whileDragging = PortraitCombatMath.EffectiveCardCount(activeHoldersInHand: 5, inUncommittedCardPlay: true);
+        Assert.Equal(PortraitCombatMath.SplitHandRows(6), PortraitCombatMath.SplitHandRows(whileDragging));
+    }
+
+    [Fact]
+    public void CompactBandsAndHandAreUnchanged()
+    {
+        const float canvasHeight = 1920f;
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
+        Assert.True(bands.Compact);
+        Assert.Equal(1198.32f, bands.HandTopY, 1);
+        Assert.Equal(1028.32f, bands.RailTopY, 1);
+        Assert.Equal(958.32f, bands.FrontFeetY, 1);
+
+        for (int count = 1; count <= 10; count++)
+        {
+            Assert.Equal(PortraitCombatMath.CompactHandCardScale, PortraitCombatMath.HandCardScaleFor(bands, count), 4);
+            Assert.Equal(PortraitCombatMath.CompactHandCardScale * PortraitCombatMath.HeldCardGrowth,
+                PortraitCombatMath.HeldCardScaleFor(bands, count), 4);
+        }
+    }
+
+    [Fact]
+    public void TallBandsAndHandFollowTouchSpire()
+    {
+        const float canvasHeight = 2340f;
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
+        Assert.False(bands.Compact);
+        Assert.Equal(1534.24f, bands.HandTopY, 1);
+        Assert.Equal(1373.53f, bands.RailTopY, 1);
+        Assert.Equal(1243.53f, bands.FrontFeetY, 1);
+        Assert.Equal(160.71f, PortraitCombatMath.RailHeightFor(compact: false), 2);
+
+        // The reserve is constant: every count's cards stay inside it and bottom-aligned above the home indicator.
+        for (int count = 1; count <= 10; count++)
+        {
+            HandRowFit fit = PortraitCombatMath.ComputeHandRowFit(bands, count);
+            for (int i = 0; i < count; i++)
+            {
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
+                float cardTop = canvasHeight + slot.LocalY - PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
+                float cardBottom = canvasHeight + slot.LocalY + PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
+                Assert.True(cardTop >= bands.HandTopY - 0.01f, $"Card {i}/{count} top {cardTop} is above hand top {bands.HandTopY}.");
+                Assert.True(cardBottom <= canvasHeight + 0.01f, $"Card {i}/{count} bottom {cardBottom} is off the canvas.");
+                Assert.Equal(fit.Scale, slot.Scale, 4);
+                Assert.Equal(0f, slot.AngleDegrees);
+            }
+        }
+
+        // TouchSpireUI's width fit, converted: 1-6 cards use the full 1.35 scale, 7-8 shrink for four columns, 9-10 for five.
+        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 1), 0.866f, 0.870f);
+        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 6), 0.866f, 0.870f);
+        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 7), 0.806f, 0.810f);
+        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 8), 0.806f, 0.810f);
+        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 9), 0.643f, 0.648f);
+        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 10), 0.643f, 0.648f);
+        Assert.Equal(PortraitCombatMath.HandCardScaleFor(bands, 10) * 1.08f,
+            PortraitCombatMath.HeldCardScaleFor(bands, 10), 4);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
     [InlineData(5)]
     [InlineData(6)]
     [InlineData(9)]
     [InlineData(10)]
-    public void AllHandSlotsStayInsidePortraitCanvasAndClearCornerPiles(int count)
+    public void HandNeverReachesTheRailAtEitherTestShape(int count)
     {
-        const float canvasHeight = 2341f;
-        const float stageTopY = 436f;
-        bool twoRows = PortraitCombatMath.UsesTwoCardRows(count);
-        PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvasHeight, stageTopY, twoRows);
-
-        float drawPileTop = hud.DrawShowY + 40f - 40f * hud.PileScale;
-        float energyBottom = hud.EnergyContainerY + 64f + 64f * hud.EnergyScale;
-
-        for (int i = 0; i < count; i++)
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
         {
-            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, playable: true, handDisabled: false);
-            float halfH = PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
-            float top = canvasHeight + slot.LocalY - halfH;
-            float bottom = canvasHeight + slot.LocalY + halfH;
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+            PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvasHeight, bands);
 
-            Assert.True(top > energyBottom, $"Card {i}/{count} top {top} overlapped HUD bottom {energyBottom}.");
-            Assert.True(bottom < drawPileTop, $"Card {i}/{count} bottom {bottom} overlapped corner piles top {drawPileTop}.");
+            Assert.Equal(bands.RailTopY, hud.RailTopY);
+
+            for (int i = 0; i < count; i++)
+            {
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
+                float cardTop = canvasHeight + slot.LocalY - PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
+                Assert.True(cardTop >= bands.HandTopY - 0.01f, $"Card {i}/{count} at {canvasHeight} reached the rail.");
+            }
         }
     }
 
@@ -76,16 +191,30 @@ public class PortraitCombatMathTests
     [InlineData(12)]
     public void EveryHandCardStaysInsideTheSideEdgesWithItsBadgeAndRotationWhateverIsFocused(int count)
     {
-        for (int focused = -1; focused < count; focused++)
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
         {
-            for (int i = 0; i < count; i++)
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
+            for (int focused = -1; focused < count; focused++)
             {
-                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focused, playable: true, handDisabled: false);
-                float extent = PortraitCombatMath.HandSlotHalfExtent(slot.Scale, slot.AngleDegrees);
-                float left = 540f + slot.LocalX - extent;
-                float right = 540f + slot.LocalX + extent;
-                Assert.True(left >= PortraitCombatMath.HandEdgeMargin - 0.01f, $"Card {i}/{count} (focused {focused}) left edge {left}.");
-                Assert.True(right <= 1080f - PortraitCombatMath.HandEdgeMargin + 0.01f, $"Card {i}/{count} (focused {focused}) right edge {right}.");
+                for (int i = 0; i < count; i++)
+                {
+                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focused, bands);
+                    float extent = PortraitCombatMath.HandSlotHalfExtent(slot.Scale, slot.AngleDegrees);
+                    float left = 540f + slot.LocalX - extent;
+                    float right = 540f + slot.LocalX + extent;
+                    if (focused < 0)
+                    {
+                        Assert.True(left >= PortraitCombatMath.HandEdgeMargin - 0.01f, $"Card {i}/{count} (focused {focused}) left edge {left}.");
+                        Assert.True(right <= 1080f - PortraitCombatMath.HandEdgeMargin + 0.01f, $"Card {i}/{count} (focused {focused}) right edge {right}.");
+                    }
+                    else
+                    {
+                        // A pressed card grows about its centre without moving; near the edge that may use the last few
+                        // units of the margin, but it must stay on the canvas (compact clamps to the margin exactly).
+                        Assert.True(left >= -0.01f, $"Card {i}/{count} (focused {focused}) left edge {left}.");
+                        Assert.True(right <= 1080f + 0.01f, $"Card {i}/{count} (focused {focused}) right edge {right}.");
+                    }
+                }
             }
         }
     }
@@ -94,17 +223,34 @@ public class PortraitCombatMathTests
     [InlineData(5)]
     [InlineData(8)]
     [InlineData(10)]
-    public void FocusingACardLeavesEveryOtherCardWhereItWas(int count)
+    public void FocusingAGrowsTheCardInPlaceWithoutMovingItOrItsNeighbours(int count)
     {
-        // A touch focuses the card under the finger; the rest of the hand must not move (the hand bounced on a touch).
-        for (int focused = 0; focused < count; focused++)
+        // A touch focuses the card under the finger: it grows about its own centre by 1.08 of its own resting scale,
+        // keeping its slot, row and angle, and the rest of the hand does not move at all.
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
         {
-            for (int i = 0; i < count; i++)
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
+            for (int focused = 0; focused < count; focused++)
             {
-                if (i == focused) continue;
-                PortraitCardSlot rest = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, playable: true, handDisabled: false);
-                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focused, playable: true, handDisabled: false);
-                Assert.Equal(rest, slot);
+                PortraitCardSlot rest = PortraitCombatMath.ComputeHandCardSlot(count, focused, focusedIndex: -1, bands);
+                PortraitCardSlot grown = PortraitCombatMath.ComputeHandCardSlot(count, focused, focused, bands);
+
+                Assert.Equal(PortraitCombatMath.HandCardScaleFor(bands, count) * 1.08f, grown.Scale, 4);
+                Assert.True(grown.Scale > rest.Scale);
+                Assert.Equal(rest.LocalX, grown.LocalX);
+                Assert.Equal(rest.LocalY, grown.LocalY);
+                // Straightened as it grows, as the native hover does; the holder turns about its own centre, so the card's
+                // visual centre stays under the finger and its axis-aligned rect centre no longer drifts with rotation.
+                Assert.Equal(0f, grown.AngleDegrees);
+                Assert.Equal(rest.RowIndex, grown.RowIndex);
+
+                for (int i = 0; i < count; i++)
+                {
+                    if (i == focused) continue;
+                    Assert.Equal(
+                        PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands),
+                        PortraitCombatMath.ComputeHandCardSlot(count, i, focused, bands));
+                }
             }
         }
     }
@@ -115,81 +261,255 @@ public class PortraitCombatMathTests
     public void HoldingACardLeavesItsSlotEmptySoTheOthersStayPut(int count)
     {
         // Every touch picks the card up; the rest of the hand keeps the places it had with the card in it.
-        for (int held = 0; held < count; held++)
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
         {
-            for (int i = 0; i < count - 1; i++)
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
+            for (int held = 0; held < count; held++)
             {
-                int slot = PortraitCombatMath.SlotIndexBesideHeldCard(i, held);
-                int original = i < held ? i : i + 1;
-                Assert.Equal(original, slot);
-                Assert.Equal(
-                    PortraitCombatMath.ComputeHandCardSlot(count, original, focusedIndex: -1, playable: true, handDisabled: false),
-                    PortraitCombatMath.ComputeHandCardSlot(count, slot, focusedIndex: -1, playable: true, handDisabled: false));
+                for (int i = 0; i < count - 1; i++)
+                {
+                    int slot = PortraitCombatMath.SlotIndexBesideHeldCard(i, held);
+                    int original = i < held ? i : i + 1;
+                    Assert.Equal(original, slot);
+                    Assert.Equal(
+                        PortraitCombatMath.ComputeHandCardSlot(count, original, focusedIndex: -1, bands),
+                        PortraitCombatMath.ComputeHandCardSlot(count, slot, focusedIndex: -1, bands));
+                }
             }
         }
         Assert.Equal(3, PortraitCombatMath.SlotIndexBesideHeldCard(3, -1));
     }
 
     [Fact]
-    public void FiveCardFanStillSpreadsAcrossMostOfTheWidth()
+    public void FiveCardsFillThreeUpperSlotsAndTwoLowerOnes()
     {
-        PortraitCardSlot first = PortraitCombatMath.ComputeHandCardSlot(5, 0, focusedIndex: -1, playable: true, handDisabled: false);
-        PortraitCardSlot last = PortraitCombatMath.ComputeHandCardSlot(5, 4, focusedIndex: -1, playable: true, handDisabled: false);
-        Assert.InRange(last.LocalX - first.LocalX, 600f, 700f);
-        Assert.Equal(-first.LocalX, last.LocalX, 3);
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(1920f, 612f);
+        PortraitCardSlot upperLeft = PortraitCombatMath.ComputeHandCardSlot(5, 0, focusedIndex: -1, bands);
+        PortraitCardSlot upperMiddle = PortraitCombatMath.ComputeHandCardSlot(5, 1, focusedIndex: -1, bands);
+        PortraitCardSlot upperRight = PortraitCombatMath.ComputeHandCardSlot(5, 2, focusedIndex: -1, bands);
+        PortraitCardSlot lowerLeft = PortraitCombatMath.ComputeHandCardSlot(5, 3, focusedIndex: -1, bands);
+        PortraitCardSlot lowerRight = PortraitCombatMath.ComputeHandCardSlot(5, 4, focusedIndex: -1, bands);
+
+        Assert.All(new[] { upperLeft, upperMiddle, upperRight }, slot => Assert.Equal(0, slot.RowIndex));
+        Assert.All(new[] { lowerLeft, lowerRight }, slot => Assert.Equal(1, slot.RowIndex));
+        Assert.Equal(0f, upperMiddle.LocalX);
+        Assert.Equal(-upperLeft.LocalX, upperRight.LocalX, 3);
+        Assert.Equal(-lowerLeft.LocalX, lowerRight.LocalX, 3);
+        Assert.InRange(upperRight.LocalX - upperLeft.LocalX, 300f, 450f);
     }
 
     [Fact]
-    public void TenCardTwoRowFanExposesOverSeventyFivePercentOfBackRowCards()
+    public void TenCardsFillBothRowsAndKeepTheUpperRowCardsReadable()
     {
-        PortraitCardSlot backCenter = PortraitCombatMath.ComputeHandCardSlot(10, 2, focusedIndex: -1, playable: true, handDisabled: false);
-        PortraitCardSlot frontCenter = PortraitCombatMath.ComputeHandCardSlot(10, 7, focusedIndex: -1, playable: true, handDisabled: false);
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(1920f, 612f);
+        PortraitCardSlot upperCenter = PortraitCombatMath.ComputeHandCardSlot(10, 2, focusedIndex: -1, bands);
+        PortraitCardSlot lowerCenter = PortraitCombatMath.ComputeHandCardSlot(10, 7, focusedIndex: -1, bands);
 
-        Assert.Equal(0, backCenter.RowIndex);
-        Assert.Equal(1, frontCenter.RowIndex);
+        Assert.Equal(0, upperCenter.RowIndex);
+        Assert.Equal(1, lowerCenter.RowIndex);
 
-        float cardHeight = PortraitCombatMath.CardDefaultHeight * backCenter.Scale;
-        float visibleBackHeight = frontCenter.LocalY - backCenter.LocalY;
-        Assert.InRange(visibleBackHeight / cardHeight, 0.78f, 1.2f);
+        float cardHeight = PortraitCombatMath.CardDefaultHeight * upperCenter.Scale;
+        float visibleUpperHeight = lowerCenter.LocalY - upperCenter.LocalY - PortraitCombatMath.CardDefaultHeight * lowerCenter.Scale * 0.5f
+            + PortraitCombatMath.CardDefaultHeight * upperCenter.Scale * 0.5f;
+        Assert.True(visibleUpperHeight > 0f);
+        Assert.True(visibleUpperHeight / cardHeight > 0.9f);
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void SelectionConfirmSitsOnTheRailAndPreviewsFitAboveIt(float canvasHeight)
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+        float promptBottom = canvasHeight * 0.5f - 292f;
+        PortraitSelectionLayout layout = PortraitCombatMath.ComputeSelectionLayout(bands, promptBottom);
+
+        // The Confirm takes the rail's right end, over the inactive discard pile, with the hand edge margin.
+        Assert.Equal(948f, layout.ConfirmCenterX, 3);
+        Assert.True(layout.ConfirmCenterX > 540f);
+        Assert.True(layout.ConfirmCenterX - 100f * layout.ConfirmScale >= PortraitCombatMath.HandEdgeMargin - 0.01f);
+        Assert.True(layout.ConfirmCenterX + 100f * layout.ConfirmScale <= 1080f - PortraitCombatMath.HandEdgeMargin + 0.01f);
+        Assert.InRange(layout.ConfirmCenterY, bands.RailTopY, bands.HandTopY);
+        Assert.True(200f * layout.ConfirmScale >= 127f);
+        Assert.True(110f * layout.ConfirmScale >= 127f);
+
+        Assert.True(layout.PreviewTopY > promptBottom);
+        Assert.InRange(layout.PreviewScale, 0.55f, 0.9f);
+        Assert.True(300f * layout.PreviewScale >= 127f);
+        Assert.True(layout.PreviewCenterY + PortraitCombatMath.CardDefaultHeight * layout.PreviewScale * 0.5f
+            <= bands.RailTopY - PortraitCombatMath.SelectionPreviewGap + 0.01f);
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void RailSitsBetweenTheBandsWithFortyFourPointControls(float canvasHeight)
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+        PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvasHeight, bands);
+
+        Assert.Equal(bands.RailTopY, hud.RailTopY);
+        Assert.True(bands.RailTopY < bands.HandTopY);
+        Assert.True(bands.FrontFeetY < bands.RailTopY);
+
+        // Every control's centre line stays inside the rail.
+        Assert.InRange(hud.EndTurnShowY + 45f, bands.RailTopY, bands.HandTopY);
+        Assert.InRange(hud.EnergyContainerY + 64f, bands.RailTopY, bands.HandTopY);
+        Assert.InRange(hud.DrawShowY + 40f, bands.RailTopY, bands.HandTopY);
+        Assert.InRange(hud.DiscardShowY + 40f, bands.RailTopY, bands.HandTopY);
+        Assert.InRange(hud.ExhaustShowY + 40f, bands.RailTopY, bands.HandTopY);
+
+        // 44 points a finger needs: End Turn is 90 units tall at 1.42, the piles 80 at 1.6, energy 128 at 1.12.
+        Assert.True(90f * hud.EndTurnScale >= 127f);
+        Assert.True(80f * hud.PileScale >= 127f);
+        Assert.True(128f * hud.EnergyScale >= 127f);
+        Assert.True(hud.EndTurnShowY + 45f + 90f * hud.EndTurnScale * 0.5f <= bands.HandTopY);
+        Assert.True(hud.PingShowY < bands.RailTopY);
+
+        // End Turn is centred for every character: the star is a corner badge, not a rail slot.
+        float endTurnVisualLeft = hud.EndTurnShowX - 110f * (hud.EndTurnScale - 1f);
+        Assert.Equal(540f, endTurnVisualLeft + 110f * hud.EndTurnScale, 3);
+
+        // The energy counter keeps the same rail place for every character; the star is a small corner badge on it.
+        Assert.Equal(160f, hud.EnergyContainerX, 3);
+        float orbSize = PortraitCombatMath.EnergyOrbSize * hud.EnergyScale;
+        float orbCenterX = hud.EnergyContainerX + PortraitCombatMath.EnergyOrbSize * 0.5f;
+        float orbCenterY = hud.EnergyContainerY + PortraitCombatMath.EnergyOrbSize * 0.5f;
+        float orbLeft = orbCenterX - orbSize * 0.5f;
+        float orbRight = orbCenterX + orbSize * 0.5f;
+        float orbTop = orbCenterY - orbSize * 0.5f;
+        float orbBottom = orbCenterY + orbSize * 0.5f;
+
+        // TouchSpireUI's lower-left placement, lifted only as far as its count number needs to clear the draw pile and
+        // the energy number: the badge art still overlaps the orb, but the visible number is above the rail controls.
+        float starSize = PortraitCombatMath.EnergyOrbSize * hud.StarScale * hud.EnergyScale;
+        Assert.Equal(orbSize * 0.8f, starSize, 2);
+        Assert.Equal(orbCenterX + orbSize * PortraitCombatMath.StarOrbOffsetX, hud.StarCenterX, 2);
+        Assert.Equal(orbCenterY + orbSize * PortraitCombatMath.StarOrbOffsetY - PortraitCombatMath.StarBadgeLift,
+            hud.StarCenterY, 2);
+
+        float starHalf = starSize * 0.5f;
+        float starLeft = hud.StarCenterX - starHalf;
+        float starRight = hud.StarCenterX + starHalf;
+        float starTop = hud.StarCenterY - starHalf;
+        float starBottom = hud.StarCenterY + starHalf;
+
+        // The badge still sits on the orb's left and overlaps its art, but it is lifted clear of the rail.
+        Assert.True(starLeft < orbRight && starRight > orbLeft && starTop < orbBottom && starBottom > orbTop);
+        Assert.True(hud.StarCenterX < orbCenterX);
+        Assert.True(hud.StarCenterY < orbCenterY);
+
+        // Native star_counter.tscn: CountLabel font 36, MarginContainer margin_top 41, outline 14, [center]-aligned;
+        // text line height is 1.28 of the font size. Only the drawn glyph box matters, not the label's control rect.
+        const float lineHeight = 1.28f;
+        const float countFontSize = 36f;
+        const float countTopMargin = 41f;
+        const float countOutline = 14f;
+        const float energyFontSize = 36f;
+        const float energyOutline = 16f;
+        float starCanvasScale = hud.StarScale * hud.EnergyScale;
+        float glyphHeight = (countFontSize * lineHeight + 2f * countOutline) * starCanvasScale;
+        float glyphTop = starTop + (countTopMargin - countOutline) * starCanvasScale;
+        float glyphBottom = glyphTop + glyphHeight;
+
+        // The energy number is the same native font at 1.12, vertically centred on the orb; its ink starts above the
+        // star's, because the star number is lifted over the orb's lower-left art.
+        float energyGlyphHeight = (energyFontSize * lineHeight + 2f * energyOutline) * hud.EnergyScale;
+        float energyGlyphTop = orbCenterY - energyGlyphHeight * 0.5f;
+        float drawTop = hud.DrawShowY + 40f * (1f - hud.PileScale);
+        float endTurnLeft = hud.EndTurnShowX - 110f * (hud.EndTurnScale - 1f);
+
+        foreach (int digits in new[] { 1, 2 })
+        {
+            // A digit's advance is about the font size; this is the drawn number, not the overlay's control rect.
+            float glyphWidth = countFontSize * starCanvasScale * digits;
+            float glyphLeft = hud.StarCenterX - glyphWidth * 0.5f;
+            float glyphRight = hud.StarCenterX + glyphWidth * 0.5f;
+            Assert.True(glyphBottom < drawTop, $"{digits}-digit glyph bottom {glyphBottom} vs draw top {drawTop}.");
+            Assert.True(glyphBottom < energyGlyphTop,
+                $"{digits}-digit glyph bottom {glyphBottom} vs energy glyph top {energyGlyphTop}.");
+            Assert.True(glyphBottom < bands.HandTopY);
+            Assert.True(glyphTop >= starTop && glyphBottom <= starBottom);
+            Assert.True(glyphLeft >= starLeft && glyphRight <= starRight);
+            Assert.True(glyphRight < endTurnLeft);
+            Assert.True(glyphRight < orbCenterX);
+            Assert.True(glyphLeft > 0f && glyphBottom <= canvasHeight);
+        }
+        Assert.True(starSize >= 100f); // readable
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void TenSelectedPreviewsWrapIntoTwoRowsInsideThePromptRailBand(float canvasHeight)
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+        float promptBottom = canvasHeight * 0.5f - 292f;
+        PortraitSelectedCardsLayout layout = PortraitCombatMath.ComputeSelectedCardsLayout(10, bands, promptBottom);
+
+        Assert.Equal(2, layout.Rows);
+        Assert.Equal(5, layout.Columns);
+        float top = Math.Max(bands.StageTopY + 8f, promptBottom + 8f);
+        float bottom = bands.RailTopY - PortraitCombatMath.SelectionPreviewGap;
+        float totalWidth = layout.CardWidth + layout.StepX * (layout.Columns - 1);
+        float totalHeight = layout.CardHeight + layout.StepY * (layout.Rows - 1);
+
+        Assert.True(totalWidth * layout.Scale <= 1080f - 32f + 0.01f);
+        Assert.True(totalHeight * layout.Scale <= bottom - top + 0.01f);
+        Assert.True(layout.StepX > layout.CardWidth);
+        Assert.True(layout.StepY > layout.CardHeight);
+        Assert.True(layout.CenterY - totalHeight * layout.Scale * 0.5f >= top - 0.01f);
+        Assert.True(layout.CenterY + totalHeight * layout.Scale * 0.5f <= bottom + 0.01f);
+
+        for (int i = 0; i < 10; i++)
+        {
+            int row = i / layout.Columns;
+            int column = i % layout.Columns;
+            int rowCount = Math.Min(layout.Columns, 10 - row * layout.Columns);
+            float x = 540f + (column - (rowCount - 1) * 0.5f) * layout.StepX * layout.Scale;
+            float y = layout.CenterY + (row - (layout.Rows - 1) * 0.5f) * layout.StepY * layout.Scale;
+            float halfW = layout.CardWidth * layout.Scale * 0.5f;
+            float halfH = layout.CardHeight * layout.Scale * 0.5f;
+            Assert.InRange(x - halfW, 16f - 0.01f, 1064f);
+            Assert.InRange(x + halfW, 16f, 1064f + 0.01f);
+            Assert.InRange(y - halfH, top - 0.01f, bottom);
+            Assert.InRange(y + halfH, top, bottom + 0.01f);
+        }
     }
 
     [Fact]
-    public void StageDropsLowerWhenHandCollapsesFromTwoRowsToOneRow()
+    public void FiveSelectedPreviewsStayInOneRow()
     {
-        const float canvasHeight = 2341f;
-        const float stageTopY = 436f;
-        PortraitHudLayout hudTwo = PortraitCombatMath.ComputeHudLayout(canvasHeight, stageTopY, twoRows: true);
-        PortraitHudLayout hudOne = PortraitCombatMath.ComputeHudLayout(canvasHeight, stageTopY, twoRows: false);
-
-        Assert.True(hudOne.HudTopY > hudTwo.HudTopY + 180f);
-
-        PortraitCreatureSlot[] enemiesTwo = PortraitCombatMath.ComputeEnemyStageSlots(2, stageTopY, hudTwo.HudTopY, twoRows: true);
-        PortraitCreatureSlot[] enemiesOne = PortraitCombatMath.ComputeEnemyStageSlots(2, stageTopY, hudOne.HudTopY, twoRows: false);
-        Assert.True(enemiesOne[0].CanvasFeetY > enemiesTwo[0].CanvasFeetY + 120f);
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(2340f, stageTopY: 612f);
+        PortraitSelectedCardsLayout layout = PortraitCombatMath.ComputeSelectedCardsLayout(5, bands, 878f);
+        Assert.Equal(1, layout.Rows);
+        Assert.Equal(5, layout.Columns);
+        Assert.True(layout.Scale > 0.7f);
     }
 
     [Fact]
     public void FiveEnemyAndPetStageUsesTwoBackPlusThreeFrontStaggerWithoutCrossingColumns()
     {
-        const float stageTopY = 436f;
-        const float hudTopY = 1209f;
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 436f);
 
         PortraitCreatureSlot[] allies = PortraitCombatMath.ComputeAllyStageSlots(
-            playerCount: 1, petCount: 1, hasOrbs: true, stageTopY, hudTopY, twoRows: true);
+            playerCount: 1, petCount: 1, hasOrbs: true, bands);
         Assert.Equal(2, allies.Length);
         Assert.All(allies, slot => Assert.InRange(slot.CanvasX, 120f, 395f));
         Assert.True(allies[1].CanvasFeetY > allies[0].CanvasFeetY + 150f);
 
-        PortraitCreatureSlot[] enemies = PortraitCombatMath.ComputeEnemyStageSlots(5, stageTopY, hudTopY, twoRows: true);
+        var shape = new PortraitCombatMath.PortraitStageShape(Capacity: 5, bands.Compact, Dominant: false, Segmented: false);
+        PortraitCreatureSlot[] enemies = PortraitCombatMath.ComputeEnemyStageSlots(shape, bands);
         Assert.Equal(5, enemies.Length);
         Assert.Equal(2, enemies.Count(e => e.RowDepth == 0));
         Assert.Equal(3, enemies.Count(e => e.RowDepth == 1));
         Assert.All(enemies, slot => Assert.InRange(slot.CanvasX, 480f, 1010f));
 
-        // Back row sits higher on screen (smaller Y) and horizontally between the 3 front-row slots.
-        Assert.True(enemies[0].CanvasFeetY < enemies[2].CanvasFeetY - 200f);
-        Assert.InRange(enemies[0].CanvasX, enemies[2].CanvasX + 60f, enemies[3].CanvasX - 60f);
-        Assert.InRange(enemies[1].CanvasX, enemies[3].CanvasX + 60f, enemies[4].CanvasX - 60f);
+        // The two ranks share columns, ordered left to right; the back rank stands exactly one 250-unit rank higher.
+        for (int i = 0; i + 1 < enemies.Length; i++)
+            Assert.True(enemies[i].CanvasX < enemies[i + 1].CanvasX);
+        Assert.All(enemies, slot => Assert.Equal(
+            slot.RowDepth == 0 ? bands.FrontFeetY - 250f : bands.FrontFeetY, slot.CanvasFeetY));
     }
 
     [Fact]
@@ -202,7 +522,8 @@ public class PortraitCombatMathTests
         Assert.Equal(560f, PortraitCombatMath.EnemyStageLeft(playersHitRight: 300f, alliesHitRight: 452f, minimum: 360f));
         Assert.Equal(360f, PortraitCombatMath.EnemyStageLeft(playersHitRight: 0f, alliesHitRight: 0f, minimum: 360f));
 
-        PortraitCreatureSlot[] lone = PortraitCombatMath.ComputeAllyStageSlots(1, 0, hasOrbs: false, 436f, 1400f, twoRows: false);
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 436f);
+        PortraitCreatureSlot[] lone = PortraitCombatMath.ComputeAllyStageSlots(1, 0, hasOrbs: false, bands);
         Assert.Equal(PortraitCombatMath.LonePlayerX, lone[0].CanvasX);
         Assert.Equal(0.80f, lone[0].BaseScale);
     }
@@ -222,6 +543,269 @@ public class PortraitCombatMathTests
         Assert.Equal(slot.CanvasFeetY, squeezed.CanvasFeetY);
         Assert.Equal(0.76f * k, squeezed.BaseScale, 0.0001f);
         Assert.Equal(slot, PortraitCombatMath.SqueezeEnemySlot(slot, 1f));
+    }
+
+    [Fact]
+    public void CombatStageDependsOnlyOnTheBandsAndNeverOnTheHand()
+    {
+        // The bands are the whole stage geometry: canvas height and stage top in, nothing about cards out. Two passes give
+        // the same stage, whatever the hand holds, and the front rank stands on the fixed foot line.
+        PortraitCombatBands tall = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 436f);
+        Assert.False(tall.Compact);
+        Assert.Equal(tall, PortraitCombatMath.ComputeCombatBands(2340f, 436f));
+        Assert.True(tall.FrontFeetY < tall.RailTopY && tall.FrontFeetY > tall.StageTopY);
+
+        var shape = new PortraitCombatMath.PortraitStageShape(Capacity: 2, tall.Compact, Dominant: false, Segmented: false);
+        PortraitCreatureSlot[] first = PortraitCombatMath.ComputeEnemyStageSlots(shape, tall);
+        PortraitCreatureSlot[] second = PortraitCombatMath.ComputeEnemyStageSlots(shape, tall);
+        Assert.True(first.SequenceEqual(second));
+        Assert.Equal(tall.FrontFeetY, first[0].CanvasFeetY);
+        Assert.Equal(tall.FrontFeetY - 118f, first[1].CanvasFeetY);
+
+        PortraitCombatBands compact = PortraitCombatMath.ComputeCombatBands(canvasHeight: 1920f, stageTopY: 436f);
+        Assert.True(compact.Compact);
+        Assert.Equal(compact.HandTopY - 240f, compact.FrontFeetY);
+    }
+
+    [Fact]
+    public void SharedPeerScaleUsesTheTightestFrameAndStopsAtTheLegibilityFloor()
+    {
+        var roomy = new[] { new PortraitCombatMath.PortraitFrameFit(300f, 420f, 500f, 600f, 0.88f) };
+        Assert.Equal(1f, PortraitCombatMath.SharedPeerScale(roomy, out bool floored));
+        Assert.False(floored);
+
+        // A large monster in a tight frame needs 0.483 / 0.82 = 0.589 of its slot, below the floor: the room shares the
+        // floor instead of shrinking every peer to the giant's size.
+        var crowded = new[]
+        {
+            new PortraitCombatMath.PortraitFrameFit(300f, 420f, 500f, 600f, 0.88f),
+            new PortraitCombatMath.PortraitFrameFit(600f, 800f, 290f, 420f, 0.82f),
+        };
+        float peer = PortraitCombatMath.SharedPeerScale(crowded, out floored);
+        Assert.True(floored);
+        Assert.Equal(PortraitCombatMath.PeerScaleFloor, peer);
+        Assert.InRange(PortraitCombatMath.FitCreatureScale(0.82f, peer, 600f, 800f, 290f, 420f), 0.48f, 0.49f);
+        Assert.Equal(0.88f * PortraitCombatMath.PeerScaleFloor,
+            PortraitCombatMath.FitCreatureScale(0.88f, peer, 300f, 420f, 500f, 600f), 0.0001f);
+
+        // Without the floor the same shared scale shrinks every peer by the same amount.
+        var medium = new[] { new PortraitCombatMath.PortraitFrameFit(600f, 800f, 500f, 600f, 0.88f) };
+        float gentle = PortraitCombatMath.SharedPeerScale(medium, out floored);
+        Assert.False(floored);
+        Assert.InRange(gentle, 0.84f, 0.86f);
+    }
+
+    [Fact]
+    public void EncounterSlotsAreFrozenBeforeTheEggsSpawn()
+    {
+        // Ovicopter's markers, with only the boss present; the encounter fills the last free slot first (egg5).
+        var markers = new List<PortraitCombatMath.PortraitSlotMarker>
+        {
+            new("egg1", 961f, 678f, 0f),
+            new("egg2", 1140f, 697f, 0f),
+            new("egg3", 1323f, 654f, 0f),
+            new("egg4", 1498f, 705f, 0f),
+            new("egg5", 1651f, 665f, 0f),
+            new("ovicopter", 1971f, 699f, 200000f),
+        };
+        string[] names = PortraitCombatMath.OrderEncounterSlotNames(markers, dominant: true);
+        Assert.True(names.SequenceEqual(new[] { "ovicopter", "egg1", "egg2", "egg3", "egg4", "egg5" }));
+
+        var table = new List<string>(names);
+        Assert.Equal(5, PortraitCombatMath.EnsureSlotIndex(table, "egg5"));
+        Assert.Equal(4, PortraitCombatMath.EnsureSlotIndex(table, "egg4"));
+        Assert.Equal(4, table.IndexOf("egg4"));
+        Assert.Equal(5, table.IndexOf("egg5"));
+
+        // A summon past the frozen table is appended after every slot, so the six placed eggs keep their indices.
+        Assert.Equal(6, PortraitCombatMath.EnsureSlotIndex(table, "instance:42"));
+        Assert.Equal(names, table.GetRange(0, names.Length));
+
+        // The formation itself is drawn from the same frozen count, so it never depends on how many are alive.
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 436f);
+        var shape = new PortraitCombatMath.PortraitStageShape(6, bands.Compact, Dominant: true, Segmented: false);
+        PortraitCreatureSlot[] formation = PortraitCombatMath.ComputeEnemyStageSlots(shape, bands);
+        Assert.Equal(6, formation.Length);
+        Assert.All(formation, slot => Assert.Equal(bands.FrontFeetY, slot.CanvasFeetY));
+    }
+
+    [Fact]
+    public void EnemiesStandOnTheFrontFootLineInEveryFormation()
+    {
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
+        {
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 436f);
+            for (int capacity = 1; capacity <= 6; capacity++)
+            {
+                var shape = new PortraitCombatMath.PortraitStageShape(capacity, bands.Compact, Dominant: capacity > 2, Segmented: false);
+                PortraitCreatureSlot[] slots = PortraitCombatMath.ComputeEnemyStageSlots(shape, bands);
+                Assert.Equal(capacity, slots.Length);
+                Assert.All(slots, slot =>
+                {
+                    Assert.InRange(slot.CanvasX, 8f, 1072f);
+                    Assert.True(slot.CanvasFeetY >= bands.StageTopY);
+                    Assert.True(slot.CanvasFeetY <= bands.FrontFeetY + 0.1f);
+                });
+                // Some rank always reaches the front foot line; higher ranks are lifted, never lowered.
+                Assert.Contains(slots, slot => slot.CanvasFeetY >= bands.FrontFeetY - 20f);
+
+                var chain = new PortraitCombatMath.PortraitStageShape(3, bands.Compact, Dominant: false, Segmented: true);
+                Assert.All(PortraitCombatMath.ComputeEnemyStageSlots(chain, bands),
+                    slot => Assert.Equal(bands.FrontFeetY, slot.CanvasFeetY));
+            }
+        }
+    }
+
+    [Fact]
+    public void FramesStayInsideTheCanvasAtBothPortraitHeights()
+    {
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
+        {
+            float stageTop = canvasHeight <= 1924f ? 586f : 612f;
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTop);
+            for (int capacity = 1; capacity <= 6; capacity++)
+            {
+                bool dominant = capacity > 2;
+                var shape = new PortraitCombatMath.PortraitStageShape(capacity, bands.Compact, dominant, Segmented: false);
+                PortraitCreatureSlot[] slots = PortraitCombatMath.ComputeEnemyStageSlots(shape, bands);
+                for (int i = 0; i < slots.Length; i++)
+                {
+                    PortraitCreatureSlot slot = slots[i];
+                    bool bossFrame = dominant && i == 0;
+                    float lane = 1080f * 0.635f / Math.Max(1, capacity - 1);
+                    float maxW = bossFrame ? 594f : (dominant ? lane * 0.94f : (capacity >= 4 ? 225f : (capacity >= 2 ? 290f : 712f)));
+                    float maxH = bossFrame ? 900f : (dominant ? 340f : (capacity >= 4 ? 300f : (capacity == 3 ? 380f : (capacity == 2 ? 420f : 600f))));
+                    float budget = Math.Min(maxH, Math.Max(140f, slot.CanvasFeetY - bands.StageTopY - (bands.Compact ? 0f : 104.8f)));
+                    float scale = PortraitCombatMath.FitCreatureScale(slot.BaseScale, 1f, 300f, 400f, maxW, budget);
+                    float halfWidth = 300f * scale * 0.5f;
+                    float height = 400f * scale;
+                    Assert.InRange(slot.CanvasX - halfWidth, -8f, 1080f);
+                    Assert.InRange(slot.CanvasX + halfWidth, 0f, 1088f);
+                    Assert.True(slot.CanvasFeetY <= bands.HandTopY);
+                    Assert.True(slot.CanvasFeetY - height >= bands.StageTopY - 160f,
+                        $"{canvasHeight}:{capacity}:{i} top {slot.CanvasFeetY - height} stage {bands.StageTopY}");
+                }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void CrowdedRowKeepsBodiesBarsAndIntentsClear(float canvasHeight)
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 436f);
+
+        void Check(int capacity, int bossSlot, float nativeW, float nativeH, int intents, int bossIntents)
+        {
+            PortraitCombatMath.PortraitStageCells cells =
+                PortraitCombatMath.ComputeCrowdedCells(capacity, bossSlot, leftEdge: 360f, bands);
+            var rects = new List<(float L, float T, float R, float B)>();
+            for (int i = 0; i < capacity; i++)
+            {
+                bool boss = i == bossSlot;
+                float bodyW = nativeW;
+                float bodyH = nativeH;
+                float baseScale = boss ? 0.94f : 0.82f;
+                float scale = Math.Clamp(Math.Min(baseScale, Math.Min(cells.Widths[i] / bodyW, cells.Heights[i] / bodyH)),
+                    PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+                float w = bodyW * scale;
+                float h = bodyH * scale;
+                float top = bands.FrontFeetY - h;
+                rects.Add((cells.X[i] - w / 2f, top, cells.X[i] + w / 2f, bands.FrontFeetY));
+                rects.Add((cells.X[i] - cells.Bars[i] / 2f, bands.FrontFeetY, cells.X[i] + cells.Bars[i] / 2f, bands.FrontFeetY + 44f));
+                float intentW = (boss ? bossIntents : intents) * 93f;
+                rects.Add((cells.X[i] - intentW / 2f, top - 105f, cells.X[i] + intentW / 2f, top));
+            }
+            for (int a = 0; a < rects.Count; a++)
+            {
+                for (int b = a + 1; b < rects.Count; b++)
+                {
+                    (float L, float T, float R, float B) p = rects[a];
+                    (float L, float T, float R, float B) q = rects[b];
+                    bool intersects = p.L < q.R && q.L < p.R && p.T < q.B && q.T < p.B;
+                    Assert.False(intersects, $"{canvasHeight}: cap {capacity}: rect {a} {p} meets {b} {q}");
+                }
+            }
+            Assert.All(cells.X, x => Assert.InRange(x, 0f, 1080f));
+        }
+
+        for (int capacity = 1; capacity <= 5; capacity++)
+            Check(capacity, bossSlot: -1, nativeW: 300f, nativeH: 400f, intents: 1, bossIntents: 1);
+
+        // Ovicopter: the boss with all five reserved egg slots filled, in their frozen cells.
+        Check(6, bossSlot: 5, nativeW: 277f, nativeH: 300f, intents: 1, bossIntents: 2);
+    }
+
+    [Fact]
+    public void TallBossRowClearsTheFrontRow()
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 612f);
+        PortraitCombatMath.PortraitStageCells cells =
+            PortraitCombatMath.ComputeCrowdedCells(capacity: 5, bossSlot: -1, leftEdge: 360f, bands);
+        float cellWidth = cells.Widths[0];
+        float frontHeight = Math.Min(cellWidth / 277f * 300f, bands.FrontFeetY - bands.StageTopY);
+        float bossFeet = bands.FrontFeetY - frontHeight - 105f - 52f;
+        float bossHeight = bossFeet - bands.StageTopY - 105f;
+        float bossScale = Math.Clamp(Math.Min(0.94f, Math.Min(420f / 403f, bossHeight / 476f)),
+            PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+        float bossW = 403f * bossScale;
+        float bossH = 476f * bossScale;
+        var bossRects = new (float L, float T, float R, float B)[]
+        {
+            (540f - bossW / 2f, bossFeet - bossH, 540f + bossW / 2f, bossFeet),
+            (540f - 150f, bossFeet, 540f + 150f, bossFeet + 44f),
+            (540f - 93f, bossFeet - bossH - 105f, 540f + 93f, bossFeet - bossH),
+        };
+        var front = new List<(float L, float T, float R, float B)>();
+        for (int i = 0; i < 5; i++)
+        {
+            float scale = Math.Clamp(Math.Min(0.82f, Math.Min(cells.Widths[i] / 277f, 300f > 0 ? cells.Heights[i] / 300f : 1f)),
+                PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+            float h = 300f * scale;
+            float top = bands.FrontFeetY - h;
+            front.Add((cells.X[i] - 277f * scale / 2f, top, cells.X[i] + 277f * scale / 2f, bands.FrontFeetY));
+            front.Add((cells.X[i] - cells.Bars[i] / 2f, bands.FrontFeetY, cells.X[i] + cells.Bars[i] / 2f, bands.FrontFeetY + 44f));
+            front.Add((cells.X[i] - 46.5f, top - 105f, cells.X[i] + 46.5f, top));
+        }
+        foreach ((float L, float T, float R, float B) p in bossRects)
+        {
+            foreach ((float L, float T, float R, float B) q in front)
+                Assert.False(p.L < q.R && q.L < p.R && p.T < q.B && q.T < p.B, $"boss {p} meets front {q}");
+        }
+        Assert.True(bossHeight >= 180f, $"boss height {bossHeight}");
+    }
+
+    [Fact]
+    public void BossSlotRequiresAUniqueMonsterWellAboveTheRest()
+    {
+        var fourExoskeletons = new[]
+        {
+            (Slot: 1, Area: 100f, Type: "Exoskeleton"),
+            (Slot: 2, Area: 100f, Type: "Exoskeleton"),
+            (Slot: 3, Area: 100f, Type: "Exoskeleton"),
+            (Slot: 4, Area: 100f, Type: "Exoskeleton"),
+        };
+        Assert.Equal(-1, PortraitCombatMath.PickBossIndex(fourExoskeletons, capacity: 4, segmented: false));
+
+        var equalStrangers = new[] { (Slot: 0, Area: 100f, Type: "Slime"), (Slot: 1, Area: 100f, Type: "Beetle") };
+        Assert.Equal(-1, PortraitCombatMath.PickBossIndex(equalStrangers, capacity: 4, segmented: false));
+
+        var sameTypeBoss = new[] { (Slot: 0, Area: 900f, Type: "Slime"), (Slot: 1, Area: 100f, Type: "Slime") };
+        Assert.Equal(-1, PortraitCombatMath.PickBossIndex(sameTypeBoss, capacity: 4, segmented: false));
+
+        var ovicopter = new[]
+        {
+            (Slot: 0, Area: 900f, Type: "Ovicopter"),
+            (Slot: 1, Area: 100f, Type: "ToughEgg"),
+            (Slot: 2, Area: 100f, Type: "ToughEgg"),
+        };
+        Assert.Equal(0, PortraitCombatMath.PickBossIndex(ovicopter, capacity: 4, segmented: false));
+        Assert.Equal(-1, PortraitCombatMath.PickBossIndex(ovicopter, capacity: 4, segmented: true));
+
+        var lone = new[] { (Slot: 5, Area: 900f, Type: "Ovicopter") };
+        Assert.Equal(5, PortraitCombatMath.PickBossIndex(lone, capacity: 6, segmented: false));
+        Assert.Equal(-1, PortraitCombatMath.PickBossIndex(lone, capacity: 2, segmented: false));
     }
 
     [Fact]

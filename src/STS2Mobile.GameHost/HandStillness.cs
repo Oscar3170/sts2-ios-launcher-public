@@ -74,6 +74,4 @@ internal sealed class HandStillness
             foreach (ulong id in dead) _records.Remove(id);
         }
     }
-
-    public void Forget(Control holder) => _records.Remove(holder.GetInstanceId());
 }
