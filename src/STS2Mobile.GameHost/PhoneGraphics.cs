@@ -57,6 +57,7 @@ public sealed partial class PhoneGraphics : Node
             // Landscape is locked initially unless both Portrait Mode and Set Portrait as Default were chosen.
             if (!_settings.StartInPortrait && _settings.PortraitMode)
                 _settings = _settings.WithPortraitMode(false);
+            PortraitCombatLayout.FlatHand = _settings.FlatHand;
             _appliedFactor = DevicePower.RenderScale();
             GD.Print("Phone graphics: ", _settings.Describe(_appliedFactor));
             GetTree().Root.WindowInput += OnWindowInput;
@@ -236,6 +237,15 @@ public sealed partial class PhoneGraphics : Node
                 choice => Store(_settings.WithPortraitDefault(choice == 1)),
                 out _, out _portraitDefaultRow, out _portraitDefaultDivider,
                 indentLeft: 44, subtitle: "Launch directly in Portrait when opening the game.");
+            index = AddRow(content, template, divider, index, "Flat Hand", () => OffOn,
+                () => _settings.FlatHand ? 1 : 0,
+                choice =>
+                {
+                    Store(_settings.WithFlatHand(choice == 1));
+                    PortraitCombatLayout.FlatHand = _settings.FlatHand;
+                    _portraitLayout.ApplyImmediate();
+                },
+                out _, out _, out _, subtitle: "Fan the hand, or use flat rows like TouchSpireUI.");
             index = AddRow(content, template, divider, index, "Battery Saver",
                 () => _settings.Preset == BatteryPreset.Custom ? PresetChoicesWithCustom : PresetChoices,
                 () => (int)_settings.Preset, choice => Store(_settings.WithPreset((BatteryPreset)choice)), out _, out _, out _);

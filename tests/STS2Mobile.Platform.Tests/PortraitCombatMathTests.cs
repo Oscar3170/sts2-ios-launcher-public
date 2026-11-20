@@ -128,31 +128,111 @@ public class PortraitCombatMathTests
         Assert.Equal(1243.53f, bands.FrontFeetY, 1);
         Assert.Equal(160.71f, PortraitCombatMath.RailHeightFor(compact: false), 2);
 
-        // The reserve is constant: every count's cards stay inside it and bottom-aligned above the home indicator.
+        // The default is the fan at tall too. Scale is the shape's full size for every count; only the fan angle
+        // changes, and every card stays inside the canvas above the rail.
         for (int count = 1; count <= 10; count++)
         {
             HandRowFit fit = PortraitCombatMath.ComputeHandRowFit(bands, count);
             for (int i = 0; i < count; i++)
             {
                 PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
-                float cardTop = canvasHeight + slot.LocalY - PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
-                float cardBottom = canvasHeight + slot.LocalY + PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
-                Assert.True(cardTop >= bands.HandTopY - 0.01f, $"Card {i}/{count} top {cardTop} is above hand top {bands.HandTopY}.");
-                Assert.True(cardBottom <= canvasHeight + 0.01f, $"Card {i}/{count} bottom {cardBottom} is off the canvas.");
                 Assert.Equal(fit.Scale, slot.Scale, 4);
-                Assert.Equal(0f, slot.AngleDegrees);
+                Assert.InRange(slot.AngleDegrees, -4.201f, 4.201f);
+                float radians = MathF.Abs(slot.AngleDegrees) * MathF.PI / 180f;
+                float halfWidth = (PortraitCombatMath.CardDefaultWidth * MathF.Cos(radians) +
+                    PortraitCombatMath.CardDefaultHeight * MathF.Sin(radians)) * 0.5f * slot.Scale;
+                float halfHeight = (PortraitCombatMath.CardDefaultHeight * MathF.Cos(radians) +
+                    PortraitCombatMath.CardDefaultWidth * MathF.Sin(radians)) * 0.5f * slot.Scale;
+                float centerX = 540f + slot.LocalX;
+                float centerY = canvasHeight + slot.LocalY;
+                Assert.True(centerX - halfWidth >= PortraitCombatMath.HandEdgeMargin - 0.01f);
+                Assert.True(centerX + halfWidth <= 1080f - PortraitCombatMath.HandEdgeMargin + 0.01f);
+                Assert.True(centerY - halfHeight >= bands.RailTopY);
+                Assert.True(centerY + halfHeight <= canvasHeight + 0.01f);
             }
         }
 
-        // TouchSpireUI's width fit, converted: 1-6 cards use the full 1.35 scale, 7-8 shrink for four columns, 9-10 for five.
-        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 1), 0.866f, 0.870f);
-        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 6), 0.866f, 0.870f);
-        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 7), 0.806f, 0.810f);
-        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 8), 0.806f, 0.810f);
-        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 9), 0.643f, 0.648f);
-        Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, 10), 0.643f, 0.648f);
+        // No crowded-row shrink: the full tall scale at every count.
+        for (int count = 1; count <= 10; count++)
+            Assert.InRange(PortraitCombatMath.HandCardScaleFor(bands, count), 0.866f, 0.870f);
         Assert.Equal(PortraitCombatMath.HandCardScaleFor(bands, 10) * 1.08f,
             PortraitCombatMath.HeldCardScaleFor(bands, 10), 4);
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void BothHandModesUseTheSameBandsFullScaleAndCanvasSpace(float canvasHeight)
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+        float expectedScale = bands.Compact
+            ? PortraitCombatMath.CompactHandCardScale
+            : PortraitCombatMath.TallHandCardScale;
+
+        for (int count = 1; count <= 10; count++)
+        {
+            HandRowSplit split = PortraitCombatMath.SplitHandRows(count);
+            for (int mode = 0; mode < 2; mode++)
+            {
+                bool flat = mode == 1;
+                for (int i = 0; i < count; i++)
+                {
+                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat);
+                    Assert.Equal(expectedScale, slot.Scale, 4);
+                    Assert.Equal(expectedScale, PortraitCombatMath.HandCardScaleFor(bands, count), 4);
+                    Assert.Equal(expectedScale * 1.08f, PortraitCombatMath.HeldCardScaleFor(bands, count), 4);
+                    Assert.Equal(i < split.BackRowCount ? 0 : 1, slot.RowIndex);
+
+                    if (flat)
+                    {
+                        Assert.Equal(0f, slot.AngleDegrees);
+                    }
+                    else
+                    {
+                        Assert.InRange(slot.AngleDegrees, -4.201f, 4.201f);
+                        if (Math.Abs(slot.AngleDegrees) > 0.01f)
+                            Assert.InRange(Math.Abs(slot.AngleDegrees), 0.01f, 4.201f);
+                    }
+
+                    float halfExtent = PortraitCombatMath.HandSlotHalfExtent(slot.Scale, slot.AngleDegrees);
+                    Assert.True(540f + slot.LocalX - halfExtent >= PortraitCombatMath.HandEdgeMargin - 0.01f,
+                        $"{count} cards, flat={flat}, card {i} left edge leaves the margin.");
+                    Assert.True(540f + slot.LocalX + halfExtent <= 1080f - PortraitCombatMath.HandEdgeMargin + 0.01f,
+                        $"{count} cards, flat={flat}, card {i} right edge leaves the margin.");
+
+                    float radians = MathF.Abs(slot.AngleDegrees) * MathF.PI / 180f;
+                    float halfHeight = (PortraitCombatMath.CardDefaultHeight * MathF.Cos(radians) +
+                        PortraitCombatMath.CardDefaultWidth * MathF.Sin(radians)) * 0.5f * slot.Scale;
+                    float centerY = canvasHeight + slot.LocalY;
+                    Assert.True(centerY - halfHeight >= bands.RailTopY);
+                    Assert.True(centerY + halfHeight <= canvasHeight + 0.01f);
+                }
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void HandModeChoiceOnlyChangesTheRowShape(float canvasHeight)
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+        for (int count = 1; count <= 10; count++)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                PortraitCardSlot fan = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat: false);
+                PortraitCardSlot flat = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat: true);
+                Assert.Equal(fan.RowIndex, flat.RowIndex);
+                Assert.Equal(fan.LocalY, flat.LocalY, 4);
+                Assert.Equal(fan.Scale, flat.Scale, 4);
+                if (count <= 1)
+                {
+                    Assert.Equal(0f, fan.AngleDegrees);
+                    Assert.Equal(fan.LocalX, flat.LocalX, 4);
+                }
+            }
+        }
     }
 
     [Theory]
@@ -171,11 +251,18 @@ public class PortraitCombatMathTests
 
             Assert.Equal(bands.RailTopY, hud.RailTopY);
 
-            for (int i = 0; i < count; i++)
+            foreach (bool flat in new[] { false, true })
             {
-                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
-                float cardTop = canvasHeight + slot.LocalY - PortraitCombatMath.CardDefaultHeight * slot.Scale * 0.5f;
-                Assert.True(cardTop >= bands.HandTopY - 0.01f, $"Card {i}/{count} at {canvasHeight} reached the rail.");
+                for (int i = 0; i < count; i++)
+                {
+                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat);
+                    float radians = MathF.Abs(slot.AngleDegrees) * MathF.PI / 180f;
+                    float halfHeight = (PortraitCombatMath.CardDefaultHeight * MathF.Cos(radians) +
+                        PortraitCombatMath.CardDefaultWidth * MathF.Sin(radians)) * 0.5f * slot.Scale;
+                    float cardTop = canvasHeight + slot.LocalY - halfHeight;
+                    Assert.True(cardTop >= bands.RailTopY,
+                        $"Card {i}/{count} at {canvasHeight}, flat={flat} reached the rail.");
+                }
             }
         }
     }
@@ -359,19 +446,18 @@ public class PortraitCombatMathTests
         Assert.InRange(hud.DiscardShowY + 40f, bands.RailTopY, bands.HandTopY);
         Assert.InRange(hud.ExhaustShowY + 40f, bands.RailTopY, bands.HandTopY);
 
-        // 44 points a finger needs: End Turn is the TouchSpireUI 220x90 at 1.54 (339x139), the piles 80 at 1.6,
-        // energy 128 at 1.12.
-        Assert.Equal(1.54f, hud.EndTurnScale, 3);
-        Assert.Equal(220f * 1.54f, 220f * hud.EndTurnScale, 2);
-        Assert.Equal(90f * 1.54f, 90f * hud.EndTurnScale, 2);
+        // End Turn is the launcher's 220x90 at 1.42 (312.4x127.8); the piles are 80 at 1.6, energy 128 at 1.12.
+        Assert.Equal(1.42f, hud.EndTurnScale, 3);
+        Assert.Equal(312.4f, 220f * hud.EndTurnScale, 2);
+        Assert.Equal(127.8f, 90f * hud.EndTurnScale, 2);
         Assert.True(90f * hud.EndTurnScale >= 127f);
         Assert.True(80f * hud.PileScale >= 127f);
         Assert.True(128f * hud.EnergyScale >= 127f);
         Assert.True(hud.EndTurnShowY + 45f + 90f * hud.EndTurnScale * 0.5f <= bands.HandTopY);
         Assert.True(hud.PingShowY < bands.RailTopY);
 
-        // End Turn is centred for every character, and its larger box stays clear of the energy orb, the star badge,
-        // the draw/discard/exhaust piles and the Confirm rail end.
+        // End Turn is centred for every character, and its box stays clear of the energy orb, the star badge, the
+        // draw/discard/exhaust piles and the Confirm rail end.
         float endTurnVisualLeft = hud.EndTurnShowX - 110f * (hud.EndTurnScale - 1f);
         float endTurnVisualRight = endTurnVisualLeft + 220f * hud.EndTurnScale;
         float endTurnVisualTop = hud.EndTurnShowY + 45f * (1f - hud.EndTurnScale);
@@ -383,8 +469,9 @@ public class PortraitCombatMathTests
         Assert.True(endTurnVisualTop >= bands.RailTopY + 0.01f);
         Assert.True(endTurnVisualBottom <= bands.HandTopY - 0.01f);
 
-        // The energy counter keeps the same rail place for every character; the star is a small corner badge on it.
-        Assert.Equal(160f, hud.EnergyContainerX, 3);
+        // The energy counter moved right to open the star slot; the star keeps its native scene size and only inherits
+        // the counter's 1.12 scale.
+        Assert.Equal(180f, hud.EnergyContainerX, 3);
         float orbSize = PortraitCombatMath.EnergyOrbSize * hud.EnergyScale;
         float orbCenterX = hud.EnergyContainerX + PortraitCombatMath.EnergyOrbSize * 0.5f;
         float orbCenterY = hud.EnergyContainerY + PortraitCombatMath.EnergyOrbSize * 0.5f;
@@ -393,13 +480,11 @@ public class PortraitCombatMathTests
         float orbTop = orbCenterY - orbSize * 0.5f;
         float orbBottom = orbCenterY + orbSize * 0.5f;
 
-        // TouchSpireUI's lower-left placement, lifted only as far as its count number needs to clear the draw pile and
-        // the energy number: the badge art still overlaps the orb, but the visible number is above the rail controls.
-        float starSize = PortraitCombatMath.EnergyOrbSize * hud.StarScale * hud.EnergyScale;
+        const float starSceneScale = 0.8f;
+        float starSize = PortraitCombatMath.EnergyOrbSize * starSceneScale * hud.EnergyScale;
         Assert.Equal(orbSize * 0.8f, starSize, 2);
         Assert.Equal(orbCenterX + orbSize * PortraitCombatMath.StarOrbOffsetX, hud.StarCenterX, 2);
-        Assert.Equal(orbCenterY + orbSize * PortraitCombatMath.StarOrbOffsetY - PortraitCombatMath.StarBadgeLift,
-            hud.StarCenterY, 2);
+        Assert.Equal(orbCenterY + orbSize * PortraitCombatMath.StarOrbOffsetY, hud.StarCenterY, 2);
 
         float starHalf = starSize * 0.5f;
         float starLeft = hud.StarCenterX - starHalf;
@@ -407,51 +492,45 @@ public class PortraitCombatMathTests
         float starTop = hud.StarCenterY - starHalf;
         float starBottom = hud.StarCenterY + starHalf;
 
-        // The larger End Turn still clears the orb, the star badge and the selection Confirm's rail end.
+        // End Turn (now back at 1.42) clears the shifted orb and the star badge, and leaves room for Confirm.
         Assert.True(endTurnVisualLeft > orbRight);
+        Assert.True(endTurnVisualLeft - orbRight >= 50f);
         Assert.True(endTurnVisualLeft > starRight);
         Assert.True(endTurnVisualRight < 948f - 100f * PortraitCombatMath.SelectionConfirmScale);
 
-        // The badge still sits on the orb's left and overlaps its art, but it is lifted clear of the rail.
+        // TSUI's lower-left badge: native size, no lift, still overlapping the orb's lower-left art.
         Assert.True(starLeft < orbRight && starRight > orbLeft && starTop < orbBottom && starBottom > orbTop);
         Assert.True(hud.StarCenterX < orbCenterX);
-        Assert.True(hud.StarCenterY < orbCenterY);
+        Assert.True(hud.StarCenterY > orbCenterY);
 
-        // Native star_counter.tscn: CountLabel font 36, MarginContainer margin_top 41, outline 14, [center]-aligned;
-        // text line height is 1.28 of the font size. Only the drawn glyph box matters, not the label's control rect.
-        const float lineHeight = 1.28f;
-        const float countFontSize = 36f;
-        const float countTopMargin = 41f;
-        const float countOutline = 14f;
-        const float energyFontSize = 36f;
+        // Ink model: advance width + 14 outline each side horizontally; digit ascent + 14 outline vertically. The proof's
+        // star count is one digit; the energy "3/3" is native advance 60, outline 16, at 1.12.
+        const float starInkScale = starSceneScale * 1.12f;
+        const float digitAdvance = 19f;
+        const float digitAscent = 36f;
+        const float starOutline = 14f;
+        const float energyAdvance = 60f;
         const float energyOutline = 16f;
-        float starCanvasScale = hud.StarScale * hud.EnergyScale;
-        float glyphHeight = (countFontSize * lineHeight + 2f * countOutline) * starCanvasScale;
-        float glyphTop = starTop + (countTopMargin - countOutline) * starCanvasScale;
-        float glyphBottom = glyphTop + glyphHeight;
-
-        // The energy number is the same native font at 1.12, vertically centred on the orb; its ink starts above the
-        // star's, because the star number is lifted over the orb's lower-left art.
-        float energyGlyphHeight = (energyFontSize * lineHeight + 2f * energyOutline) * hud.EnergyScale;
-        float energyGlyphTop = orbCenterY - energyGlyphHeight * 0.5f;
-        float drawTop = hud.DrawShowY + 40f * (1f - hud.PileScale);
+        float starInkHeight = (digitAscent + 2f * starOutline) * starInkScale;
+        float energyInkWidth = (energyAdvance + 2f * energyOutline) * hud.EnergyScale;
+        float energyInkLeft = orbCenterX - energyInkWidth * 0.5f;
+        float drawRight = hud.DrawShowX + 40f * (1f - hud.PileScale) + 80f * hud.PileScale;
         float endTurnLeft = hud.EndTurnShowX - 110f * (hud.EndTurnScale - 1f);
 
-        foreach (int digits in new[] { 1, 2 })
+        foreach (int digits in new[] { 1 })
         {
-            // A digit's advance is about the font size; this is the drawn number, not the overlay's control rect.
-            float glyphWidth = countFontSize * starCanvasScale * digits;
-            float glyphLeft = hud.StarCenterX - glyphWidth * 0.5f;
-            float glyphRight = hud.StarCenterX + glyphWidth * 0.5f;
-            Assert.True(glyphBottom < drawTop, $"{digits}-digit glyph bottom {glyphBottom} vs draw top {drawTop}.");
-            Assert.True(glyphBottom < energyGlyphTop,
-                $"{digits}-digit glyph bottom {glyphBottom} vs energy glyph top {energyGlyphTop}.");
-            Assert.True(glyphBottom < bands.HandTopY);
-            Assert.True(glyphTop >= starTop && glyphBottom <= starBottom);
-            Assert.True(glyphLeft >= starLeft && glyphRight <= starRight);
-            Assert.True(glyphRight < endTurnLeft);
-            Assert.True(glyphRight < orbCenterX);
-            Assert.True(glyphLeft > 0f && glyphBottom <= canvasHeight);
+            float inkWidth = (digitAdvance * digits + 2f * starOutline) * starInkScale;
+            float inkLeft = hud.StarCenterX - inkWidth * 0.5f;
+            float inkRight = hud.StarCenterX + inkWidth * 0.5f;
+            float inkBottom = hud.StarCenterY + starInkHeight * 0.5f;
+            Assert.True(inkLeft > drawRight, $"{digits}-digit star ink left {inkLeft} vs draw right {drawRight}.");
+            Assert.True(inkRight < energyInkLeft,
+                $"{digits}-digit star ink right {inkRight} vs energy ink left {energyInkLeft}.");
+            Assert.True(inkBottom < bands.HandTopY,
+                $"{digits}-digit star ink bottom {inkBottom} vs hand top {bands.HandTopY}.");
+            Assert.True(inkLeft >= starLeft && inkRight <= starRight);
+            Assert.True(inkRight < endTurnLeft);
+            Assert.True(inkLeft > 0f && inkBottom <= canvasHeight);
         }
         Assert.True(starSize >= 100f); // readable
     }
@@ -836,6 +915,37 @@ public class PortraitCombatMathTests
         Assert.Equal(0.66f, PortraitCombatMath.EncounterBodyMultiplier("KinFollower|KinPriest"));
         // The Kaiser Crab is excluded by the caller, not by a special multiplier.
         Assert.Equal(1f, PortraitCombatMath.EncounterBodyMultiplier("Crusher|Rocket"));
+    }
+
+    [Fact]
+    public void TallFormationMatchesTouchSpireDepths()
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 612f);
+        float floor = bands.FrontFeetY;
+
+        PortraitCreatureSlot[] pair = PortraitCombatMath.ComputeTallFormation(2, bands);
+        Assert.Equal(1080f * 0.475f, pair[0].CanvasX, 0.5f);
+        Assert.Equal(1080f * 0.805f, pair[1].CanvasX, 0.5f);
+        Assert.Equal(floor - 100f * (1080f / 1680f), pair[0].CanvasFeetY, 0.5f);
+        Assert.Equal(floor - 20f * (1080f / 1680f), pair[1].CanvasFeetY, 0.5f);
+
+        PortraitCreatureSlot[] three = PortraitCombatMath.ComputeTallFormation(3, bands);
+        Assert.Equal(0, three[1].RowDepth);
+        Assert.Equal(floor - 510f * (1080f / 1680f), three[1].CanvasFeetY, 0.5f);
+        Assert.Equal(1, three[0].RowDepth);
+        Assert.Equal(floor + 125f * (1080f / 1680f), three[0].CanvasFeetY, 0.5f);
+
+        PortraitCreatureSlot[] five = PortraitCombatMath.ComputeTallFormation(5, bands);
+        Assert.Equal(1080f * 0.18f, five[0].CanvasX, 0.5f);
+        Assert.Equal(0, five[0].RowDepth);
+        Assert.Equal(1080f * 0.49f, five[1].CanvasX, 0.5f);
+        Assert.Equal(1080f * 0.81f, five[4].CanvasX, 0.5f);
+
+        // Frame width cannot exceed the column pitch; height is the converted 220–475 range.
+        (float w3, float h3, float l3, float r3) = PortraitCombatMath.TallFormationFrame(three, 0, bands);
+        Assert.InRange(w3, 60f, MathF.Abs(three[2].CanvasX - three[0].CanvasX) - 9f);
+        Assert.InRange(h3, 141f, 305f);
+        Assert.True(l3 >= 8f && r3 <= 1072f);
     }
 
     [Fact]

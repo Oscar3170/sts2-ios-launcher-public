@@ -24,11 +24,20 @@ public class TouchCardMathTests
     public void APickupWaitsForThePickupSlop(float moved, bool expected) =>
         Assert.Equal(expected, TouchCardMath.HasMovedPastPickupSlop(moved));
 
-    [Fact]
-    public void AimingIsHalfAgainTheHandsRestingScale()
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void AimingHasOneSizePerShapeWhateverTheHandHolds(float canvasHeight)
     {
-        Assert.Equal(0.72f * 1.5f, TouchCardMath.AimedCardScaleFor(0.72f));
-        Assert.Equal(0.646f * 1.5f, TouchCardMath.AimedCardScaleFor(0.646f));
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 0f);
+        float aim = TouchCardMath.AimedCardScaleFor(bands);
+        Assert.Equal(PortraitCombatMath.HandCardScaleFor(bands, 1) * 1.5f, aim);
+        for (int count = 1; count <= 10; count++)
+        {
+            // The aim size does not depend on the hand; the pressed (held) size never exceeds it, so aiming only grows.
+            Assert.Equal(aim, TouchCardMath.AimedCardScaleFor(bands));
+            Assert.True(aim >= PortraitCombatMath.HeldCardScaleFor(bands, count));
+        }
     }
 
     [Theory]
@@ -38,7 +47,7 @@ public class TouchCardMathTests
     {
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 0f);
         float endTurnTop = TouchCardMath.EndTurnTopY(PortraitCombatMath.ComputeHudLayout(canvasHeight, bands));
-        float aim = TouchCardMath.AimedCardScaleFor(PortraitCombatMath.HandCardScaleFor(bands, 5));
+        float aim = TouchCardMath.AimedCardScaleFor(bands);
         (float x, float y) = TouchCardMath.AimingCardCenter(endTurnTop, aim, 1080f);
         float half = PortraitCombatMath.CardDefaultHeight * aim * 0.5f;
 

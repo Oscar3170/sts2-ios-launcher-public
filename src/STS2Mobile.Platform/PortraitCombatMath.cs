@@ -6,9 +6,8 @@ namespace STS2Mobile.Platform;
 public readonly record struct HandRowSplit(int BackRowCount, int FrontRowCount);
 
 /// <summary>
-/// One hand's fit: the row split, the resting card scale, the drawn horizontal gap and the card's drawn size. On the
-/// compact canvas the scale is fixed; on tall canvases it follows TouchSpireUI's width/height fit and shrinks with the
-/// count. Sizes are canvas units at scale 1.
+/// One hand's fit: the row split, the resting card scale, the flat-mode horizontal gap and the card's drawn size. The
+/// scale is the shape's full size for every count and mode. Sizes are canvas units at scale 1.
 /// </summary>
 public readonly record struct HandRowFit(
     int UpperCount,
@@ -32,7 +31,6 @@ public readonly record struct PortraitHudLayout(
     float EnergyScale,
     float StarCenterX,
     float StarCenterY,
-    float StarScale,
     float ExhaustShowX,
     float ExhaustShowY,
     float ExhaustHideX,
@@ -129,6 +127,7 @@ public static class PortraitCombatMath
     /// <summary>The canvas height at or under which the fight uses the compact (9:16) bands.</summary>
     public const float CompactCanvasHeight = SafeAreaCanvas.MinPortraitHeight + 4f;
 
+    private const float CompactHandGap = 8f;
     private const float CompactHandRowGap = 14f;
     // The bottom row's edge stays above the home indicator's 34-point gesture area (about 98 units).
     private const float CompactHandBottomMargin = 100f;
@@ -138,10 +137,8 @@ public static class PortraitCombatMath
     // side margin 72, bottom margin 6 + SafeBottom 90, rail 250 above the hand.
     private const float TallHandGap = 10f * DesignScale;
     private const float TallHandRowGap = 18f * DesignScale;
-    private const float TallHandSideMargin = 72f * DesignScale;
     private const float TallHandBottomMargin = (6f + 90f) * DesignScale;
     private const float TallRailHeight = 250f * DesignScale;
-    private const float MaxHandHeightFraction = 0.5f;
 
     private const float CompactFloorGap = 70f;
     private const float TallFloorGap = 130f;
@@ -149,22 +146,19 @@ public static class PortraitCombatMath
     /// <summary>The rail's height for this shape (constant within a fight).</summary>
     public static float RailHeightFor(bool compact) => compact ? CompactRailHeight : TallRailHeight;
 
+    /// <summary>The energy counter's rail X; shifted right to open the star slot beside the draw pile.</summary>
+    public const float EnergyRailX = 180f;
+
     /// <summary>The native energy counter's orb is 128 units square.</summary>
     public const float EnergyOrbSize = 128f;
 
     /// <summary>
-    /// The star badge's centre offsets from the drawn energy orb's centre, exactly as TouchSpireUI's action rail places
-    /// it: a lower-left corner badge that overlaps the orb and leaves the count text above it.
+    /// The star badge's centre offsets from the drawn energy orb's centre. This is TouchSpireUI's lower-left corner
+    /// badge, moved further left than its default -0.4 so the count's ink (up to two digits) clears both the draw pile
+    /// and the energy number's ink while the badge still overlaps the orb's lower-left edge.
     /// </summary>
-    public const float StarOrbOffsetX = -0.4f;
+    public const float StarOrbOffsetX = -0.5273f;
     public const float StarOrbOffsetY = 0.3f;
-
-    /// <summary>
-    /// The lower-left badge is lifted just enough that its drawn count number (the native 36 font, 41 top margin and
-    /// 14 outline, centred in the badge) sits above the draw pile's top edge and the energy number's ink, with a small
-    /// gap; the badge art still overlaps the orb. Lifting only the badge keeps the count at its native readable size.
-    /// </summary>
-    public const float StarBadgeLift = 143f;
 
     /// <summary>The native selected-card holder is drawn at 0.8 of a card, with a 24-unit gap when laid out in a row.</summary>
     public const float SelectionCardSmallScale = 0.8f;
@@ -229,42 +223,18 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// The hand's fit for this count and shape. Compact keeps today's fixed scale and row geometry; on tall canvases the
-    /// card scale starts at TouchSpireUI's 1.35 (converted) and shrinks so the widest row fits the side margins and the
-    /// two rows fit half the canvas, with the horizontal gap shrinking by the same factor. The row bands themselves stay
-    /// where the reserve puts them.
+    /// The hand's fit for this count and shape. The card scale is the shape's full size for every count and mode; when
+    /// a row is too wide its cards overlap rather than shrink or leave the canvas. The row bands themselves stay where
+    /// the shape's reserve puts them.
     /// </summary>
     public static HandRowFit ComputeHandRowFit(PortraitCombatBands bands, int count)
     {
         int clamped = Math.Max(0, count);
         HandRowSplit split = SplitHandRows(clamped);
-        if (bands.Compact)
-        {
-            return new HandRowFit(split.BackRowCount, split.FrontRowCount, CompactHandCardScale, 0f,
-                CardDefaultWidth * CompactHandCardScale, CardDefaultHeight * CompactHandCardScale);
-        }
-
-        float cardWidth = CardDefaultWidth * TallHandCardScale;
-        float cardHeight = CardDefaultHeight * TallHandCardScale;
-        float gap = TallHandGap;
-        float rowGap = TallHandRowGap;
-        int columns = Math.Max(split.BackRowCount, split.FrontRowCount);
-        float totalWidth = columns * cardWidth + Math.Max(0, columns - 1) * gap;
-        float totalHeight = 2f * cardHeight + rowGap;
-        float availableWidth = SafeAreaCanvas.PortraitWidth - 2f * TallHandSideMargin;
-        float reserve = 2f * cardHeight + rowGap + TallHandBottomMargin;
-        float canvasHeight = Math.Max(bands.HandTopY + reserve, SafeAreaCanvas.MinPortraitHeight);
-        float maxHeight = canvasHeight * MaxHandHeightFraction;
-
-        float shrink = 1f;
-        if (columns > 0 && totalWidth > availableWidth)
-            shrink = Math.Min(shrink, availableWidth / totalWidth);
-        if (totalHeight > maxHeight)
-            shrink = Math.Min(shrink, maxHeight / totalHeight);
-        shrink = Math.Clamp(shrink, 0.2f, 1f);
-
-        return new HandRowFit(split.BackRowCount, split.FrontRowCount, TallHandCardScale * shrink, gap * shrink,
-            cardWidth * shrink, cardHeight * shrink);
+        float scale = bands.Compact ? CompactHandCardScale : TallHandCardScale;
+        float gap = bands.Compact ? CompactHandGap : TallHandGap;
+        return new HandRowFit(split.BackRowCount, split.FrontRowCount, scale, gap,
+            CardDefaultWidth * scale, CardDefaultHeight * scale);
     }
 
     /// <summary>A hand card's resting scale for this count and shape.</summary>
@@ -315,11 +285,14 @@ public static class PortraitCombatMath
 
     /// <summary>
     /// The card's place in its row, as a local offset from the bottom-centre holder container: the upper row fills first,
-    /// rows are centred, and the focused card only grows in place (same centre and row; a compact edge card is
-    /// straightened as it grows, as the native hover does) by its own resting scale × <see cref="HeldCardGrowth"/>.
-    /// Compact keeps the launcher's fan; tall uses TouchSpireUI's flat, fitted rows in count-independent bands.
+    /// rows are centred, and the focused card only grows in place (same centre and row; an edge card is straightened as
+    /// it grows, as the native hover does) by its own resting scale × <see cref="HeldCardGrowth"/>.
+    /// Off (<paramref name="flat"/> false) fans every shape like the launcher's compact hand; on, it uses TouchSpireUI's
+    /// flat rows at every shape. Both keep the full shape card size, fill the upper row first, and let cards overlap
+    /// rather than leave the canvas; the focused card grows in place.
     /// </summary>
-    public static PortraitCardSlot ComputeHandCardSlot(int count, int index, int focusedIndex, PortraitCombatBands bands)
+    public static PortraitCardSlot ComputeHandCardSlot(int count, int index, int focusedIndex, PortraitCombatBands bands,
+        bool flat = false)
     {
         int clamped = Math.Max(0, count);
         HandRowFit fit = ComputeHandRowFit(bands, clamped);
@@ -332,33 +305,30 @@ public static class PortraitCombatMath
         int col = inUpperRow ? safeIndex : safeIndex - fit.UpperCount;
         int rowCount = inUpperRow ? fit.UpperCount : fit.LowerCount;
         float heldScale = fit.Scale * HeldCardGrowth;
+        float rowY = HandRowCenterLocalY(bands, rowIndex);
+        bool focused = focusedIndex == safeIndex;
+        float scale = focused ? heldScale : fit.Scale;
 
-        if (bands.Compact)
+        if (flat)
         {
-            float t = rowCount <= 1 ? 0f : (col - (rowCount - 1) * 0.5f) / ((rowCount - 1) * 0.5f);
-            // The row keeps the margin the card needs when it is held, so a press grows the edge cards without moving.
-            float limit = MaxHandCenterOffset(heldScale, HandRowAngle);
-            float halfSpan = Math.Min(Math.Min(396f, (rowCount - 1) * 99f), limit);
-            float compactX = t * halfSpan;
-            float compactAngle = t * HandRowAngle;
-            float compactScale = fit.Scale;
-            if (focusedIndex == safeIndex)
-            {
-                // Straight and a little larger about its own centre, as the native hover does: rotation would otherwise
-                // move the card's axis-aligned rect centre while it grows, though its visual centre stays put.
-                compactScale = heldScale;
-                compactAngle = 0f;
-            }
-            return new PortraitCardSlot(Math.Clamp(compactX, -limit, limit),
-                HandRowCenterLocalY(bands, rowIndex), compactScale, compactAngle, rowIndex);
+            // A centred flat row. The step keeps the held edge card's cost badge inside the margin, so a crowded row
+            // overlaps its neighbours instead of shrinking or running off the canvas.
+            float limit = MaxHandCenterOffset(heldScale, 0f);
+            float step = fit.CardWidth + fit.Gap;
+            if (rowCount > 1)
+                step = Math.Min(step, 2f * limit / (rowCount - 1));
+            float x = (col - (rowCount - 1) * 0.5f) * step;
+            return new PortraitCardSlot(x, rowY, scale, 0f, rowIndex);
         }
 
-        // Tall: flat rows on TouchSpireUI's grid. Positions are centre-to-centre with the fitted card width and gap, so
-        // the grid and the drawn cards share one coordinate space. The fit already keeps the row inside the side margins.
-        float step = fit.CardWidth + fit.Gap;
-        float x = (col - (rowCount - 1) * 0.5f) * step;
-        float scale = focusedIndex == safeIndex ? heldScale : fit.Scale;
-        return new PortraitCardSlot(x, HandRowCenterLocalY(bands, rowIndex), scale, 0f, rowIndex);
+        // The launcher's fan, at every shape. The half-span uses the held card's margin so pressing an edge card grows
+        // it in place without moving the row; the focused card is straightened as the native hover does.
+        float t = rowCount <= 1 ? 0f : (col - (rowCount - 1) * 0.5f) / ((rowCount - 1) * 0.5f);
+        float fanLimit = MaxHandCenterOffset(heldScale, HandRowAngle);
+        float halfSpan = Math.Min((rowCount - 1) * 99f, fanLimit);
+        float fanX = t * halfSpan;
+        float fanAngle = focused ? 0f : t * HandRowAngle;
+        return new PortraitCardSlot(Math.Clamp(fanX, -fanLimit, fanLimit), rowY, scale, fanAngle, rowIndex);
     }
 
     /// <summary>
@@ -375,18 +345,17 @@ public static class PortraitCombatMath
         float railCenter = railTop + RailHeightFor(bands.Compact) * 0.5f;
 
         // The energy counter keeps the same place for every character; the star is a small corner badge on top of it.
-        const float energyX = 160f;
+        const float energyX = EnergyRailX;
         const float energyScale = 1.12f;
-        const float starScale = 0.8f;
-        const float endTurnScale = 1.54f;
+        const float endTurnScale = 1.42f;
         const float endTurnShowX = SafeAreaCanvas.PortraitWidth * 0.5f - 110f;
 
-        // The star is a child of the energy counter and is drawn at the same relative size ratio as TouchSpireUI
-        // (native star 0.8 against the orb's own scale). Its centre is the orb centre plus orb.Size * (-0.4, 0.3); the
-        // drawn sizes include the energy counter's 1.12 scale.
+        // TouchSpireUI keeps the star at its native scene size and simply places its global top-left from the orb:
+        // orb centre + orb.Size * offset - star span * 0.5. Star centre is the same value plus half its span; the badge
+        // size is the native 128 at its scene scale under the counter.
         float orbSize = EnergyOrbSize * energyScale;
         float starCenterX = energyX + EnergyOrbSize * 0.5f + orbSize * StarOrbOffsetX;
-        float starCenterY = railCenter + orbSize * StarOrbOffsetY - StarBadgeLift;
+        float starCenterY = railCenter + orbSize * StarOrbOffsetY;
         float endTurnVisualLeft = endTurnShowX - 110f * (endTurnScale - 1f);
         float endTurnVisualRight = endTurnVisualLeft + 220f * endTurnScale;
 
@@ -397,7 +366,6 @@ public static class PortraitCombatMath
             EnergyScale: energyScale,
             StarCenterX: starCenterX,
             StarCenterY: starCenterY,
-            StarScale: starScale,
             ExhaustShowX: 806f,
             ExhaustShowY: railCenter - 40f,
             ExhaustHideX: -180f,
@@ -531,7 +499,7 @@ public static class PortraitCombatMath
     public const float MinBodyScale = 0.25f;
 
     /// <summary>The largest a creature body is drawn; a lone enemy already uses this for the stage.</summary>
-    public const float MaxBodyScale = 1.15f;
+    public const float MaxBodyScale = 1.32f;
 
     /// <summary>Preferred shared body scale for an ordinary encounter, re-derived for the 1080 canvas (TouchSpireUI's 2.05).</summary>
     public const float PreferredSharedBodyScale = 1.32f;
@@ -703,6 +671,109 @@ public static class PortraitCombatMath
             x += width;
         }
         return cells;
+    }
+
+    /// <summary>
+    /// TouchSpireUI's tall (9:19.5 and taller) enemy formation, converted to the 1080 canvas and re-based on the launcher's
+    /// floor line. Depths are TouchSpireUI units ×0.642857: a negative depth stands in front of the floor (below it on
+    /// screen), a positive one behind it. The Ovicopter back rank, the Crab and the segment chain have their own layouts.
+    /// </summary>
+    public static PortraitCreatureSlot[] ComputeTallFormation(int capacity, PortraitCombatBands bands)
+    {
+        int count = Math.Max(0, capacity);
+        var slots = new PortraitCreatureSlot[count];
+        if (count == 0)
+            return slots;
+        float floor = bands.FrontFeetY;
+        const float S = 1080f / 1680f;
+        PortraitCreatureSlot Slot(float fraction, float depthTsu) =>
+            new(SafeAreaCanvas.PortraitWidth * fraction, floor - depthTsu * S, 0.94f, depthTsu > 0f ? 0 : 1);
+
+        if (count == 1)
+        {
+            slots[0] = Slot(0.675f, 25f);
+            return slots;
+        }
+        if (count == 2)
+        {
+            slots[0] = Slot(0.475f, 100f);
+            slots[1] = Slot(0.805f, 20f);
+            return slots;
+        }
+        if (count == 3)
+        {
+            slots[0] = Slot(0.46f, -125f);
+            slots[1] = Slot(0.655f, 510f);
+            slots[2] = Slot(0.85f, -75f);
+            return slots;
+        }
+        if (count == 5)
+            slots[0] = Slot(0.18f, 510f);
+        int o = count == 5 ? 1 : 0;
+        slots[o] = Slot(0.49f, -125f);
+        slots[o + 1] = Slot(0.49f, 480f);
+        slots[o + 2] = Slot(0.81f, -125f);
+        slots[o + 3] = Slot(0.81f, 510f);
+        for (int i = o + 4; i < count; i++)
+            slots[i] = Slot(0.50f + (i % 2) * 0.30f, 1030f);
+        return slots;
+    }
+
+    /// <summary>
+    /// The six-body tall formation (TwoTailedRats with its full summon roster): three columns between the permitted enemy
+    /// left and the right margin, a front and a back rat sharing each column. Ranks are vertically disjoint, so sharing a
+    /// column cannot make bodies, bars or intents touch. Positions are frozen at the first layout with the real enemy left.
+    /// </summary>
+    public static PortraitCreatureSlot[] ComputeSixFormation(float leftEdge, PortraitCombatBands bands)
+    {
+        var slots = new PortraitCreatureSlot[6];
+        float floor = bands.FrontFeetY;
+        float right = SafeAreaCanvas.PortraitWidth - 14f;
+        float left = Math.Max(8f, leftEdge);
+        float pitch = Math.Max(120f, (right - left) / 3f);
+        for (int column = 0; column < 3; column++)
+        {
+            float x = left + (column + 0.5f) * pitch;
+            slots[column] = new PortraitCreatureSlot(x, floor, 0.94f, 1);
+            slots[3 + column] = new PortraitCreatureSlot(x, floor - 510f * (SafeAreaCanvas.PortraitWidth / 1680f), 0.94f, 0);
+        }
+        return slots;
+    }
+
+    /// <summary>
+    /// A tall-formation slot's frame: width capped by the nearest column pitch (so bodies and bars cannot touch), height by
+    /// TouchSpireUI's 220–475 converted to the launcher canvas.
+    /// </summary>
+    public static (float MaxWidth, float MaxHeight, float MinLeft, float MaxRight) TallFormationFrame(
+        PortraitCreatureSlot[] formation,
+        int index,
+        PortraitCombatBands bands)
+    {
+        if (formation.Length == 0 || index < 0 || index >= formation.Length)
+            return (225f, 305f, 8f, SafeAreaCanvas.PortraitWidth - 8f);
+        PortraitCreatureSlot slot = formation[index];
+        // Same-column ranks (front/back pairs share an x) are separated vertically, not horizontally, so they do not set
+        // the horizontal pitch; a lone slot may use the whole width.
+        float pitch = formation.Length == 1 ? 1000f : 400f;
+        for (int j = 0; j < formation.Length; j++)
+        {
+            if (j == index || formation[j].RowDepth != slot.RowDepth) continue;
+            float dx = MathF.Abs(formation[j].CanvasX - slot.CanvasX);
+            if (dx > 1f)
+                pitch = Math.Min(pitch, dx);
+        }
+        float baseWidth = formation.Length == 1 ? SafeAreaCanvas.PortraitWidth * 0.58f
+            : formation.Length == 2 ? SafeAreaCanvas.PortraitWidth * 0.31f
+            : SafeAreaCanvas.PortraitWidth * 0.29f;
+        float width = Math.Max(90f, Math.Min(baseWidth, pitch - 10f));
+        // TouchSpireUI's 475 clamp belongs to the 3–5 table; 1–2 use the whole stage from the top to their feet.
+        float height = formation.Length <= 2
+            ? Math.Max(120f, slot.CanvasFeetY - bands.StageTopY)
+            : Math.Clamp(475f * (SafeAreaCanvas.PortraitWidth / 1680f), 141f, 305f);
+        height = Math.Min(height, Math.Max(60f, slot.CanvasFeetY - bands.StageTopY));
+        float half = Math.Max(width, pitch) * 0.5f;
+        return (width, height, Math.Max(8f, slot.CanvasX - half),
+            Math.Min(SafeAreaCanvas.PortraitWidth - 8f, slot.CanvasX + half));
     }
 
     public static PortraitCreatureSlot[] ComputeAllyStageSlots(

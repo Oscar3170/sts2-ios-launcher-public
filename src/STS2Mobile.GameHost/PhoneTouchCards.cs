@@ -22,12 +22,13 @@ namespace STS2Mobile.GameHost;
 /// <see cref="TouchCardMath.TargetSnap"/> for a near miss) is highlighted before the release, and the release plays on it.
 /// A release off every target puts the card back; there is no click-to-aim fallback.</item>
 /// <item>An untargeted card is drawn with its bottom edge <see cref="TouchCardMath.DragLift"/> above the finger, at the
-/// hand's pressed scale (<c>HeldCardScaleFor</c>) and slightly faded, so the creature under the finger stays visible. Its
-/// position, scale, angle, alpha and Z are written in a render-frame pass, after the game's own move for the frame, so the
-/// card follows the finger without a fight with the game's tween.</item>
+/// hand's pressed scale (<c>HeldCardScaleFor</c>). Its position, scale, angle and Z are written in a render-frame pass,
+/// after the game's own move for the frame, so the card follows the finger without a fight with the game's tween. Its
+/// modulate is left at the game's own value: the dragged card is not faded, matching the native game and TouchSpireUI's
+/// portrait mode.</item>
 /// <item>A targeted card stops following the finger once native aiming starts: it eases to the fixed park
-/// (<see cref="TouchCardMath.AimingCardCenter"/>: top on End Turn's top, centred, fully opaque) at
-/// <see cref="TouchCardMath.AimedCardScaleFor"/> of the hand's resting scale, while the native arrow and reticle track the
+/// (<see cref="TouchCardMath.AimingCardCenter"/>: top on End Turn's top, centred) at
+/// <see cref="TouchCardMath.AimedCardScaleFor"/> (one size per shape), while the native arrow and reticle track the
 /// creature under the finger.</item>
 /// <item>In the game's hand-selection modes (Armaments and the like) a press stays the game's own: tap-to-select
 /// is unchanged.</item>
@@ -74,7 +75,6 @@ internal sealed class PhoneTouchCards
     private Control? _pendingHolder;
     private Control? _dragHolder;
     private bool _dragPresentation;
-    private Color _dragOriginalModulate;
     private int _dragOriginalZ;
     private bool _released;
     private ulong _releaseFrame;
@@ -410,7 +410,6 @@ internal sealed class PhoneTouchCards
         _aimParked = false;
         _aimStarted = false;
         _aimLogged = false;
-        _dragOriginalModulate = holder.Modulate;
         _dragOriginalZ = holder.ZIndex;
         CardIsBeingDragged = true;
         _dragPresentation = true;
@@ -474,7 +473,7 @@ internal sealed class PhoneTouchCards
         int count = HandCardCount(_r!, _r!.Hand());
         float restingScale = PortraitCombatMath.HandCardScaleFor(bands, count);
         float heldScale = PortraitCombatMath.HeldCardScaleFor(bands, count);
-        float aimScale = TouchCardMath.AimedCardScaleFor(restingScale);
+        float aimScale = TouchCardMath.AimedCardScaleFor(bands);
         // Like the mod's Center/Suspend latch: once native aiming starts the card stays parked until the play is over,
         // including the release/cancel frames while the arrow is being taken down.
         if (_r?.IsTargeting() == true) _aimStarted = true;
@@ -489,8 +488,8 @@ internal sealed class PhoneTouchCards
         if (aiming)
         {
             // The card stops following the finger and sits at a fixed park: top edge on End Turn's top, centred, while the
-            // native arrow and reticle follow the finger. It is fully opaque and clearly larger than the pressed card;
-            // the move eases, and the top edge stays aligned while the size grows.
+            // native arrow and reticle follow the finger. Its modulate is the game's own (not faded) and it is clearly
+            // larger than the pressed card; the move eases, and the top edge stays aligned while the size grows.
             float endTurnTop = EndTurnTop(_r!, canvas, bands);
             (float px, float py) = TouchCardMath.AimingCardCenter(endTurnTop, onCanvas, canvas.X);
             canvasTarget = new Vector2(px, py);
@@ -521,9 +520,6 @@ internal sealed class PhoneTouchCards
         holder.Scale = Vector2.One * localScale;
         holder.RotationDegrees = 0f;
         holder.ZIndex = DraggedZIndex;
-        Color color = holder.Modulate;
-        color.A = aiming ? 1f : TouchCardMath.DragOpacity;
-        holder.Modulate = color;
         // The holder's own animation runs off this target; it is put to the lift as well, after the game's raw pointer
         // write for this frame, so the animation follows the portrait move.
         _r?.SetTargetPosition(holder, local);
@@ -545,7 +541,6 @@ internal sealed class PhoneTouchCards
     {
         if (_dragHolder is { } holder && _dragPresentation && GodotObject.IsInstanceValid(holder))
         {
-            holder.Modulate = _dragOriginalModulate;
             holder.ZIndex = _dragOriginalZ;
             if (_dragLogged)
             {

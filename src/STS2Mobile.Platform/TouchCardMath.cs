@@ -28,16 +28,15 @@ public static class TouchCardMath
     /// <summary>How far above the finger the dragged card's bottom edge is held, so the finger does not hide it.</summary>
     public const float DragLift = 51f;
 
-    /// <summary>The dragged card's opacity: slightly faded, so the creature under it stays visible.</summary>
-    public const float DragOpacity = 0.85f;
-
     private const float EdgeMargin = 8f;
 
     /// <summary>
-    /// The aiming card's size: clearly larger than the hand's resting card for this canvas and hand size (1.5 times it),
-    /// reached by easing from the pressed size, never as a jump at pickup.
+    /// The aiming card's size: one value per shape, 1.5 times the shape's largest resting hand card
+    /// (<c>HandCardScaleFor(bands, 1)</c>), so the parked card is the same size whatever the hand holds. It is reached by
+    /// easing from the pressed size, never as a jump or a shrink at pickup.
     /// </summary>
-    public static float AimedCardScaleFor(float restingScale) => restingScale * 1.5f;
+    public static float AimedCardScaleFor(PortraitCombatBands bands) =>
+        PortraitCombatMath.HandCardScaleFor(bands, 1) * 1.5f;
 
     /// <summary>The End Turn button's pivot Y: ComputeHudLayout's <c>EndTurnShowY</c> is its unscaled top-left Y.</summary>
     public const float EndTurnHalfHeight = 45f;

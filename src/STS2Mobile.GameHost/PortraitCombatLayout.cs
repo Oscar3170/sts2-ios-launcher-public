@@ -22,6 +22,13 @@ internal sealed class PortraitCombatLayout
     public const string CombatRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom";
     private const string ConfirmButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NConfirmButton";
 
+    /// <summary>
+    /// The Graphics "Flat Hand" choice: false fans the hand at every shape, true gives TouchSpireUI's flat rows. It only
+    /// changes the row shape, never the bands, card size or selection layout; PhoneGraphics writes it before the next
+    /// frame and the test host may set it directly.
+    /// </summary>
+    public static bool FlatHand { get; set; }
+
     private static readonly Color PlayableHighlightColor = new(
         PortraitCombatMath.PlayableHighlightRgba.R,
         PortraitCombatMath.PlayableHighlightRgba.G,
@@ -82,7 +89,11 @@ internal sealed class PortraitCombatLayout
     private readonly HashSet<ulong> _wiredSelectedHolders = new();
     private readonly HashSet<ulong> _wiredHolderRemovals = new();
     private readonly HashSet<ulong> _wiredHandContainers = new();
+    private readonly HashSet<ulong> _wiredCombatUis = new();
+    private readonly HashSet<ulong> _railEntranceRooms = new();
     private PortraitCombatBands? _lastBands;
+    private List<LabelRequest>? _pendingLabels;
+    private CombatRoomState? _pendingRoomState;
     private float _lastCanvasHeight;
     private bool _selectionLayoutFailed;
     private bool _selectionLayoutFailureLogged;
@@ -110,6 +121,9 @@ internal sealed class PortraitCombatLayout
     // The Underdocks deck's plank line sits 320 units from the container origin in the authored 1296-tall layer art, i.e.
     // 861 units above the art's bottom. Measured from the art so any Underdocks layer background keeps its own plank line.
     private const float PlankFromBottomFraction = 861f / 1296f;
+    // The Underdocks pier's visible far edge in the pier layer's own art space, calibrated from the 9:19.5 captures (~740
+    // canvas at the pier transform). Back ranks stand between this line and the plank surface.
+    private const float PierFarEdgeArtY = -27f;
     private const string DecimillipedeSegmentTypeName = "DecimillipedeSegment";
     private const string CrusherMonsterTypeName = "Crusher";
     private const string RocketMonsterTypeName = "Rocket";
@@ -277,6 +291,16 @@ internal sealed class PortraitCombatLayout
         foreach (ulong id in dead) _wiredHandContainers.Remove(id);
 
         dead.Clear();
+        foreach (ulong id in _wiredCombatUis)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _wiredCombatUis.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _railEntranceRooms)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _railEntranceRooms.Remove(id);
+
+        dead.Clear();
         foreach (ulong id in _selectionHolderEase.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _selectionHolderEase.Remove(id);
@@ -335,15 +359,12 @@ internal sealed class PortraitCombatLayout
         float canvasHeight)
     {
         ulong roomId = room.GetInstanceId();
-        if (!_rooms.TryGetValue(roomId, out CombatRoomState? state))
-        {
-            state = CombatRoomState.Capture(room, refl);
-            _rooms[roomId] = state;
-        }
+        CombatRoomState state = EnsureRoomState(room, refl);
 
         Control? ui = room.GetNodeOrNull<Control>("%CombatUi") ?? room.GetNodeOrNull<Control>("CombatUi");
         if (ui != null)
         {
+            WireCombatUi(room, ui, roomId);
             ui.AnchorLeft = 0f;
             ui.AnchorTop = 0f;
             ui.AnchorRight = 1f;
@@ -368,12 +389,96 @@ internal sealed class PortraitCombatLayout
         if (ui != null)
         {
             LayoutCombatHudPortrait(ui, room, refl, hud);
+            // The first frame a room is laid out also settles the piles' entrance: kill any native corner tween and put
+            // the show/hide targets on the rail before NCombatUi.AnimIn can run its slide.
+            if (_railEntranceRooms.Add(roomId))
+                ForcePileEntrance(ui, refl, hud);
             KeepEndTurnUnlitWhileHolding(ui, hand, refl);
         }
         if (hand != null)
             LayoutHandSelectionPortrait(hand, refl, bands, canvasHeight);
 
+        _pendingLabels = new List<LabelRequest>();
         LayoutCombatStagePortrait(room, refl, state, bands, capHeight, canvasHeight);
+        List<LabelRequest> pending = _pendingLabels;
+        _pendingLabels = null;
+        _pendingRoomState = null;
+        ApplyCreatureLabelsPortraitBatch(pending, refl);
+    }
+
+    private CombatRoomState EnsureRoomState(Control room, CombatReflection refl)
+    {
+        ulong roomId = room.GetInstanceId();
+        if (!_rooms.TryGetValue(roomId, out CombatRoomState? state))
+        {
+            state = CombatRoomState.Capture(room, refl);
+            _rooms[roomId] = state;
+        }
+        return state;
+    }
+
+    /// <summary>
+    /// NCombatUi.Activate sets Visible=true and immediately calls AnimIn; the piles' AnimIn starts at their native
+    /// desktop show/hide targets. VisibilityChanged fires between those two lines, so this handler puts the whole rail on
+    /// its portrait places before the entrance tween is created and makes the piles' first entrance target the rail.
+    /// </summary>
+    private void WireCombatUi(Control room, Control ui, ulong roomId)
+    {
+        if (!_wiredCombatUis.Add(ui.GetInstanceId()))
+            return;
+        if (ui.HasSignal("visibility_changed"))
+            ui.Connect("visibility_changed", Callable.From(() => OnCombatUiVisibilityChanged(roomId)));
+    }
+
+    private void OnCombatUiVisibilityChanged(ulong roomId)
+    {
+        if (!SafeAreaCanvas.IsPortrait || GodotObject.InstanceFromId(roomId) is not Control room ||
+            !GodotObject.IsInstanceValid(room) || !room.IsInsideTree())
+            return;
+        Control? ui = room.GetNodeOrNull<Control>("%CombatUi") ?? room.GetNodeOrNull<Control>("CombatUi");
+        if (ui == null || !ui.Visible || !ui.IsVisibleInTree())
+            return;
+
+        CombatReflection refl = EnsureReflection();
+        EnsureRoomState(room, refl);
+        float canvasHeight = Math.Max(room.GetViewport().GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 0f);
+        PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvasHeight, bands);
+        LayoutCombatHudPortrait(ui, room, refl, hud);
+        _railEntranceRooms.Add(roomId);
+        ForcePileEntrance(ui, refl, hud);
+    }
+
+    /// <summary>
+    /// Stops the native pile entrance from using its desktop corner targets: kill the running position tween, point both
+    /// show and hide at the rail show position (so AnimIn starts and ends there), and place the pile on the rail now.
+    /// </summary>
+    private static void ForcePileEntrance(Control ui, CombatReflection refl, PortraitHudLayout hud)
+    {
+        if ((ui.GetNodeOrNull<Control>("%CombatPileContainer") ?? ui.GetNodeOrNull<Control>("CombatPileContainer")) is not { } pileContainer)
+            return;
+
+        void Force(Control? pile, Vector2 show)
+        {
+            if (pile == null)
+                return;
+            if (refl.PilePosTweenField?.GetValue(pile) is Tween tween)
+            {
+                if (tween.IsRunning())
+                    tween.Kill();
+                refl.PilePosTweenField.SetValue(pile, null);
+            }
+            refl.PileShowPosField?.SetValue(pile, show);
+            refl.PileHidePosField?.SetValue(pile, show);
+            pile.Position = show;
+        }
+
+        Force(pileContainer.GetNodeOrNull<Control>("%DrawPile") ?? pileContainer.GetNodeOrNull<Control>("DrawPile"),
+            new Vector2(hud.DrawShowX, hud.DrawShowY));
+        Force(pileContainer.GetNodeOrNull<Control>("%DiscardPile") ?? pileContainer.GetNodeOrNull<Control>("DiscardPile"),
+            new Vector2(hud.DiscardShowX, hud.DiscardShowY));
+        Force(pileContainer.GetNodeOrNull<Control>("%ExhaustPile") ?? pileContainer.GetNodeOrNull<Control>("ExhaustPile"),
+            new Vector2(hud.ExhaustShowX, hud.ExhaustShowY));
     }
 
     /// <summary>
@@ -490,7 +595,7 @@ internal sealed class PortraitCombatLayout
             bool playable = !combatInProgress || refl.CanCardPlay(cardNode);
 
             int slotIndex = PortraitCombatMath.SlotIndexBesideHeldCard(i, heldIndex);
-            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(handCount, slotIndex, focusedSlotIndex, bands);
+            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(handCount, slotIndex, focusedSlotIndex, bands, FlatHand);
 
             bool isFocused = focusedIndex == i;
             var slotPosition = new Vector2(slot.LocalX, slot.LocalY);
@@ -1316,37 +1421,31 @@ internal sealed class PortraitCombatLayout
 
         if (refl.StarCounterField?.GetValue(ui) is Control starCounter && starCounter.IsVisibleInTree())
         {
-            // The star is TouchSpireUI's corner badge: its centre is offset from the orb centre by 0.4 of the drawn width
-            // to the left and 0.3 of the height down, so it overlaps the orb's lower-left. Position is a top-left.
-            starCounter.Scale = new Vector2(hud.StarScale, hud.StarScale);
-            float half = 64f * hud.StarScale;
-            var starCenter = new Vector2(hud.StarCenterX, hud.StarCenterY);
-            if (starCounter.GetParent()?.Name == "CombatUi")
+            // TouchSpireUI keeps the star at its native scene size and only places it from the energy counter's global
+            // rect. No StarScale, no lift: anchors are cleared to TopLeft with the native Size, then the top-left is
+            // orb centre + orb.Size * offset - the star's own drawn span * 0.5.
+            Control? energyCounter = refl.EnergyCounterField?.GetValue(ui) as Control;
+            if (energyCounter != null)
             {
+                Vector2 nativeSize = starCounter.Size;
                 starCounter.AnchorLeft = 0f;
-                starCounter.AnchorRight = 0f;
                 starCounter.AnchorTop = 0f;
+                starCounter.AnchorRight = 0f;
                 starCounter.AnchorBottom = 0f;
-                starCounter.Position = starCenter - new Vector2(half, half);
+                starCounter.Size = nativeSize;
+                Rect2 orb = energyCounter.GetGlobalRect();
+                Vector2 span = nativeSize * starCounter.GetGlobalTransform().Scale.Abs();
+                starCounter.GlobalPosition = orb.GetCenter()
+                    + orb.Size * new Vector2(PortraitCombatMath.StarOrbOffsetX, PortraitCombatMath.StarOrbOffsetY)
+                    - span * 0.5f;
             }
-            else
-            {
-                // Reparented under _energyCounter during NCombatUi.Activate; convert the canvas centre to that parent's
-                // local, unscaled space (the orb pivots on its centre and is drawn at EnergyScale).
-                var energyOrigin = new Vector2(
-                    hud.EnergyContainerX - 64f * (hud.EnergyScale - 1f),
-                    hud.EnergyContainerY - 64f * (hud.EnergyScale - 1f));
-                Vector2 localCenter = (starCenter - energyOrigin) / hud.EnergyScale;
-                starCounter.Position = localCenter - new Vector2(half, half);
 
-                // Draw the badge over the orb's art but under the energy count: the native star is reparented last, so
-                // without this the badge would paint over the "3/3". Moving it just before the counter's Label makes the
-                // numbers always the top layer while the badge still owns the lower-left corner.
-                if (starCounter.GetParent() is Control starParent && refl.EnergyCounterField?.GetValue(ui) == starParent &&
-                    starParent.GetNodeOrNull<Control>("Label") is { } energyLabel &&
-                    starCounter.GetIndex() > energyLabel.GetIndex())
-                    starParent.MoveChild(starCounter, energyLabel.GetIndex());
-            }
+            // Draw the badge over the orb's art but under the energy count: the native star is reparented last, so
+            // without this the badge would paint over the "3/3". The star and its count stay below the energy label.
+            if (starCounter.GetParent() is Control starParent && energyCounter == starParent &&
+                starParent.GetNodeOrNull<Control>("Label") is { } energyLabel &&
+                starCounter.GetIndex() > energyLabel.GetIndex())
+                starParent.MoveChild(starCounter, energyLabel.GetIndex());
         }
 
         if (refl.FoolCombatUiField?.GetValue(ui) is Control foolUi && foolUi.IsVisibleInTree())
@@ -1483,6 +1582,7 @@ internal sealed class PortraitCombatLayout
         Control? sceneContainer = room.GetNodeOrNull<Control>("%CombatSceneContainer") ?? room.GetNodeOrNull<Control>("CombatSceneContainer");
         if (sceneContainer == null)
             return;
+        _pendingRoomState = state;
 
         sceneContainer.Scale = Vector2.One;
         sceneContainer.PivotOffset = sceneContainer.Size * 0.5f;
@@ -1596,15 +1696,27 @@ internal sealed class PortraitCombatLayout
         orderedAllies.AddRange(players);
         orderedAllies.AddRange(pets);
 
-        float maxAllyW = orderedAllies.Count > 1 ? 210f : 270f;
-        float maxAllyH = orderedAllies.Count > 1 ? 260f : 360f;
+        bool tallRow = plan.TallFormation.Length > 0;
+        float maxAllyW = orderedAllies.Count > 1 ? 210f : (tallRow ? 360f : 270f);
+        float maxAllyH = orderedAllies.Count > 1 ? 260f : (tallRow ? 560f : 360f);
         // The widest health bar a creature may have, so the bars of neighbours in one row stay apart.
         float maxAllyBar = orderedAllies.Count > 1 ? 170f : 320f;
         for (int i = 0; i < orderedAllies.Count && i < allySlots.Length; i++)
         {
+            float allyForce = 0f;
+            if (plan.TallFormation.Length > 0 && plan.SharedBodyScale > 0f)
+            {
+                // Allies have no intent band above them: fit the body to its own frame, then take the room's shared scale.
+                Vector2 allyNative = refl.GetCreatureFootprintSize(orderedAllies[i]);
+                float allyFit = PortraitCombatMath.MaxBodyScale;
+                if (allyNative.X > 1f) allyFit = Math.Min(allyFit, maxAllyW / allyNative.X);
+                if (allyNative.Y > 1f) allyFit = Math.Min(allyFit, maxAllyH / allyNative.Y);
+                allyForce = Math.Min(plan.SharedBodyScale, Math.Max(PortraitCombatMath.MinBodyScale, allyFit));
+            }
             ApplyCreatureSlot(orderedAllies[i], refl, allySlots[i], centerOrigin, maxAllyW, maxAllyH, maxAllyBar, bands,
                 isAlly: true, peerScale: plan.PeerScale, segmented: plan.Segmented,
-                minLeft: StageSideMargin, maxRight: SafeAreaCanvas.PortraitWidth - StageSideMargin);
+                minLeft: StageSideMargin, maxRight: SafeAreaCanvas.PortraitWidth - StageSideMargin,
+                forceScale: allyForce);
         }
         // A pet the fight did not start with stands beside its owner rather than moving the player to make room.
         for (int i = allySlots.Length; i < orderedAllies.Count; i++)
@@ -1648,6 +1760,30 @@ internal sealed class PortraitCombatLayout
                 KeepOrbArcOnCanvas(orbMgr, bands, SafeAreaCanvas.PortraitWidth);
         }
 
+        if (!bands.Compact && plan.Capacity == 6 && plan.TallFormation.Length == 0 && !plan.OviFight &&
+            !plan.EmbeddedCrab && !plan.Segmented)
+        {
+            // Six bodies on the tall stage: three columns right of the hero (a smaller gap, since the group is dense), a
+            // front and a back rat per column. Built once with the real enemy-left, then frozen like every other slot.
+            float sixLeft = PortraitCombatMath.EnemyStageLeft(playersRight, alliesRight, LoneEnemyLeft, 110f);
+            plan.TallFormation = PortraitCombatMath.ComputeSixFormation(sixLeft, bands);
+            plan.CrowdEnabled = false;
+            float tightest = 0f;
+            foreach (Control enemy in currentEnemies)
+            {
+                if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex) || slotIndex >= plan.TallFormation.Length)
+                    continue;
+                (float frameW, float frameH, _, _) = PortraitCombatMath.TallFormationFrame(plan.TallFormation, slotIndex, bands);
+                float fit = CellFit(enemy, frameW, frameH, refl, bands);
+                tightest = tightest <= 0f ? fit : Math.Min(tightest, fit);
+            }
+            if (tightest > 0f)
+            {
+                plan.SharedBodyScale = Math.Clamp(Math.Min(plan.BodyTargetScale, tightest),
+                    PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+                plan.SharedLocked = true;
+            }
+        }
         if (!plan.SqueezeComputed)
         {
             plan.Squeeze = ComputeGroupSqueeze(plan, refl, bands, currentEnemies, enemyLeft);
@@ -1670,13 +1806,24 @@ internal sealed class PortraitCombatLayout
             // right of the hero instead; the boss's cell is wider, so it stays dominant and everything keeps its own space.
             plan.CrowdLeft = Math.Max(StageSideMargin + 6f, playersRight + 6f);
             plan.CrowdBoss = plan.Capacity >= 4 ? plan.BossSlot : -1;
-            plan.BackBoss = !bands.Compact && plan.Capacity >= 5 && plan.CrowdBoss >= 0;
+            plan.BackBoss = !bands.Compact && !plan.OviFight && plan.Capacity >= 5 && plan.CrowdBoss >= 0;
             int peers = plan.BackBoss ? plan.Capacity - 1 : plan.Capacity;
             plan.Crowd = PortraitCombatMath.ComputeCrowdedCells(peers, plan.BackBoss ? -1 : plan.CrowdBoss, plan.CrowdLeft, bands);
             plan.CrowdMap = new int[plan.Capacity];
             int next = 0;
             for (int i = 0; i < plan.Capacity; i++)
                 plan.CrowdMap[i] = plan.BackBoss && i == plan.CrowdBoss ? -1 : next++;
+            if (plan.OviFight)
+            {
+                // The eggs own every cell right of the hero from room start: six uniform cells over the full enemy width
+                // (the Ovi takes the last on 9:16, or its upper-back slot when tall). Cells are frozen at full capacity,
+                // so a later egg or hatchling never lands over the player and nothing moves.
+                plan.CrowdLeft = Math.Max(StageSideMargin + 6f, playersRight + 110f);
+                plan.Crowd = PortraitCombatMath.ComputeCrowdedCells(plan.Capacity, -1, plan.CrowdLeft, bands);
+                for (int i = 0; i < plan.Capacity; i++)
+                    plan.CrowdMap[i] = i;
+                plan.BackBoss = false;
+            }
             if (plan.BackBoss)
             {
                 if (plan.OviFight)
@@ -1914,7 +2061,17 @@ internal sealed class PortraitCombatLayout
             (float maxW, float maxH, float minLeft, float maxRight) = EnemySlotLimits(plan, slotIndex, enemyLeft);
             float maxBar = EnemyBarLimit(plan, slotIndex);
             float forceScale = 0f;
-            if (!overflow && plan.CrowdEnabled && plan.CrowdComputed)
+            if (!overflow && plan.TallFormation.Length > 0 && slotIndex < plan.TallFormation.Length)
+            {
+                slot = plan.TallFormation[slotIndex];
+                (maxW, maxH, minLeft, maxRight) = PortraitCombatMath.TallFormationFrame(plan.TallFormation, slotIndex, bands);
+                maxBar = Math.Max(90f, maxW - 6f);
+                float fit = CellFit(enemy, maxW, maxH, refl, bands);
+                float shared = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
+                forceScale = fit >= shared - 0.02f ? shared : Math.Min(shared, fit);
+            }
+            bool oviUpper = plan.OviFight && slotIndex == plan.OviSlot && !bands.Compact;
+            if (!overflow && !oviUpper && plan.CrowdEnabled && plan.CrowdComputed)
             {
                 if (plan.BackBoss && slotIndex == plan.CrowdBoss)
                 {
@@ -1971,6 +2128,30 @@ internal sealed class PortraitCombatLayout
                 forceScale = Math.Min(shared, fit);
                 minLeft = plan.CrowdLeft;
                 maxRight = SafeAreaCanvas.PortraitWidth - 8f;
+            }
+            if (!overflow && plan.OviFight && slotIndex == plan.OviSlot && !bands.Compact && plan.CrowdComputed &&
+                slotIndex < plan.CrowdMap.Length)
+            {
+                // The flyer keeps the 9:16 arrangement (rightmost, own wide cell) but is raised above the egg row on the
+                // tall stage, so its whole body and bar clear the eggs' intents.
+                // Upper back slot over the right half of the egg row: its body fits between StageTopY + its intent band
+                // and the top of the eggs' intent row, and its bar ends a small margin above those intents.
+                // Eggs at the tall shared scale top out around 150 canvas units; the flyer's bar ends above their intents.
+                const float eggBound = 150f;
+                float oviFeet = bands.FrontFeetY - eggBound - IntentBandHeight - 52f;
+                float oviX = plan.Crowd.X.Length > 4 ? (plan.Crowd.X[2] + plan.Crowd.X[4]) * 0.5f : 840f;
+                oviX = Math.Clamp(oviX, 800f, 880f);
+                slot = new PortraitCreatureSlot(oviX, oviFeet, 0.94f, 0);
+                float oviCell = plan.Crowd.Widths.Length > 0 ? plan.Crowd.Widths[0] : 150f;
+                maxW = Math.Min(360f, oviCell * 2.2f);
+                maxH = Math.Max(180f, oviFeet - bands.StageTopY - IntentBandHeight);
+                maxBar = Math.Min(300f, maxW);
+                minLeft = Math.Max(StageSideMargin, oviX - maxW * 0.5f);
+                maxRight = Math.Min(SafeAreaCanvas.PortraitWidth - 8f, oviX + maxW * 0.5f);
+                Vector2 oviNative = refl.GetCreatureFootprintSize(enemy);
+                float fitW = oviNative.X > 1f ? maxW / oviNative.X : PortraitCombatMath.MaxBodyScale;
+                float fitH = oviNative.Y > 1f ? maxH / oviNative.Y : PortraitCombatMath.MaxBodyScale;
+                forceScale = Math.Min(plan.BodyTargetScale, Math.Min(fitW, fitH));
             }
             if (!overflow && plan.Segmented && plan.ChainComputed)
             {
@@ -2268,6 +2449,8 @@ internal sealed class PortraitCombatLayout
         float maxRight = SafeAreaCanvas.PortraitWidth,
         float forceScale = 0f)
     {
+        // The foot line this placement assigns, for the harness and for anyone diagnosing the stage.
+        creature.SetMeta("portrait_feet_y", slot.CanvasFeetY);
         float fittedScale = forceScale > 0.01f
             ? forceScale
             : FittedCreatureScale(creature, refl, slot, maxW, maxH, bands, isAlly, segmented, peerScale);
@@ -2363,8 +2546,8 @@ internal sealed class PortraitCombatLayout
                 creature.Position -= new Vector2(hitRight - (SafeAreaCanvas.PortraitWidth - StageSideMargin), 0f);
         }
 
-        if (cState != null)
-            ApplyCreatureLabelsPortrait(creature, cState, refl, maxBarWidth, isAlly);
+        if (cState != null && _pendingRoomState is { } roomState)
+            _pendingLabels?.Add(new LabelRequest(creature, cState, roomState, maxBarWidth, isAlly));
     }
 
     /// <summary>
@@ -2488,7 +2671,8 @@ internal sealed class PortraitCombatLayout
         CreatureDesktopState cState,
         CombatReflection refl,
         float maxBarWidth,
-        bool isAlly)
+        bool isAlly,
+        StatusIconLayout? plannedStatus = null)
     {
         float creatureScale = creature.GetGlobalTransform().Scale.X;
         if (creatureScale < 0.05f)
@@ -2555,37 +2739,73 @@ internal sealed class PortraitCombatLayout
         float nameLocalX = (nameLeft - display.GlobalPosition.X) / unit;
         float nameLocalWidth = nameWidth / unit;
 
-        // The name plate is the marker: the game's layout puts it at the hit box, this one puts it here.
-        if (MathF.Abs(nameplate.Position.X - nameLocalX) <= 0.75f && MathF.Abs(nameplate.Size.X - nameLocalWidth) <= 0.75f)
-            return;
-
-        Control? bounds = cState.EnsureBoundsStandIn(creature);
-        if (bounds == null)
-            return;
-
-        // The bar: the game makes it wider than the bounds by its extra width in display units, and starts it half that
-        // many canvas units left of them.
+        // The name plate is the marker for the game's own bar layout: when it is already where this layout puts it, only
+        // the power icons (which change with the status count, not the name) are laid out again below.
+        bool nameSynced = MathF.Abs(nameplate.Position.X - nameLocalX) <= 0.75f &&
+            MathF.Abs(nameplate.Size.X - nameLocalWidth) <= 0.75f;
         float boundsY = hitbox.GlobalPosition.Y;
-        bounds.Size = new Vector2(Math.Max(8f, barWidth / unit - cState.BarExtraWidth), 8f);
-        bounds.GlobalPosition = new Vector2(barLeft + cState.BarExtraWidth * 0.5f, boundsY);
-        if (!refl.LayOutStateDisplay(display, bounds))
+        Control? bounds = null;
+        if (!nameSynced)
         {
-            // Scaled up with the game's own layout the display would be far wider than its creature: this creature keeps
-            // the game's size and layout from here on.
-            cState.GiveUpStateDisplay(creature, refl);
-            return;
+            bounds = cState.EnsureBoundsStandIn(creature);
+            if (bounds == null)
+                return;
+
+            // The bar: the game makes it wider than the bounds by its extra width in display units, and starts it half
+            // that many canvas units left of them.
+            bounds.Size = new Vector2(Math.Max(8f, barWidth / unit - cState.BarExtraWidth), 8f);
+            bounds.GlobalPosition = new Vector2(barLeft + cState.BarExtraWidth * 0.5f, boundsY);
+            if (!refl.LayOutStateDisplay(display, bounds))
+            {
+                // Scaled up with the game's own layout the display would be far wider than its creature: this creature
+                // keeps the game's size and layout from here on.
+                cState.GiveUpStateDisplay(creature, refl);
+                return;
+            }
         }
 
-        // The powers: rows of as many icons as fit under the bar, from its left end (the game adds 25 units to the width
-        // and rounds the icons in a row up).
+        // The powers: at most two rows of status icons at TouchSpireUI's fixed icon size, centred under the bar. More than
+        // fourteen icons shrink uniformly so the full set still fits two rows inside a normal seven-icon row width.
         if (powerContainer != null)
         {
-            int perRow = Math.Max(1, (int)MathF.Floor(barWidth / (PowerIconPitch * unit)));
-            bounds.Size = new Vector2(perRow * PowerIconPitch - 26f, 8f);
-            bounds.GlobalPosition = new Vector2(barLeft, boundsY);
-            refl.LayOutPowerContainer(powerContainer, bounds);
+            int powerCount = 0;
+            float nativeIcon = 0f;
+            foreach (Node power in powerContainer.GetChildren())
+            {
+                if (power is Control { Visible: true } iconNode && !iconNode.IsQueuedForDeletion())
+                {
+                    powerCount++;
+                    if (nativeIcon <= 1f && iconNode.Size.X > 1f)
+                        nativeIcon = iconNode.Size.X;
+                }
+            }
+            if (powerCount > 0)
+            {
+                if (nativeIcon <= 1f)
+                    nativeIcon = PowerIconPitch;
+                StatusIconLayout icons = plannedStatus is { Count: > 0 } planned && planned.Count == powerCount
+                    ? planned
+                    : ComputeStatusLayout(cState.Hitbox, powerCount);
+                bounds ??= cState.EnsureBoundsStandIn(creature);
+                if (bounds != null)
+                {
+                    // The game wraps to ceil(container width / icon width) columns; a bounds of exactly `columns` icons
+                    // wide makes that the column count, then the container is scaled and shifted to the planned rect.
+                    bounds.Size = new Vector2(nativeIcon * icons.Columns - 25f, 8f);
+                    bounds.GlobalPosition = new Vector2(0f, boundsY);
+                    refl.LayOutPowerContainer(powerContainer, bounds);
+                    float iconScale = icons.IconWidth / (nativeIcon * unit);
+                    if (powerContainer.PivotOffset != Vector2.Zero)
+                        powerContainer.PivotOffset = Vector2.Zero;
+                    if (MathF.Abs(powerContainer.Scale.X - iconScale) > 0.002f)
+                        powerContainer.Scale = new Vector2(iconScale, iconScale);
+                    powerContainer.GlobalPosition = new Vector2(icons.Left, powerContainer.GlobalPosition.Y);
+                }
+            }
         }
 
+        if (nameSynced)
+            return;
         nameplate.Position = new Vector2(nameLocalX, nameplate.Position.Y);
         nameplate.Size = new Vector2(nameLocalWidth, nameplate.Size.Y);
 
@@ -2595,6 +2815,124 @@ internal sealed class PortraitCombatLayout
             barHitbox.OffsetLeft = hpBar.Position.X - 8f;
             barHitbox.OffsetRight = hpBar.Position.X + barWidth / unit + 8f;
         }
+    }
+
+    /// <summary>A creature's label pass, deferred until every creature of the room is placed so status blocks can see their neighbours.</summary>
+    private sealed record LabelRequest(Control Creature, CreatureDesktopState State, CombatRoomState Room, float MaxBarWidth, bool IsAlly);
+
+    /// <summary>
+    /// Lays out the health displays and status blocks for every creature of the room. The blocks are planned first from the
+    /// final hit boxes, then neighbours on the same status row (same rank and foot line, split at their midpoints) cap each
+    /// other's overhang, so the result does not depend on the order the creatures were laid out in.
+    /// </summary>
+    private void ApplyCreatureLabelsPortraitBatch(List<LabelRequest>? requests, CombatReflection refl)
+    {
+        if (requests == null || requests.Count == 0)
+            return;
+
+        var planned = new List<(LabelRequest Request, StatusIconLayout? Layout, int Rank, float RowY)>();
+        var rows = new Dictionary<(int Rank, float RowY), List<int>>();
+        foreach (LabelRequest request in requests)
+        {
+            if (!GodotObject.IsInstanceValid(request.Creature))
+                continue;
+            StatusIconLayout? layout = null;
+            if (request.State.PowerContainer is { } powers && GodotObject.IsInstanceValid(powers))
+            {
+                int count = CountVisiblePowers(powers);
+                if (count > 0)
+                    layout = ComputeStatusLayout(request.State.Hitbox, count);
+            }
+
+            int rank = 0;
+            float rowY = 0f;
+            if (request.Room.Stage != null &&
+                request.Room.Stage.SlotByCreature.TryGetValue(request.Creature.GetInstanceId(), out int slotIndex) &&
+                slotIndex < request.Room.Stage.TallFormation.Length)
+            {
+                PortraitCreatureSlot slot = request.Room.Stage.TallFormation[slotIndex];
+                rank = slot.RowDepth;
+                rowY = slot.CanvasFeetY;
+            }
+            else if (request.State.Hitbox is { } hit && GodotObject.IsInstanceValid(hit))
+            {
+                Transform2D t = hit.GetGlobalTransformWithCanvas();
+                rowY = (t * new Vector2(0f, hit.Size.Y)).Y;
+            }
+            rowY = MathF.Round(rowY / 16f) * 16f;
+            planned.Add((request, layout, rank, rowY));
+            if (layout is { Count: > 0 })
+            {
+                var key = (rank, rowY);
+                if (!rows.TryGetValue(key, out List<int>? row))
+                {
+                    row = new List<int>();
+                    rows[key] = row;
+                }
+                row.Add(planned.Count - 1);
+            }
+        }
+
+        // Each gap between adjacent blocks is split at its midpoint: every side may overhang by half of it, so two blocks
+        // meet but never overlap. The limits come from the base blocks, making the result order-independent.
+        foreach (List<int> row in rows.Values)
+        {
+            row.Sort((a, b) => planned[a].Layout!.Value.Left.CompareTo(planned[b].Layout!.Value.Left));
+            for (int i = 0; i < row.Count; i++)
+            {
+                int index = row[i];
+                (LabelRequest request, StatusIconLayout? layout, int rank, float rowY) = planned[index];
+                StatusIconLayout current = layout!.Value;
+                float leftGap = float.PositiveInfinity;
+                if (i > 0)
+                {
+                    StatusIconLayout previous = planned[row[i - 1]].Layout!.Value;
+                    leftGap = current.Left - (previous.Left + previous.RowWidth);
+                }
+                float rightGap = float.PositiveInfinity;
+                if (i + 1 < row.Count)
+                {
+                    StatusIconLayout next = planned[row[i + 1]].Layout!.Value;
+                    rightGap = next.Left - (current.Left + current.RowWidth);
+                }
+                if (request.State.Hitbox is { } hitbox && GodotObject.IsInstanceValid(hitbox))
+                {
+                    Transform2D t = hitbox.GetGlobalTransformWithCanvas();
+                    Vector2 tl = t * Vector2.Zero;
+                    Vector2 br = t * hitbox.Size;
+                    float hitLeft = MathF.Min(tl.X, br.X);
+                    float hitWidth = MathF.Abs(br.X - tl.X);
+                    planned[index] = (request, StatusIconMath.ApplyNeighbourLimits(current, hitLeft, hitWidth,
+                        SafeAreaCanvas.PortraitWidth, leftGap, rightGap), rank, rowY);
+                }
+            }
+        }
+
+        foreach ((LabelRequest request, StatusIconLayout? layout, _, _) in planned)
+            ApplyCreatureLabelsPortrait(request.Creature, request.State, refl, request.MaxBarWidth, request.IsAlly, layout);
+    }
+
+    private static StatusIconLayout ComputeStatusLayout(Control? hitbox, int count)
+    {
+        if (hitbox == null || !GodotObject.IsInstanceValid(hitbox) || hitbox.Size.X < 1f)
+            return StatusIconMath.Compute(count, SafeAreaCanvas.PortraitWidth * 0.5f, 200f, SafeAreaCanvas.PortraitWidth);
+        Transform2D t = hitbox.GetGlobalTransformWithCanvas();
+        Vector2 tl = t * Vector2.Zero;
+        Vector2 br = t * hitbox.Size;
+        float left = MathF.Min(tl.X, br.X);
+        float width = MathF.Abs(br.X - tl.X);
+        return StatusIconMath.Compute(count, left, width, SafeAreaCanvas.PortraitWidth);
+    }
+
+    private static int CountVisiblePowers(Control powerContainer)
+    {
+        int count = 0;
+        foreach (Node power in powerContainer.GetChildren())
+        {
+            if (power is Control { Visible: true } icon && !icon.IsQueuedForDeletion())
+                count++;
+        }
+        return count;
     }
 
     /// <summary>The left edge of something <paramref name="width"/> wide centred on <paramref name="centerX"/>, kept on the canvas.</summary>
@@ -2685,6 +3023,15 @@ internal sealed class PortraitCombatLayout
 
         List<PortraitCombatMath.PortraitSlotMarker> markers = ReadEncounterSlotMarkers(room, refl, enemies);
         int capacity = Math.Max(Math.Max(1, markers.Count), enemies.Count);
+        // TwoTailedRats starts with three and can summon three more (five authored slots, six bodies).
+        foreach (Control enemy in enemies)
+        {
+            if (refl.GetMonsterTypeName(enemy) == "TwoTailedRat")
+            {
+                capacity = Math.Max(capacity, 6);
+                break;
+            }
+        }
         // A boss dominates only when the roster it starts with fills every reserved slot. An encounter that reserves empty
         // slots is a summoner (the Ovicopter's eggs): its slots and depth ranks are already the right shape, and forcing a
         // dominant boss over them would put its wide health display across the summons that later fill those slots.
@@ -2737,9 +3084,69 @@ internal sealed class PortraitCombatLayout
             plan.Dominant = false;
         }
         plan.Dominant = plan.Dominant && plan.BossSlot >= 0;
-        // Every non-boss group uses the one clear row (a pier even for one peer pair): two ranks overlapped at phone width.
+        plan.TallFormation = !bands.Compact && !plan.OviFight && !plan.EmbeddedCrab && !plan.Segmented &&
+                             capacity >= 1 && capacity <= 5
+            ? PortraitCombatMath.ComputeTallFormation(capacity, bands)
+            : Array.Empty<PortraitCreatureSlot>();
+        // Every non-boss group uses the one clear row at 9:16 (a pier even for one peer pair).
         int minCrowd = 2;
-        plan.CrowdEnabled = plan.Capacity >= minCrowd && !plan.Dominant && !plan.Segmented && !plan.EmbeddedCrab;
+        plan.CrowdEnabled = plan.TallFormation.Length == 0 && plan.Capacity >= minCrowd &&
+                            !plan.Dominant && !plan.Segmented && !plan.EmbeddedCrab;
+        if (plan.TallFormation.Length > 0)
+        {
+            // A single big monster (or one more than 1.8x the next) is fitted in its own frame; it must not drag the
+            // hero and the ordinary peers down with it.
+            int excludeSlot = plan.BossSlot;
+            if (excludeSlot < 0)
+            {
+                int largestSlot = -1;
+                float largest = 0f, second = 0f;
+                foreach (Control enemy in enemies)
+                {
+                    if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex))
+                        continue;
+                    Vector2 size = refl.GetCreatureFootprintSize(enemy);
+                    float area = Math.Max(1f, size.X) * Math.Max(1f, size.Y);
+                    if (area > largest)
+                    {
+                        second = largest;
+                        largest = area;
+                        largestSlot = slotIndex;
+                    }
+                    else if (area > second)
+                    {
+                        second = area;
+                    }
+                }
+                if (enemies.Count == 1 || (second > 0f && largest > second * 1.8f))
+                    excludeSlot = largestSlot;
+            }
+            plan.SharedExcludeSlot = excludeSlot;
+            float tightest = 0f;
+            foreach (Control enemy in enemies)
+            {
+                if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex) || slotIndex >= capacity)
+                    continue;
+                if (slotIndex == excludeSlot)
+                    continue;
+                (float frameW, float frameH, _, _) = PortraitCombatMath.TallFormationFrame(plan.TallFormation, slotIndex, bands);
+                float fit = CellFit(enemy, frameW, frameH, refl, bands);
+                tightest = tightest <= 0f ? fit : Math.Min(tightest, fit);
+            }
+            plan.SharedBodyScale = Math.Clamp(
+                Math.Min(plan.BodyTargetScale, tightest > 0f ? tightest : plan.BodyTargetScale),
+                PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+            plan.SharedLocked = true;
+        }
+        foreach (PortraitCreatureSlot tall in plan.TallFormation)
+        {
+            float raise = bands.FrontFeetY - tall.CanvasFeetY;
+            // A raised front-line enemy (the first of a pair, or a lone enemy) stands a little above the floor line; the
+            // back ranks (hundreds of units up) are not that offset.
+            if (raise > 0f && raise < 100f)
+                plan.FormationOffset = Math.Max(plan.FormationOffset, raise);
+        }
+        plan.FormationOffset = Math.Max(0f, plan.FormationOffset);
         plan.PeerScale = ComputePeerScale(plan, refl, bands, players, pets, enemies, out bool floored);
         plan.PeerScaleFloored = floored;
 
@@ -2926,6 +3333,8 @@ internal sealed class PortraitCombatLayout
             // A boss with its own large frame does not shrink every peer: it fits itself, and the hero and ordinary
             // enemies keep one shared size.
             if (index == plan.BossSlot && plan.Capacity > 2)
+                continue;
+            if (plan.Capacity <= 2 && index == plan.SharedExcludeSlot)
                 continue;
             (float maxW, float maxH, _, _) = EnemySlotLimits(plan, index, LoneEnemyLeft);
             AddFrameFit(fits, ref count, enemy, refl, bands, plan.EnemySlots[index], maxW, maxH, isAlly: false, plan.Segmented);
@@ -3154,6 +3563,7 @@ internal sealed class PortraitCombatLayout
             plan.PierSurface = bands.FrontFeetY;
             plan.ArtBottom = canvasHeight;
             plan.HorizonY = canvasHeight;
+            plan.FloorHorizon = bands.FrontFeetY;
             PublishBackdropFacts(bgRoot, plan);
             PublishRoomFacts(room, plan);
             plan.BackgroundApplied = true;
@@ -3192,6 +3602,18 @@ internal sealed class PortraitCombatLayout
             originY = bands.FrontFeetY - plankLocal * scale;
             plan.FloorAligned = false;
             plan.PierSurface = bands.FrontFeetY;
+            // The visible pier recedes to a far edge well above the plank surface; calibrated from the 9:19.5 captures
+            // (far edge at ≈740 canvas with this transform), expressed in the same layer art space as GroundArtY.
+            float pierHorizon = originY + PierFarEdgeArtY * scale;
+            plan.FloorHorizon = pierHorizon;
+            plan.HorizonY = pierHorizon;
+            // If a back rank would stand beyond the plank area, keep it inside the pier instead.
+            for (int i = 0; i < plan.TallFormation.Length; i++)
+            {
+                PortraitCreatureSlot tallSlot = plan.TallFormation[i];
+                if (tallSlot.RowDepth == 0 && tallSlot.CanvasFeetY < pierHorizon + 10f)
+                    plan.TallFormation[i] = tallSlot with { CanvasFeetY = pierHorizon + 10f };
+            }
             plan.ArtBottom = originY + bottomRight.Y * scale;
         }
         else
@@ -3200,18 +3622,20 @@ internal sealed class PortraitCombatLayout
             bool waterfallGiant = art.Texture?.ResourcePath.Contains("waterfall_giant", StringComparison.OrdinalIgnoreCase) == true;
             if (waterfallGiant)
             {
-                // This arena's authored foot line is the desktop stage's 185, not its art edge; the layer offset moves that
-                // line in the measured rect. Align it to the portrait foot line and cover from the bars down, so the
-                // characters stand on its ground instead of floating above it.
-                float ground = 185f - nativeLayerY;
-                float aboveGround = Math.Max(1f, ground - topLeft.Y);
-                float belowGround = Math.Max(1f, bottomRight.Y - ground);
-                scale = Math.Max(SafeAreaCanvas.PortraitWidth / artWidth, (bands.FrontFeetY - barBottom + 8f) / aboveGround);
-                scale = Math.Max(scale, (bands.HandTopY - bands.FrontFeetY) / belowGround);
-                originY = bands.FrontFeetY - ground * scale;
+                // The mossy rock ledge the hero and the giant stand on is 213 art units above the art's bottom edge
+                // (calibrated from the TouchSpireUI capture: feet 397 TSUI canvas units above the art bottom at world
+                // scale 1.86, i.e. art-local +435 in the -648..+648 rect). Bottom-anchor the art at the hand row and set
+                // the ledge exactly on the portrait foot line; the art top then reaches far above the run bars.
+                const float ledgeFromArtBottom = 213f;
+                scale = Math.Max(SafeAreaCanvas.PortraitWidth / artWidth,
+                    (bands.HandTopY - bands.FrontFeetY) / ledgeFromArtBottom);
+                // Also guarantee the art top covers the bottom of the run bars on canvases that need more height.
+                scale = Math.Max(scale, (bands.HandTopY - barBottom + 8f) / artHeight);
+                originY = bands.HandTopY - bottomRight.Y * scale;
                 plan.FloorAligned = true;
                 plan.PierSurface = bands.FrontFeetY;
                 plan.HorizonY = bands.FrontFeetY;
+                plan.FloorHorizon = bands.FrontFeetY;
                 // The visible arena floor ends at the hand row; art continues behind the cards (no empty band).
                 plan.ArtBottom = bands.HandTopY;
             }
@@ -3231,11 +3655,34 @@ internal sealed class PortraitCombatLayout
                 plan.FloorAligned = true;
                 plan.PierSurface = bands.FrontFeetY;
                 plan.ArtBottom = bands.HandTopY;
-                // The harness and the stagger rule use the authored 200-unit art line projected through BgContainer.
-                plan.HorizonY = originY + 200f * scale;
+                // The visible floor starts at the authored ground line of the 1296-tall layer art (≈100 units up; measured
+                // from the Slimes tall capture, since the native scenes carry no ground marker). A taller back rank needs a
+                // little more zoom so its feet stand on that floor; the art stays bottom-anchored at the hand row.
+                const float GroundArtY = 100f;
+                float horizon = originY + GroundArtY * scale;
+                float backFeet = float.MaxValue;
+                foreach (PortraitCreatureSlot tallSlot in plan.TallFormation)
+                {
+                    if (tallSlot.RowDepth == 0)
+                        backFeet = Math.Min(backFeet, tallSlot.CanvasFeetY);
+                }
+                if (!bands.Compact && backFeet < float.MaxValue)
+                {
+                    float needed = (bands.HandTopY - (backFeet - 20f)) / Math.Max(1f, bottomRight.Y - GroundArtY);
+                    if (needed > scale)
+                    {
+                        scale = Math.Min(needed, 1.9f);
+                        originY = bands.HandTopY - bottomRight.Y * scale;
+                        horizon = originY + GroundArtY * scale;
+                    }
+                }
+                plan.HorizonY = horizon;
+                plan.FloorHorizon = horizon;
             }
         }
 
+        bgContainer.SetMeta("portrait_floor_horizon", plan.FloorHorizon);
+        bgContainer.SetMeta("portrait_formation_offset", plan.FormationOffset);
         bgContainer.Scale = new Vector2(scale, scale);
         bgContainer.OffsetLeft = 0f;
         bgContainer.OffsetRight = 0f;
@@ -3333,12 +3780,16 @@ internal sealed class PortraitCombatLayout
         bgRoot.SetMeta("portrait_art_bottom", plan.ArtBottom);
         bgRoot.SetMeta("portrait_pier", plan.Pier);
         bgRoot.SetMeta("portrait_pier_surface", plan.PierSurface);
+        bgRoot.SetMeta("portrait_floor_horizon", plan.FloorHorizon);
+        bgRoot.SetMeta("portrait_formation_offset", plan.FormationOffset);
     }
 
     private static void PublishRoomFacts(Control room, CombatStagePlan plan)
     {
-        room.SetMeta("portrait_peer_scale", plan.PeerScale);
+        room.SetMeta("portrait_peer_scale", Math.Clamp(plan.PeerScale, PortraitCombatMath.PeerScaleFloor, 1f));
         room.SetMeta("portrait_peer_scale_floored", plan.PeerScaleFloored);
+        room.SetMeta("portrait_floor_horizon", plan.FloorHorizon);
+        room.SetMeta("portrait_formation_offset", plan.FormationOffset);
     }
 
     /// <summary>Puts the background back the way the game drew it and removes the underlay this pass added.</summary>
@@ -3541,6 +3992,7 @@ internal sealed class PortraitCombatLayout
         public int[] CrowdMap = Array.Empty<int>();
         public PortraitCombatMath.PortraitStageCells Crowd;
         public PortraitCreatureSlot[] EnemySlots = Array.Empty<PortraitCreatureSlot>();
+        public PortraitCreatureSlot[] TallFormation = Array.Empty<PortraitCreatureSlot>();
         public PortraitCreatureSlot[] AllySlots = Array.Empty<PortraitCreatureSlot>();
         public readonly List<string> SlotNames = new();
         public readonly Dictionary<string, int> SlotIndexByName = new(StringComparer.Ordinal);
@@ -3549,6 +4001,9 @@ internal sealed class PortraitCombatLayout
         public bool? SurroundedFrozen;
         public float PlayerShift;
         public float HorizonY;
+        public float FloorHorizon;
+        public float FormationOffset;
+        public int SharedExcludeSlot = -1;
         public readonly HashSet<ulong> CrabLeftIds = new();
         public bool CrabFrozen;
         public float CrabSharedScale;
@@ -3591,6 +4046,7 @@ internal sealed class PortraitCombatLayout
         private readonly Vector2 _orbScale;
         private readonly Vector2 _displayScale, _displayPivot;
         private readonly Vector2 _intentScale, _intentPivot;
+        private readonly Vector2 _powerScale, _powerPosition, _powerPivot, _powerSize;
         private readonly float _barHitboxLeft, _barHitboxRight;
         private Control? _boundsStandIn;
         public Vector2 LastSyncedVisualsScale;
@@ -3630,6 +4086,10 @@ internal sealed class PortraitCombatLayout
             _displayPivot = Display?.PivotOffset ?? Vector2.Zero;
             _intentScale = Intents?.Scale ?? Vector2.One;
             _intentPivot = Intents?.PivotOffset ?? new Vector2(500f, 20f);
+            _powerScale = PowerContainer?.Scale ?? Vector2.One;
+            _powerPosition = PowerContainer?.Position ?? Vector2.Zero;
+            _powerPivot = PowerContainer?.PivotOffset ?? Vector2.Zero;
+            _powerSize = PowerContainer?.Size ?? Vector2.Zero;
             _barHitboxLeft = HpBarHitbox?.OffsetLeft ?? -138f;
             _barHitboxRight = HpBarHitbox?.OffsetRight ?? 120f;
             BarExtraWidth = refl.GetHealthBarExtraWidth(creature);
@@ -3698,6 +4158,13 @@ internal sealed class PortraitCombatLayout
                 HpBarHitbox.OffsetLeft = _barHitboxLeft;
                 HpBarHitbox.OffsetRight = _barHitboxRight;
             }
+            if (PowerContainer != null && GodotObject.IsInstanceValid(PowerContainer))
+            {
+                PowerContainer.Scale = _powerScale;
+                PowerContainer.PivotOffset = _powerPivot;
+                PowerContainer.Size = _powerSize;
+                PowerContainer.Position = _powerPosition;
+            }
             if (_boundsStandIn != null && GodotObject.IsInstanceValid(_boundsStandIn))
                 _boundsStandIn.QueueFree();
             _boundsStandIn = null;
@@ -3743,7 +4210,9 @@ internal sealed class PortraitCombatLayout
         private readonly Vector2 _fgPos;
         private readonly float _energyAnchorTop, _energyAnchorBottom, _energyOffLeft, _energyOffTop, _energyOffRight, _energyOffBottom;
         private readonly Vector2 _energyScale;
-        private readonly Vector2 _starScale, _starPos;
+        private readonly Vector2 _starScale, _starSize;
+        private readonly float _starAnchorLeft, _starAnchorTop, _starAnchorRight, _starAnchorBottom;
+        private readonly float _starOffLeft, _starOffTop, _starOffRight, _starOffBottom;
         private readonly Vector2 _foolScale, _foolPos;
         private readonly Vector2 _drawShow, _drawHide, _drawScale;
         private readonly Vector2 _discardShow, _discardHide, _discardScale;
@@ -3769,7 +4238,15 @@ internal sealed class PortraitCombatLayout
             float energyOffBottom,
             Vector2 energyScale,
             Vector2 starScale,
-            Vector2 starPos,
+            Vector2 starSize,
+            float starAnchorLeft,
+            float starAnchorTop,
+            float starAnchorRight,
+            float starAnchorBottom,
+            float starOffLeft,
+            float starOffTop,
+            float starOffRight,
+            float starOffBottom,
             Vector2 foolScale,
             Vector2 foolPos,
             Vector2 drawShow,
@@ -3801,7 +4278,15 @@ internal sealed class PortraitCombatLayout
             _energyOffBottom = energyOffBottom;
             _energyScale = energyScale;
             _starScale = starScale;
-            _starPos = starPos;
+            _starSize = starSize;
+            _starAnchorLeft = starAnchorLeft;
+            _starAnchorTop = starAnchorTop;
+            _starAnchorRight = starAnchorRight;
+            _starAnchorBottom = starAnchorBottom;
+            _starOffLeft = starOffLeft;
+            _starOffTop = starOffTop;
+            _starOffRight = starOffRight;
+            _starOffBottom = starOffBottom;
             _foolScale = foolScale;
             _foolPos = foolPos;
             _drawShow = drawShow;
@@ -3860,7 +4345,15 @@ internal sealed class PortraitCombatLayout
                 energyCont?.OffsetBottom ?? -252f,
                 energy?.Scale ?? Vector2.One,
                 star?.Scale ?? new Vector2(0.8f, 0.8f),
-                star?.Position ?? Vector2.Zero,
+                star?.Size ?? new Vector2(128f, 128f),
+                star?.AnchorLeft ?? 0f,
+                star?.AnchorTop ?? 1f,
+                star?.AnchorRight ?? 0f,
+                star?.AnchorBottom ?? 1f,
+                star?.OffsetLeft ?? 64f,
+                star?.OffsetTop ?? -212f,
+                star?.OffsetRight ?? 192f,
+                star?.OffsetBottom ?? -84f,
                 fool?.Scale ?? Vector2.One,
                 fool?.Position ?? Vector2.Zero,
                 ReadVec(refl.PileShowPosField, draw, new Vector2(15f, 985f)),
@@ -3945,8 +4438,16 @@ internal sealed class PortraitCombatLayout
                     energy.Scale = _energyScale;
                 if (refl.StarCounterField?.GetValue(ui) is Control star)
                 {
+                    star.AnchorLeft = _starAnchorLeft;
+                    star.AnchorTop = _starAnchorTop;
+                    star.AnchorRight = _starAnchorRight;
+                    star.AnchorBottom = _starAnchorBottom;
+                    star.OffsetLeft = _starOffLeft;
+                    star.OffsetTop = _starOffTop;
+                    star.OffsetRight = _starOffRight;
+                    star.OffsetBottom = _starOffBottom;
+                    star.Size = _starSize;
                     star.Scale = _starScale;
-                    star.Position = _starPos;
                     // Portrait draws the badge before the energy Label so the count stays on top; restore the game's own
                     // order (the reparented star last) when portrait is left.
                     if (star.GetParent() is Control starParent && refl.EnergyCounterField?.GetValue(ui) == starParent &&

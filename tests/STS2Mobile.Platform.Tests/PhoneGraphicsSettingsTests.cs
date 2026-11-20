@@ -23,6 +23,7 @@ public sealed class PhoneGraphicsSettingsTests : IDisposable
             MsaaCleared: false,
             PortraitMode: false,
             PortraitDefault: false,
+            FlatHand: false,
             StartInPortrait: false,
             Preset: BatteryPreset.Maximum,
         });
@@ -107,6 +108,19 @@ public sealed class PhoneGraphicsSettingsTests : IDisposable
 
         var backToLandscape = portraitAtLaunch.WithPortraitMode(false);
         Assert.True(backToLandscape is { PortraitMode: false, PortraitDefault: false, StartInPortrait: false });
+    }
+
+    [Fact]
+    public void FlatHandRoundTripsAndDefaultsOffForOlderFiles()
+    {
+        Assert.False(Defaults.FlatHand);
+        var flat = Defaults.WithFlatHand(true);
+        flat.Save(SettingsFile);
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { FlatHand: true });
+        Assert.True(flat.WithPreset(BatteryPreset.Balanced) is { FlatHand: true, Preset: BatteryPreset.Balanced });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"portraitMode\":true,\"portraitDefault\":true}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { FlatHand: false });
     }
 
     [Fact]
