@@ -136,6 +136,12 @@ internal sealed class PhoneHoverTips
 
     private void FitFrame()
     {
+        using (PortraitFrameTiming.Begin(PortraitFrameTiming.Hover))
+            FitFrameCore();
+    }
+
+    private void FitFrameCore()
+    {
         SceneTree? tree = _tree;
         if (_failed || tree == null || !GodotObject.IsInstanceValid(tree.Root) || !SafeAreaCanvas.IsPortrait) return;
         try

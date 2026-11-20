@@ -17,7 +17,8 @@ public sealed record PhoneGraphicsSettings(
     bool MsaaCleared,
     bool PortraitMode = false,
     bool PortraitDefault = false,
-    bool FlatHand = false)
+    bool FlatHand = false,
+    bool PerformanceLog = false)
 {
     public const string FileName = "phone-graphics.json";
     private const int Format = 1;
@@ -27,7 +28,8 @@ public sealed record PhoneGraphicsSettings(
     /// and Portrait Mode off. The first launch still draws at full resolution, since the file is
     /// written once the game has started and the native code reads it before the next launch's engine starts.
     /// </summary>
-    public static readonly PhoneGraphicsSettings Default = new(RenderResolution.Low, true, true, false, false, false, false);
+    public static readonly PhoneGraphicsSettings Default =
+        new(RenderResolution.Low, true, true, false, false, false, false, false);
 
     /// <summary>True only when Portrait Mode is on and the player chose to enter portrait at game launch.</summary>
     public bool StartInPortrait => PortraitMode && PortraitDefault;
@@ -42,6 +44,9 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>Fans the hand (false, the default) or gives it TouchSpireUI's flat rows (true).</summary>
     public PhoneGraphicsSettings WithFlatHand(bool enabled) => this with { FlatHand = enabled };
+
+    /// <summary>Writes the per-frame portrait pass timings to the game log (off by default; for testing).</summary>
+    public PhoneGraphicsSettings WithPerformanceLog(bool enabled) => this with { PerformanceLog = enabled };
 
     /// <summary>Fraction of the screen's resolution drawn: 3x, 2.5x or 2x pixels per point on a 3x screen.</summary>
     public double ResolutionFactor => FactorOf(Resolution);
@@ -88,7 +93,8 @@ public sealed record PhoneGraphicsSettings(
                 Flag(root, "msaaCleared"),
                 portraitMode,
                 portraitMode && Flag(root, "portraitDefault"),
-                Flag(root, "flatHand"));
+                Flag(root, "flatHand"),
+                Flag(root, "performanceLog"));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
         {
@@ -114,6 +120,7 @@ public sealed record PhoneGraphicsSettings(
             writer.WriteBoolean("portraitMode", PortraitMode);
             writer.WriteBoolean("portraitDefault", PortraitMode && PortraitDefault);
             writer.WriteBoolean("flatHand", FlatHand);
+            writer.WriteBoolean("performanceLog", PerformanceLog);
             writer.WriteEndObject();
         }
         File.Move(partial, path, overwrite: true);
@@ -121,7 +128,7 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>A one-line summary for the log.</summary>
     public string Describe(double appliedFactor) => string.Create(CultureInfo.InvariantCulture,
-        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand}");
+        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand} perfLog={PerformanceLog}");
 
     private bool Matches(PhoneGraphicsSettings other) =>
         Resolution == other.Resolution && LowerIdleFrameRate == other.LowerIdleFrameRate && CoolDownWhenHot == other.CoolDownWhenHot;

@@ -105,12 +105,14 @@ internal sealed class PortraitLayout
         tree.Root.SizeChanged += OnRootSizeChanged;
         tree.NodeAdded += OnNodeAdded;
         tree.ProcessFrame += OnProcessFrame;
+        PortraitCombatLayout.SetFlatHandListener(ApplyImmediate);
         QueueApply();
     }
 
     public void Detach()
     {
         if (_tree == null) return;
+        PortraitCombatLayout.SetFlatHandListener(null);
         _tree.Root.SizeChanged -= OnRootSizeChanged;
         _tree.NodeAdded -= OnNodeAdded;
         _tree.ProcessFrame -= OnProcessFrame;
@@ -181,6 +183,8 @@ internal sealed class PortraitLayout
             return;
         }
         string? fullName = node.GetType().FullName;
+        // The combat-rules FTUE is the one node worth searching the scene tree for again; the combat layout remembers it.
+        _combat.NoteNodeAdded(fullName);
         if (fullName is TopBarTypeName or RelicInventoryTypeName or EarlyAccessDisclaimerTypeName or PortraitCombatLayout.CombatRoomTypeName ||
             (fullName != null && (PortraitBetweenLayout.WatchedTypeNames.Contains(fullName) || PortraitScreenFit.Handles(fullName) ||
              PortraitMenuLayout.WatchedTypeNames.Contains(fullName) || PortraitOverlayLayout.WatchedTypeNames.Contains(fullName))))

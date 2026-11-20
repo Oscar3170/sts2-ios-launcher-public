@@ -63,7 +63,9 @@ public static class StatusIconMath
     /// The block after applying the gaps to the neighbouring blocks on its status row. Each side may overhang by half its
     /// gap at most (so two blocks meet, never overlap); when the 60% floor cannot satisfy a tighter side the block is
     /// shifted away from that neighbour as far as the other side's limit and the canvas allow, and the remaining excess is
-    /// reported through the returned overhangs.
+    /// reported through the returned overhangs. A negative gap is a hard edge: the blocks already overlap, so the block
+    /// steps off the neighbour by the overlap (within the canvas margin), then the row shrinks by whatever still crosses,
+    /// never below the floor; the excess that even that cannot remove is reported the same way.
     /// </summary>
     public static StatusIconLayout ApplyNeighbourLimits(
         StatusIconLayout layout,
@@ -71,7 +73,9 @@ public static class StatusIconMath
         float hitboxWidth,
         float canvasWidth,
         float leftGap,
-        float rightGap)
+        float rightGap,
+        float neighbourBodyLeft = float.PositiveInfinity,
+        float neighbourBodyRight = float.PositiveInfinity)
     {
         if (layout.Count <= 0)
             return layout;
@@ -81,7 +85,11 @@ public static class StatusIconMath
         int used = Math.Min(layout.Columns, layout.Count);
         float limitLeft = Math.Min(MaxOverhang, Math.Max(0f, leftGap) * 0.5f);
         float limitRight = Math.Min(MaxOverhang, Math.Max(0f, rightGap) * 0.5f);
-        float ceiling = Math.Min(limitLeft, limitRight);
+        // A negative gap is handled as a hard edge below (the block steps off the neighbour), not as a zero overhang
+        // limit: otherwise two blocks a hair into each other would shift and shrink every icon for no visible reason.
+        float shrinkLimitLeft = leftGap < 0f ? MaxOverhang : limitLeft;
+        float shrinkLimitRight = rightGap < 0f ? MaxOverhang : limitRight;
+        float ceiling = Math.Min(shrinkLimitLeft, shrinkLimitRight);
         float rowWidth = layout.RowWidth;
         float overhang = Math.Max(0f, (rowWidth - container) * 0.5f);
         float iconWidth = layout.IconWidth;
@@ -95,15 +103,56 @@ public static class StatusIconMath
 
         float left = hitboxLeft - overhang;
         // A tighter side at the floor: move away from it while the opposite side still has room.
-        if (overhang > limitLeft + 0.01f && limitRight > limitLeft)
+        if (overhang > shrinkLimitLeft + 0.01f && shrinkLimitRight > shrinkLimitLeft)
         {
-            float shift = Math.Min(overhang - limitLeft, Math.Max(0f, limitRight - overhang));
+            float shift = Math.Min(overhang - shrinkLimitLeft, Math.Max(0f, shrinkLimitRight - overhang));
             left += shift;
         }
-        else if (overhang > limitRight + 0.01f && limitLeft > limitRight)
+        else if (overhang > shrinkLimitRight + 0.01f && shrinkLimitLeft > shrinkLimitRight)
         {
-            float shift = Math.Min(overhang - limitRight, Math.Max(0f, limitLeft - overhang));
+            float shift = Math.Min(overhang - shrinkLimitRight, Math.Max(0f, shrinkLimitLeft - overhang));
             left -= shift;
+        }
+
+        // A NEGATIVE gap means the two blocks already overlap: that edge is hard, so the block must leave it entirely. Move
+        // away from the crossing neighbour as far as the canvas margin allows, then shrink the row by whatever still
+        // crosses (never below the 60% floor); the excess that remains is reported through the overhangs below.
+        float crossRight = Math.Max(0f, -rightGap);
+        float crossLeft = Math.Max(0f, -leftGap);
+        // A neighbour's BODY is a hard edge too: an icon may never be drawn over another creature standing on the same
+        // row, exactly like it may never be drawn over that neighbour's block.
+        if (!float.IsPositiveInfinity(neighbourBodyLeft))
+            crossRight = Math.Max(crossRight, left + rowWidth - neighbourBodyLeft);
+        if (!float.IsPositiveInfinity(neighbourBodyRight))
+            crossLeft = Math.Max(crossLeft, neighbourBodyRight - left);
+        if (crossRight > 0f || crossLeft > 0f)
+        {
+            float roomLeft = Math.Max(0f, left - EdgeMargin);
+            float roomRight = Math.Max(0f, canvasWidth - EdgeMargin - rowWidth - left);
+            float moveLeft = Math.Min(crossRight, roomLeft);
+            float moveRight = Math.Min(crossLeft, roomRight);
+            if (moveLeft >= moveRight && moveLeft > 0f)
+            {
+                left -= moveLeft;
+                crossRight -= moveLeft;
+            }
+            else if (moveRight > 0f)
+            {
+                left += moveRight;
+                crossLeft -= moveRight;
+            }
+
+            float remaining = Math.Max(crossLeft, crossRight);
+            if (remaining > 0f)
+            {
+                float shrunkIcon = Math.Max(normal * MinIconScale,
+                    Math.Min(iconWidth, (rowWidth - remaining) / Math.Max(1, used)));
+                if (shrunkIcon < iconWidth - 0.01f)
+                {
+                    iconWidth = shrunkIcon;
+                    rowWidth = used * iconWidth;
+                }
+            }
         }
 
         if (rowWidth <= canvasWidth - 2f * EdgeMargin)

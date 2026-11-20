@@ -146,18 +146,22 @@ public static class PortraitCombatMath
     /// <summary>The rail's height for this shape (constant within a fight).</summary>
     public static float RailHeightFor(bool compact) => compact ? CompactRailHeight : TallRailHeight;
 
-    /// <summary>The energy counter's rail X; shifted right to open the star slot beside the draw pile.</summary>
-    public const float EnergyRailX = 180f;
+    /// <summary>
+    /// The energy counter's rail X. TouchSpireUI puts the counter at <c>safe.X + 300</c> on its 1680-wide canvas with a
+    /// 1.8 scale, i.e. an orb centre of 415 units there; on the 1080 canvas that is 267, so the counter (pivot 64) starts
+    /// at 203. End Turn keeps the canvas centre, which leaves TouchSpireUI's 71-unit gap between the orb and the button.
+    /// </summary>
+    public const float EnergyRailX = 203f;
 
     /// <summary>The native energy counter's orb is 128 units square.</summary>
     public const float EnergyOrbSize = 128f;
 
     /// <summary>
-    /// The star badge's centre offsets from the drawn energy orb's centre. This is TouchSpireUI's lower-left corner
-    /// badge, moved further left than its default -0.4 so the count's ink (up to two digits) clears both the draw pile
-    /// and the energy number's ink while the badge still overlaps the orb's lower-left edge.
+    /// The star badge's centre offsets from the energy orb's centre: TouchSpireUI's own numbers, the badge hung on the
+    /// orb's lower-left corner. The star draws in front of the orb (it is the counter's last child, as the native game
+    /// leaves it), which is what keeps its count clear of the draw pile and lets its right tip cross the orb's spikes.
     /// </summary>
-    public const float StarOrbOffsetX = -0.5273f;
+    public const float StarOrbOffsetX = -0.4f;
     public const float StarOrbOffsetY = 0.3f;
 
     /// <summary>The native selected-card holder is drawn at 0.8 of a card, with a 24-unit gap when laid out in a row.</summary>
@@ -167,8 +171,12 @@ public static class PortraitCombatMath
     /// <summary>The largest scale a selected preview takes (TouchSpireUI's 1.72 at a 1680-wide canvas, converted).</summary>
     public const float SelectionCardMaxScale = 1.72f * (SafeAreaCanvas.PortraitWidth / 1680f) / SelectionCardSmallScale;
 
-    /// <summary>The fan angle of the outermost card of a hand row; the row's middle card is upright.</summary>
-    private const float HandRowAngle = 4.2f;
+    /// <summary>
+    /// The fan angle of the outermost card of a hand row; the row's middle card is upright. At 2.4 degrees the rotated
+    /// card's drawn Y stays within ~6 units of its row line even at the tallest full-size card, so a newly drawn
+    /// neighbour never drops an existing card.
+    /// </summary>
+    private const float HandRowAngle = 2.4f;
 
     /// <summary>The fight's bands for this canvas and stage top; see <see cref="PortraitCombatBands"/>.</summary>
     public static PortraitCombatBands ComputeCombatBands(float canvasHeight, float stageTopY)
@@ -336,7 +344,8 @@ public static class PortraitCombatMath
     /// <see cref="PortraitCombatBands.HandTopY"/> with the draw pile, energy (and the Regent star badge), End Turn, Ping,
     /// exhaust and discard, in the order a hand reads left to right. It depends only on the bands, so the rail never
     /// moves with the hand's size. Controls are centred on the rail (the End Turn and pile buttons pivot on their centre
-    /// lines), End Turn keeps the canvas's centre, and every touch target is at least <c>PortraitBands.MinTarget</c>.
+    /// lines), End Turn keeps the canvas's centre, and every touch target is at least <c>PortraitBands.MinTarget</c>:
+    /// the piles are drawn at TouchSpireUI's 1.543 (123.4 units, 42.9 points) and their touch area is grown around them.
     /// </summary>
     public static PortraitHudLayout ComputeHudLayout(float canvasHeight, PortraitCombatBands bands)
     {
@@ -350,9 +359,8 @@ public static class PortraitCombatMath
         const float endTurnScale = 1.42f;
         const float endTurnShowX = SafeAreaCanvas.PortraitWidth * 0.5f - 110f;
 
-        // TouchSpireUI keeps the star at its native scene size and simply places its global top-left from the orb:
-        // orb centre + orb.Size * offset - star span * 0.5. Star centre is the same value plus half its span; the badge
-        // size is the native 128 at its scene scale under the counter.
+        // TouchSpireUI keeps the star at its native scene size and simply places it from the orb: orb centre +
+        // orb.Size * offset, top-left from the star's drawn span. It draws in front of the orb, as its count must.
         float orbSize = EnergyOrbSize * energyScale;
         float starCenterX = energyX + EnergyOrbSize * 0.5f + orbSize * StarOrbOffsetX;
         float starCenterY = railCenter + orbSize * StarOrbOffsetY;
@@ -366,15 +374,18 @@ public static class PortraitCombatMath
             EnergyScale: energyScale,
             StarCenterX: starCenterX,
             StarCenterY: starCenterY,
+            // TouchSpireUI's rail, converted: pile buttons 192 units at its 2.4 scale = 1.543 on the 1080 canvas (80 -> 123.4
+            // drawn), and the draw pile at its rect x of 10 (the pivot sits at 10 + 40 * 0.543 = 31.7, so 32). The badge on
+            // the pile then hangs where TouchSpireUI's does, beside the Regent's star.
             ExhaustShowX: 806f,
             ExhaustShowY: railCenter - 40f,
             ExhaustHideX: -180f,
-            ExhaustScale: 1.6f,
+            ExhaustScale: 1.543f,
             EndTurnShowX: endTurnShowX,
             EndTurnShowY: railCenter - 45f,
             EndTurnHideX: 1130f,
             EndTurnScale: endTurnScale,
-            DrawShowX: 41f,
+            DrawShowX: 32f,
             DrawShowY: railCenter - 40f,
             DrawHideX: -160f,
             DrawHideY: ch + 40f,
@@ -386,7 +397,7 @@ public static class PortraitCombatMath
             // centred between End Turn and the exhaust pile, so it never covers a rail control or a creature.
             PingShowX: (endTurnVisualRight + 782f) * 0.5f - 52.5f,
             PingShowY: railTop - 63.5f,
-            PileScale: 1.6f);
+            PileScale: 1.543f);
     }
 
     /// <summary>The native Confirm is 200 by 110; 1.2 makes it 240 by 132, over the 44-point side a finger needs.</summary>
@@ -535,6 +546,27 @@ public static class PortraitCombatMath
         }
         floorApplied = peer < PeerScaleFloor;
         return Math.Clamp(peer, PeerScaleFloor, PreferredPeerScale);
+    }
+
+    /// <summary>
+    /// The absolute world scale every body in the room is drawn at: the tightest fit any creature needs in its frame,
+    /// exactly as TouchSpireUI resolves one multiplier for the whole room (its 2.05 preferred, its 1.0 legibility floor).
+    /// Unlike <see cref="SharedPeerScale"/> this is not a multiplier over a slot's own occupancy: it caps the hero and the
+    /// enemies alike, so a room cannot draw its hero at one size and its monsters at another.
+    /// </summary>
+    public static float SharedRoomScale(ReadOnlySpan<PortraitFrameFit> fits, out bool floorApplied)
+    {
+        float shared = PreferredSharedBodyScale;
+        foreach (PortraitFrameFit fit in fits)
+        {
+            if (fit.NativeWidth <= 1f || fit.NativeHeight <= 1f)
+                continue;
+            float byWidth = fit.MaxWidth > 1f ? fit.MaxWidth / fit.NativeWidth : float.MaxValue;
+            float byHeight = fit.MaxHeight > 1f ? fit.MaxHeight / fit.NativeHeight : float.MaxValue;
+            shared = Math.Min(shared, Math.Min(byWidth, byHeight));
+        }
+        floorApplied = shared < PeerScaleFloor;
+        return Math.Clamp(shared, PeerScaleFloor, PreferredSharedBodyScale);
     }
 
     /// <summary>
@@ -1004,6 +1036,122 @@ public static class PortraitCombatMath
         if (boundsHeight > 1f && maxAllowedHeight > 1f)
             scale = Math.Min(scale, maxAllowedHeight / boundsHeight);
         return Math.Clamp(scale, MinBodyScale, MaxBodyScale);
+    }
+
+    /// <summary>
+    /// Where a broad arena's floor art is drawn: the container scale, the canvas line its local origin sits on, and the
+    /// art's top and bottom edges on the canvas. <see cref="FloorAligned"/> marks the art as ending at the hand row.
+    /// </summary>
+    public readonly record struct PortraitBackdropFraming(
+        float Scale,
+        float OriginY,
+        float ArtTopY,
+        float ArtBottomY,
+        float FloorHorizonY,
+        bool FloorAligned);
+
+    /// <summary>The authored ground line of the arena art, in the container's local space (TouchSpireUI-documented).</summary>
+    public const float GroundArtLocalY = 100f;
+
+    /// <summary>
+    /// The authored line the native creature origins stand on, in the background scene's own space. TouchSpireUI measures
+    /// the exposed arena against it, which is why the layer's authored offset must stay part of the scene frame.
+    /// </summary>
+    public const float NativeOriginArtistY = 200f;
+
+    /// <summary>
+    /// Frames a broad arena's floor art the way TouchSpireUI does for every arena it draws: the scale covers the canvas
+    /// width and the exposed arena (from under the run bars down to the foot line) measured against the art's own span to
+    /// the native creature-origin line, and the art's bottom edge ends exactly at the hand row, so the art continues
+    /// behind the cards and leaves no strip above them. No line of the painting is pinned to the feet: a hand-calibrated
+    /// platform is what over-zoomed this arena before.
+    /// </summary>
+    /// <param name="artWidth">The art's authored width in the background container's space.</param>
+    /// <param name="artHeight">Its authored height.</param>
+    /// <param name="artTopInScene">Its top edge in the background scene's own space, authored layer offset included.</param>
+    /// <param name="artBottomLocal">Its bottom edge in the container's local space, the frame the drawn transform uses.</param>
+    /// <param name="canvasWidth">The portrait canvas width.</param>
+    /// <param name="barBottomY">The bottom of the run bars (the top of the stage's own band).</param>
+    /// <param name="peerScale">The room's shared body scale, which eases a backdrop zoomed past the plain cover.</param>
+    /// <param name="backFeetY">The highest back-rank foot line, or NaN when no back rank stands.</param>
+    public static PortraitBackdropFraming ComputeBroadBackdropFraming(
+        float artWidth,
+        float artHeight,
+        float artTopInScene,
+        float artBottomLocal,
+        float canvasWidth,
+        PortraitCombatBands bands,
+        float barBottomY,
+        float peerScale,
+        float backFeetY = float.NaN)
+    {
+        float width = Math.Max(1f, artWidth);
+        float height = Math.Max(1f, artHeight);
+        float widthCover = canvasWidth / width;
+        // The art must reach the bottom of the run bars, so no strip of the underlay shows above it inside the stage.
+        float barCover = (bands.HandTopY - barBottomY + 8f) / height;
+        float cover = Math.Max(widthCover, barCover);
+        float aboveNativeOrigin = Math.Max(100f, NativeOriginArtistY - artTopInScene);
+        float arenaSpan = Math.Max(1f, bands.FrontFeetY - bands.StageTopY + 80f);
+        float scale = Math.Max(cover, arenaSpan / aboveNativeOrigin);
+        // Keep the native creature-to-backdrop proportion: when the room draws its bodies below their normal size, ease
+        // the extra backdrop zoom back toward the minimum cover instead of making the world look giant.
+        scale = cover + (scale - cover) * Math.Clamp(peerScale, 0.5f, 1f);
+        float originY = bands.HandTopY - artBottomLocal * scale;
+        float horizon = originY + GroundArtLocalY * scale;
+        if (!bands.Compact && !float.IsNaN(backFeetY))
+        {
+            // A taller back rank needs a little more zoom so its feet stand on the authored floor; the art stays
+            // bottom-anchored at the hand row.
+            float needed = (bands.HandTopY - (backFeetY - 20f)) / Math.Max(1f, artBottomLocal - GroundArtLocalY);
+            if (needed > scale)
+            {
+                scale = Math.Min(needed, 1.9f);
+                originY = bands.HandTopY - artBottomLocal * scale;
+                horizon = originY + GroundArtLocalY * scale;
+            }
+        }
+        return new PortraitBackdropFraming(scale, originY, originY + (artBottomLocal - height) * scale,
+            bands.HandTopY, horizon, true);
+    }
+
+    /// <summary>
+    /// The orb arc's fit under the run bars: how far the whole arc moves down on the canvas and the factor its radius is
+    /// scaled by, both measured about the arc's own scaling origin (the orb manager's position and pivot).
+    /// </summary>
+    public readonly record struct PortraitOrbArcFit(float ShiftY, float Scale);
+
+    /// <summary>The gap the orb arc keeps under the run bars.</summary>
+    public const float OrbArcTopMargin = 8f;
+
+    /// <summary>
+    /// The smallest the arc's radius may shrink to: the icons are drawn at about 75.5 canvas units, and 50 is the
+    /// readable floor for a six-to-ten-orb row (0.66 of it), so the fallback never costs an orb its icon.
+    /// </summary>
+    public const float OrbArcMinScale = 0.66f;
+
+    /// <summary>
+    /// Puts an orb arc drawn from <paramref name="top"/> to <paramref name="bottom"/> back under the run bars. The top
+    /// limit is the stage top plus the margin; the bottom limit is the hand rail, which the arc must never reach. The arc
+    /// is moved down whole first, so every orb keeps its drawn size; only when it is taller than the room between the two
+    /// limits is its radius shrunk about <paramref name="originY"/> (the point the manager scales around), never below
+    /// <paramref name="minScale"/>. A shift is negative when the scaled arc has to be lifted to stay off the rail.
+    /// </summary>
+    public static PortraitOrbArcFit FitOrbArcBelow(float top, float bottom, float originY, float topLimitY,
+        float bottomLimitY, float minScale)
+    {
+        if (top >= topLimitY)
+            return new PortraitOrbArcFit(0f, 1f);
+        float height = Math.Max(0f, bottom - top);
+        float room = Math.Max(0f, bottomLimitY - topLimitY);
+        float scale = height <= room ? 1f : Math.Clamp(room / height, Math.Max(0.01f, minScale), 1f);
+        float topAfterScale = originY + (top - originY) * scale;
+        float bottomAfterScale = originY + (bottom - originY) * scale;
+        // The arc must move at least enough to put its top on the limit and at most as far as the rail allows.
+        float leastDown = topLimitY - topAfterScale;
+        float mostDown = bottomLimitY - bottomAfterScale;
+        float shift = leastDown > 0f ? Math.Min(leastDown, MathF.Max(0f, mostDown)) : MathF.Min(0f, mostDown);
+        return new PortraitOrbArcFit(shift, scale);
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;

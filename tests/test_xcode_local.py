@@ -126,6 +126,7 @@ class PrepareFlowTests(unittest.TestCase):
 
     def prepare(self, root: Path) -> str:
         export, host = root / "export", root / "host"
+        self.export = export
         (export / "FullGame.xcodeproj").mkdir(parents=True)
         (export / "FullGame.xcodeproj/project.pbxproj").write_text(EXPORTED_PROJECT)
         icons = export / "FullGame/Images.xcassets/AppIcon.appiconset"
@@ -164,6 +165,16 @@ class PrepareFlowTests(unittest.TestCase):
             self.assertIn(f"{file_id} /* {name} */ = {{isa = PBXFileReference;", text)
         self.assertIn("voice_audio.mm in Sources */,", sources)
         self.assertEqual(text.count(f"{PHASE_ID} "), 2)
+
+    def test_the_documents_folder_is_shared_with_the_files_app(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.prepare(Path(directory.name))
+        plist = plistlib.loads((self.export / "FullGame/FullGame-Info.plist").read_bytes())
+        # The game's own log lands in Documents; the Files app only lists it when both keys say so.
+        self.assertIs(plist.get("UIFileSharingEnabled"), True)
+        self.assertIs(plist.get("LSSupportsOpeningDocumentsInPlace"), True)
+        self.assertNotIn("NSCameraUsageDescription", plist)
 
     def test_the_phase_id_is_used_by_nothing_else(self):
         ids = {identifier for pair in xcode.NATIVE_UNITS.values() for identifier in pair[:2]}

@@ -97,8 +97,12 @@ public class StatusIconMathTests
         StatusIconLayout rightFit = StatusIconMath.ApplyNeighbourLimits(right, 390f, 265.1f, Width,
             gap, float.PositiveInfinity);
 
+        // TouchSpireUI's rule, hardened: each block first steps off the other one (the right one has canvas room to its
+        // right, so it keeps the normal icon size), and only the block pinned against the margin shrinks - never past the
+        // floor - so the two blocks meet without overlapping.
+        Assert.Equal(Normal, rightFit.IconWidth, 0.01f);
         Assert.True(leftFit.IconWidth < Normal);
-        Assert.True(rightFit.IconWidth < Normal);
+        Assert.True(leftFit.IconWidth >= Normal * StatusIconMath.MinIconScale - 0.01f);
         Assert.True(leftFit.Left + leftFit.RowWidth <= rightFit.Left + 0.01f);
     }
 
@@ -144,5 +148,51 @@ public class StatusIconMathTests
             float.PositiveInfinity, 0f);
         Assert.True(fit.LeftOverhang <= 50f + 0.01f);
         Assert.True(fit.Left >= StatusIconMath.EdgeMargin - 0.01f);
+    }
+
+    [Fact]
+    public void OverlappingBlocksMoveOffTheNeighbourWithoutShrinking()
+    {
+        // The two Nibbits of the pair encounter at 9:19.5: bodies 334.8 wide 23.2 apart, seven statuses each. Both blocks are
+        // 369 wide, so their base layout overlaps by 11; the left block has room to step left, and no icon has to shrink.
+        StatusIconLayout a = StatusIconMath.Compute(7, 344.6f, 334.8f, Width);
+        StatusIconLayout b = StatusIconMath.Compute(7, 702.6f, 334.8f, Width);
+        Assert.Equal(7f * Normal, a.RowWidth, 0.01f);
+        float gap = b.Left - (a.Left + a.RowWidth);
+        Assert.True(gap < 0f);
+
+        StatusIconLayout fit = StatusIconMath.ApplyNeighbourLimits(a, 344.6f, 334.8f, Width,
+            float.PositiveInfinity, gap);
+        Assert.Equal(Normal, fit.IconWidth, 0.01f);
+        Assert.Equal(a.Left + gap, fit.Left, 0.01f);
+        Assert.True(fit.Left + fit.RowWidth <= b.Left + 0.01f);
+    }
+
+    [Fact]
+    public void BlockStepsOffANeighboursBodyEvenWhenTheBlocksBarelyMeet()
+    {
+        // The 9:19.5 pair: a's block ends 713.1, b's body starts 702.6 - the bodies are 23.2 apart while both blocks are
+        // 369 wide, so the block must move left until it ends before the body, not just before the other block.
+        StatusIconLayout a = StatusIconMath.Compute(7, 344.6f, 334.8f, Width);
+        StatusIconLayout b = StatusIconMath.Compute(7, 702.6f, 334.8f, Width);
+        float gap = b.Left - (a.Left + a.RowWidth);
+        StatusIconLayout fit = StatusIconMath.ApplyNeighbourLimits(a, 344.6f, 334.8f, Width,
+            float.PositiveInfinity, gap, neighbourBodyLeft: 702.6f);
+        Assert.Equal(Normal, fit.IconWidth, 0.01f);
+        Assert.True(fit.Left + fit.RowWidth <= 702.6f + 0.01f);
+        Assert.True(fit.Left >= StatusIconMath.EdgeMargin - 0.01f);
+    }
+
+    [Fact]
+    public void OverlapThatTheCanvasCannotAbsorbShrinksOnlyToTheFloorAndReportsTheRest()
+    {
+        // The block sits on the left margin and a neighbour crosses it by more than the whole canvas room: the shift cannot
+        // help, so the row shrinks toward the 60% floor and the excess stays reported.
+        StatusIconLayout layout = StatusIconMath.Compute(14, 8f, 300f, Width);
+        StatusIconLayout fit = StatusIconMath.ApplyNeighbourLimits(layout, 8f, 300f, Width,
+            float.PositiveInfinity, -500f);
+        Assert.Equal(Normal * StatusIconMath.MinIconScale, fit.IconWidth, 0.01f);
+        Assert.Equal(7f * Normal * StatusIconMath.MinIconScale, fit.RowWidth, 0.01f);
+        Assert.Equal(StatusIconMath.EdgeMargin, fit.Left, 0.01f);
     }
 }

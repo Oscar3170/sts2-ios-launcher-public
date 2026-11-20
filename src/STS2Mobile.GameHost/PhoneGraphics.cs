@@ -58,6 +58,7 @@ public sealed partial class PhoneGraphics : Node
             if (!_settings.StartInPortrait && _settings.PortraitMode)
                 _settings = _settings.WithPortraitMode(false);
             PortraitCombatLayout.FlatHand = _settings.FlatHand;
+            PortraitFrameTiming.SetEnabled(_settings.PerformanceLog);
             _appliedFactor = DevicePower.RenderScale();
             GD.Print("Phone graphics: ", _settings.Describe(_appliedFactor));
             GetTree().Root.WindowInput += OnWindowInput;
@@ -246,6 +247,15 @@ public sealed partial class PhoneGraphics : Node
                     _portraitLayout.ApplyImmediate();
                 },
                 out _, out _, out _, subtitle: "Fan the hand, or use flat rows like TouchSpireUI.");
+            index = AddRow(content, template, divider, index, "Performance Log", () => OffOn,
+                () => _settings.PerformanceLog ? 1 : 0,
+                choice =>
+                {
+                    Store(_settings.WithPerformanceLog(choice == 1));
+                    PortraitFrameTiming.SetEnabled(_settings.PerformanceLog);
+                },
+                out _, out _, out _,
+                subtitle: "Write per-frame portrait timings to the game log. For testing.");
             index = AddRow(content, template, divider, index, "Battery Saver",
                 () => _settings.Preset == BatteryPreset.Custom ? PresetChoicesWithCustom : PresetChoices,
                 () => (int)_settings.Preset, choice => Store(_settings.WithPreset((BatteryPreset)choice)), out _, out _, out _);

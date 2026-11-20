@@ -15,7 +15,7 @@ INFO = {
     "CFBundleVersion": "17",
     "MinimumOSVersion": "15.0",
     "NSMicrophoneUsageDescription": "Voice chat.",
-    "UIFileSharingEnabled": False,
+    "UIFileSharingEnabled": True,
 }
 
 

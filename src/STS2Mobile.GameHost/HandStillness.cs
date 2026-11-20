@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Godot;
+using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
 
@@ -25,7 +26,9 @@ internal sealed class HandStillness
 
     private struct Place
     {
-        public Vector2 Target;
+        public Vector2 TargetPosition;
+        public Vector2 TargetScale;
+        public float TargetAngle;
         public Vector2 Position;
         public Vector2 Scale;
         public float Rotation;
@@ -33,21 +36,27 @@ internal sealed class HandStillness
     }
 
     /// <summary>
-    /// Before setting the holder's target to its slot: when the last pass (this frame or the one before) left the holder with
-    /// a target and the game has given it another since, put the holder back where that pass left it. Returns whether it did.
-    /// A record from an older frame (the card was held, or out of the hand) is not used: the card starts from where it is.
+    /// Before setting the holder's target to its slot: when the last pass left the holder with a target and the game has
+    /// since changed <b>any</b> of position, scale or angle, put the holder back where that pass left it. Returns whether
+    /// it did. The record is refreshed on every pass, so a hand that grows or is re-laid out does not invalidate it; a
+    /// held or out-of-hand card's record goes stale after two frames, letting a returning card start from where it is.
     /// </summary>
-    public bool RestoreIfRetargeted(Control holder, Vector2 slot, Vector2 currentTarget)
+    public bool RestoreIfRetargeted(Control holder, Vector2 slot, Vector2 currentPositionTarget,
+        Vector2 currentScaleTarget, float currentAngleTarget)
     {
         if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return false;
         if (ProofOldRule)
         {
-            if ((record.Target - slot).LengthSquared() > 0.25f || (currentTarget - slot).LengthSquared() <= 0.25f) return false;
+            if ((record.TargetPosition - slot).LengthSquared() > 0.25f ||
+                (currentPositionTarget - slot).LengthSquared() <= 0.25f) return false;
         }
         else
         {
-            if (Engine.GetProcessFrames() - record.Frame > 1) return false;
-            if ((currentTarget - record.Target).LengthSquared() <= 0.25f) return false;
+            if (Engine.GetProcessFrames() - record.Frame > 2) return false;
+            bool samePosition = (currentPositionTarget - record.TargetPosition).LengthSquared() <= 0.25f;
+            bool sameScale = (currentScaleTarget - record.TargetScale).LengthSquared() <= 0.000004f;
+            bool sameAngle = Mathf.Abs(currentAngleTarget - record.TargetAngle) <= 0.05f;
+            if (samePosition && sameScale && sameAngle) return false;
         }
         holder.Position = record.Position;
         holder.Scale = record.Scale;
@@ -55,12 +64,47 @@ internal sealed class HandStillness
         return true;
     }
 
-    /// <summary>After setting the holder's target to its slot: the target and where the holder is now.</summary>
-    public void Record(Control holder, Vector2 target)
+    /// <summary>Whether this holder has been through a pass (a returning card keeps its record; a brand-new one has none).</summary>
+    public bool HasRecord(Control holder) => _records.ContainsKey(holder.GetInstanceId());
+
+    /// <summary>Where the previous pass left the holder, for capping what one frame may move.</summary>
+    public Vector2 PreviousPosition(Control holder, Vector2 fallback) =>
+        _records.TryGetValue(holder.GetInstanceId(), out Place record) ? record.Position : fallback;
+
+    /// <summary>
+    /// Whether the holder's drawn transform differs from what the last pass recorded: a native animation loop is still
+    /// running (or the game wrote the transform), so the pass has work to do. Engine reads only, no reflection.
+    /// </summary>
+    public bool Moved(Control holder)
     {
-        _records[holder.GetInstanceId()] = new Place
+        if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return true;
+        if ((holder.Position - record.Position).LengthSquared() > 0.25f) return true;
+        if ((holder.Scale - record.Scale).LengthSquared() > 0.000004f) return true;
+        return Mathf.Abs(holder.RotationDegrees - record.Rotation) > 0.05f;
+    }
+
+    /// <summary>
+    /// Whether the holder is short of <paramref name="target"/> and has not moved at all since the previous pass: its
+    /// native position animation has ended (the game cancels it when a layout pass sets a new target, and the restore above
+    /// puts the position back), so nothing will carry it the rest of the way.
+    /// </summary>
+    public bool IsStalled(Control holder, Vector2 target)
+    {
+        if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return false;
+        if (Engine.GetProcessFrames() - record.Frame > 2) return false;
+        if ((holder.Position - target).LengthSquared() <= 0.25f) return false;
+        return (record.Position - holder.Position).LengthSquared() <= 0.25f;
+    }
+
+    /// <summary>After setting the holder's target to its slot: the target and where the holder is now.</summary>
+    public void Record(Control holder, Vector2 targetPosition, Vector2 targetScale, float targetAngle)
+    {
+        ulong id = holder.GetInstanceId();
+        _records[id] = new Place
         {
-            Target = target,
+            TargetPosition = targetPosition,
+            TargetScale = targetScale,
+            TargetAngle = targetAngle,
             Position = holder.Position,
             Scale = holder.Scale,
             Rotation = holder.RotationDegrees,
@@ -69,9 +113,9 @@ internal sealed class HandStillness
         if (++_passes % 600 == 0)
         {
             var dead = new List<ulong>();
-            foreach (ulong id in _records.Keys)
-                if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
-            foreach (ulong id in dead) _records.Remove(id);
+            foreach (ulong recordId in _records.Keys)
+                if (!GodotObject.IsInstanceIdValid(recordId)) dead.Add(recordId);
+            foreach (ulong deadId in dead) _records.Remove(deadId);
         }
     }
 }

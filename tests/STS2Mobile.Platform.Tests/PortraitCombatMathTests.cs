@@ -137,7 +137,7 @@ public class PortraitCombatMathTests
             {
                 PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
                 Assert.Equal(fit.Scale, slot.Scale, 4);
-                Assert.InRange(slot.AngleDegrees, -4.201f, 4.201f);
+                Assert.InRange(slot.AngleDegrees, -2.401f, 2.401f);
                 float radians = MathF.Abs(slot.AngleDegrees) * MathF.PI / 180f;
                 float halfWidth = (PortraitCombatMath.CardDefaultWidth * MathF.Cos(radians) +
                     PortraitCombatMath.CardDefaultHeight * MathF.Sin(radians)) * 0.5f * slot.Scale;
@@ -189,9 +189,14 @@ public class PortraitCombatMathTests
                     }
                     else
                     {
-                        Assert.InRange(slot.AngleDegrees, -4.201f, 4.201f);
+                        Assert.InRange(slot.AngleDegrees, -2.401f, 2.401f);
                         if (Math.Abs(slot.AngleDegrees) > 0.01f)
-                            Assert.InRange(Math.Abs(slot.AngleDegrees), 0.01f, 4.201f);
+                            Assert.InRange(Math.Abs(slot.AngleDegrees), 0.01f, 2.401f);
+                        // The rotated card's centre moves by at most half its width times sin(angle); with the 2.4-degree
+                        // cap that stays under the hand-row harness's 6-unit Y bound at both shapes.
+                        float yShift = MathF.Abs(slot.AngleDegrees) * MathF.PI / 180f *
+                            PortraitCombatMath.CardDefaultWidth * 0.5f * slot.Scale;
+                        Assert.True(yShift < 6f, $"Fan Y shift {yShift} exceeds 6 units.");
                     }
 
                     float halfExtent = PortraitCombatMath.HandSlotHalfExtent(slot.Scale, slot.AngleDegrees);
@@ -446,12 +451,14 @@ public class PortraitCombatMathTests
         Assert.InRange(hud.DiscardShowY + 40f, bands.RailTopY, bands.HandTopY);
         Assert.InRange(hud.ExhaustShowY + 40f, bands.RailTopY, bands.HandTopY);
 
-        // End Turn is the launcher's 220x90 at 1.42 (312.4x127.8); the piles are 80 at 1.6, energy 128 at 1.12.
+        // End Turn is the launcher's 220x90 at 1.42 (312.4x127.8); the piles are TouchSpireUI's 80 at 1.543 (123.4 drawn,
+        // 42.9 points, with the touch area grown back to the 44-point guidance around the drawn pile), energy 128 at 1.12.
         Assert.Equal(1.42f, hud.EndTurnScale, 3);
         Assert.Equal(312.4f, 220f * hud.EndTurnScale, 2);
         Assert.Equal(127.8f, 90f * hud.EndTurnScale, 2);
         Assert.True(90f * hud.EndTurnScale >= 127f);
-        Assert.True(80f * hud.PileScale >= 127f);
+        Assert.Equal(1.543f, hud.PileScale, 3);
+        Assert.True(80f * hud.PileScale >= 120f);
         Assert.True(128f * hud.EnergyScale >= 127f);
         Assert.True(hud.EndTurnShowY + 45f + 90f * hud.EndTurnScale * 0.5f <= bands.HandTopY);
         Assert.True(hud.PingShowY < bands.RailTopY);
@@ -469,9 +476,10 @@ public class PortraitCombatMathTests
         Assert.True(endTurnVisualTop >= bands.RailTopY + 0.01f);
         Assert.True(endTurnVisualBottom <= bands.HandTopY - 0.01f);
 
-        // The energy counter moved right to open the star slot; the star keeps its native scene size and only inherits
-        // the counter's 1.12 scale.
-        Assert.Equal(180f, hud.EnergyContainerX, 3);
+        // The energy counter sits where TouchSpireUI puts it: an orb centre of 267 canvas units (415 on its 1680-wide
+        // canvas), which leaves 45 units to End Turn's left edge (TouchSpireUI's 71 units, same relative gap). The star
+        // keeps its native scene size and only inherits the counter's 1.12 scale.
+        Assert.Equal(203f, hud.EnergyContainerX, 3);
         float orbSize = PortraitCombatMath.EnergyOrbSize * hud.EnergyScale;
         float orbCenterX = hud.EnergyContainerX + PortraitCombatMath.EnergyOrbSize * 0.5f;
         float orbCenterY = hud.EnergyContainerY + PortraitCombatMath.EnergyOrbSize * 0.5f;
@@ -494,27 +502,30 @@ public class PortraitCombatMathTests
 
         // End Turn (now back at 1.42) clears the shifted orb and the star badge, and leaves room for Confirm.
         Assert.True(endTurnVisualLeft > orbRight);
-        Assert.True(endTurnVisualLeft - orbRight >= 50f);
+        Assert.True(endTurnVisualLeft - orbRight >= 44f);
         Assert.True(endTurnVisualLeft > starRight);
         Assert.True(endTurnVisualRight < 948f - 100f * PortraitCombatMath.SelectionConfirmScale);
 
-        // TSUI's lower-left badge: native size, no lift, still overlapping the orb's lower-left art.
+        // TSUI's lower-left badge: native size, no lift, still overlapping the orb's lower-left art. Its left tip is the
+        // only part near the draw pile, and the star draws in front of the orb and of the "3/3" (it stays the counter's
+        // last child), so neither count is covered.
         Assert.True(starLeft < orbRight && starRight > orbLeft && starTop < orbBottom && starBottom > orbTop);
+        Assert.Equal(orbSize * -0.4f, hud.StarCenterX - orbCenterX, 2);
+        Assert.Equal(orbSize * 0.3f, hud.StarCenterY - orbCenterY, 2);
         Assert.True(hud.StarCenterX < orbCenterX);
         Assert.True(hud.StarCenterY > orbCenterY);
+        float drawRight = hud.DrawShowX + 40f * (1f - hud.PileScale) + 80f * hud.PileScale;
+        Assert.True(starLeft > drawRight, $"star left {starLeft} vs draw pile right {drawRight}.");
 
         // Ink model: advance width + 14 outline each side horizontally; digit ascent + 14 outline vertically. The proof's
-        // star count is one digit; the energy "3/3" is native advance 60, outline 16, at 1.12.
+        // star count is one digit. The number is centred on the star (the native CountLabel box is 41 units lower), so it
+        // stays inside the badge and clear of the pile and End Turn; it reaches the "3/3" only at their lower-left corner,
+        // which is the overlap TouchSpireUI has and draws the star over.
         const float starInkScale = starSceneScale * 1.12f;
         const float digitAdvance = 19f;
         const float digitAscent = 36f;
         const float starOutline = 14f;
-        const float energyAdvance = 60f;
-        const float energyOutline = 16f;
         float starInkHeight = (digitAscent + 2f * starOutline) * starInkScale;
-        float energyInkWidth = (energyAdvance + 2f * energyOutline) * hud.EnergyScale;
-        float energyInkLeft = orbCenterX - energyInkWidth * 0.5f;
-        float drawRight = hud.DrawShowX + 40f * (1f - hud.PileScale) + 80f * hud.PileScale;
         float endTurnLeft = hud.EndTurnShowX - 110f * (hud.EndTurnScale - 1f);
 
         foreach (int digits in new[] { 1 })
@@ -524,8 +535,6 @@ public class PortraitCombatMathTests
             float inkRight = hud.StarCenterX + inkWidth * 0.5f;
             float inkBottom = hud.StarCenterY + starInkHeight * 0.5f;
             Assert.True(inkLeft > drawRight, $"{digits}-digit star ink left {inkLeft} vs draw right {drawRight}.");
-            Assert.True(inkRight < energyInkLeft,
-                $"{digits}-digit star ink right {inkRight} vs energy ink left {energyInkLeft}.");
             Assert.True(inkBottom < bands.HandTopY,
                 $"{digits}-digit star ink bottom {inkBottom} vs hand top {bands.HandTopY}.");
             Assert.True(inkLeft >= starLeft && inkRight <= starRight);
@@ -690,6 +699,83 @@ public class PortraitCombatMathTests
         float gentle = PortraitCombatMath.SharedPeerScale(medium, out floored);
         Assert.False(floored);
         Assert.InRange(gentle, 0.84f, 0.86f);
+    }
+
+    [Fact]
+    public void SharedRoomScaleIsAbsoluteAndCappedByTheHeroFrame()
+    {
+        // The hero's frame (270x360 over a 242x278 body) is the tightest fit: 1.116, so the room is drawn at 1.116 even
+        // though the Nibbit's cell would allow 1.266. TouchSpireUI resolves the same one multiplier for the room.
+        var room = new[]
+        {
+            new PortraitCombatMath.PortraitFrameFit(242f, 278f, 270f, 360f, 0.75f),
+            new PortraitCombatMath.PortraitFrameFit(297f, 161f, 376f, 346f, 1.05f),
+        };
+        float shared = PortraitCombatMath.SharedRoomScale(room, out bool floored);
+        Assert.False(floored);
+        Assert.Equal(270f / 242f, shared, 0.0001f);
+
+        // A monster too large even for the legibility floor cannot shrink the room below it.
+        var oversized = new[] { new PortraitCombatMath.PortraitFrameFit(500f, 600f, 270f, 360f, 1f) };
+        Assert.Equal(PortraitCombatMath.PeerScaleFloor, PortraitCombatMath.SharedRoomScale(oversized, out floored));
+        Assert.True(floored);
+
+        // Nothing caps an ordinary body at more than the preferred shared scale (TouchSpireUI's 2.05).
+        var tiny = new[] { new PortraitCombatMath.PortraitFrameFit(100f, 100f, 600f, 600f, 1f) };
+        Assert.Equal(PortraitCombatMath.PreferredSharedBodyScale, PortraitCombatMath.SharedRoomScale(tiny, out floored));
+        Assert.False(floored);
+    }
+
+    [Fact]
+    public void BroadBackdropFramingIsTheSameRuleAtBothShapes()
+    {
+        // The Waterfall Giant arena (TouchSpireUI's own numbers): a 2764.8x1296 art whose authored top sits at -648 in
+        // the scene's space and whose TextureRect bottom is at 1181 in the container's local space.
+        const float artWidth = 2764.8f;
+        const float artHeight = 1296f;
+        const float artTopInScene = -648f;
+        const float artBottomLocal = 1181f;
+
+        PortraitCombatBands tall = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 612f);
+        float barBottom = tall.StageTopY - 450f;
+        PortraitCombatMath.PortraitBackdropFraming tallFrame = PortraitCombatMath.ComputeBroadBackdropFraming(
+            artWidth, artHeight, artTopInScene, artBottomLocal, 1080f, tall, barBottom, 1f);
+        Assert.Equal(1.065f, tallFrame.Scale, 0.0005f);
+        Assert.Equal(tall.HandTopY, tallFrame.ArtBottomY, 0.0001f);
+        // The art reaches exactly the bottom of the run bars: no strip of the underlay shows inside the stage.
+        Assert.Equal(barBottom - 8f, tallFrame.ArtTopY, 0.1f);
+        Assert.True(tallFrame.FloorAligned);
+        // The mossy ledge (scene y 320, local 853 once the layer's authored -533 offset is taken off) sits a little above
+        // the foot line, so the hero and the giant stand on it.
+        Assert.InRange(tallFrame.OriginY + 853f * tallFrame.Scale, tall.FrontFeetY - 70f, tall.FrontFeetY);
+
+        PortraitCombatBands compact = PortraitCombatMath.ComputeCombatBands(canvasHeight: 1920f, stageTopY: 612f);
+        float compactBarBottom = compact.StageTopY - 450f;
+        PortraitCombatMath.PortraitBackdropFraming compactFrame = PortraitCombatMath.ComputeBroadBackdropFraming(
+            artWidth, artHeight, artTopInScene, artBottomLocal, 1080f, compact, compactBarBottom, 1f);
+        Assert.Equal(0.8058f, compactFrame.Scale, 0.0005f);
+        Assert.Equal(compact.HandTopY, compactFrame.ArtBottomY, 0.0001f);
+        Assert.Equal(compactBarBottom - 8f, compactFrame.ArtTopY, 0.1f);
+        Assert.InRange(compactFrame.OriginY + 853f * compactFrame.Scale, compact.FrontFeetY - 40f, compact.FrontFeetY);
+
+        // Measuring the wrapper's local rect instead of the scene's top would triple the zoom this arena gets
+        // (200 - (-115) instead of 200 - (-648)), which is what the deleted waterfall special case worked around.
+        PortraitCombatMath.PortraitBackdropFraming broken = PortraitCombatMath.ComputeBroadBackdropFraming(
+            artWidth, artHeight, artBottomLocal - artHeight, artBottomLocal, 1080f, tall, barBottom, 1f);
+        Assert.True(broken.Scale > tallFrame.Scale * 2f);
+    }
+
+    [Fact]
+    public void BroadBackdropFramingFollowsTheArenaTopWhenItIsNotCoverBound()
+    {
+        // A short arena (a 540x720-ish stage) needs the art's own span: the scale follows the arena, not the bar cover.
+        PortraitCombatBands shortBands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 1400f, stageTopY: 400f);
+        float barBottom = shortBands.StageTopY - 450f;
+        PortraitCombatMath.PortraitBackdropFraming frame = PortraitCombatMath.ComputeBroadBackdropFraming(
+            2764.8f, 1296f, -648f, 1181f, 1080f, shortBands, barBottom, 1f);
+        float widthCover = 1080f / 2764.8f;
+        Assert.True(frame.Scale >= widthCover);
+        Assert.Equal(shortBands.HandTopY, frame.ArtBottomY, 0.0001f);
     }
 
     [Fact]
@@ -956,5 +1042,62 @@ public class PortraitCombatMathTests
         Assert.Equal(r, g);
         Assert.Equal(g, b);
         Assert.Equal(1f, a);
+    }
+
+    [Fact]
+    public void OrbArcUnderTheRunBarsMovesWholeBeforeItShrinks()
+    {
+        // The 9:16 ten-orb failure: the hero grew to 1.116 and the ring rose to 533.9 under a 612 run-bar floor, while
+        // it still ended well above the 1028.3 rail. Moving the whole arc down keeps every icon at its drawn size.
+        PortraitCombatMath.PortraitOrbArcFit fit =
+            PortraitCombatMath.FitOrbArcBelow(533.9f, 830f, 847.7f, 620f, 1020.3f, 0.66f);
+        Assert.Equal(1f, fit.Scale);
+        Assert.Equal(86.1f, fit.ShiftY, 0.1f);
+        Assert.Equal(620f, 533.9f + fit.ShiftY, 0.1f);
+        Assert.True(830f + fit.ShiftY <= 1020.3f);
+
+        // The accepted three- and five-orb rows sit at about 783 and 794: already under the limit, so nothing moves.
+        Assert.Equal(new PortraitCombatMath.PortraitOrbArcFit(0f, 1f),
+            PortraitCombatMath.FitOrbArcBelow(782.9f, 858.4f, 847.7f, 620f, 1020.3f, 0.66f));
+        Assert.Equal(new PortraitCombatMath.PortraitOrbArcFit(0f, 1f),
+            PortraitCombatMath.FitOrbArcBelow(794.2f, 869.7f, 847.7f, 620f, 1020.3f, 0.66f));
+    }
+
+    [Fact]
+    public void OrbArcTallerThanTheRoomShrinksItsRadiusToFitBothLimits()
+    {
+        // An arc whose span cannot fit between the bar floor and the rail: the radius shrinks about the manager's pivot
+        // so the top lands on the bar floor and the bottom on the rail, not one at the other's expense.
+        const float top = 533.9f, bottom = 1000f, origin = 847.7f, topLimit = 620f, bottomLimit = 1020f;
+        PortraitCombatMath.PortraitOrbArcFit fit =
+            PortraitCombatMath.FitOrbArcBelow(top, bottom, origin, topLimit, bottomLimit, 0.66f);
+        Assert.InRange(fit.Scale, 0.66f, 1f);
+        Assert.Equal(400f, (bottom - top) * fit.Scale, 0.5f);
+        float topAfter = origin + (top - origin) * fit.Scale + fit.ShiftY;
+        float bottomAfter = origin + (bottom - origin) * fit.Scale + fit.ShiftY;
+        Assert.Equal(topLimit, topAfter, 0.5f);
+        Assert.Equal(bottomLimit, bottomAfter, 0.5f);
+
+        // The 60% floor wins over the rail: a very tall arc keeps readable icons and reports the overflow instead of
+        // shrinking below what a player can read.
+        PortraitCombatMath.PortraitOrbArcFit floored =
+            PortraitCombatMath.FitOrbArcBelow(0f, 1500f, origin, topLimit, bottomLimit, 0.66f);
+        Assert.Equal(0.66f, floored.Scale);
+    }
+
+    [Fact]
+    public void OrbArcBelowALowPivotIsLiftedRatherThanLeftOnTheRail()
+    {
+        // Scaling about a pivot under the arc moves the arc down; when that pushes its bottom past the rail the fit is a
+        // lift (a negative shift), so the whole arc still sits between the two limits.
+        const float origin = 1200f, topLimit = 620f, bottomLimit = 1020f;
+        float top = 520f, bottom = 1010f;
+        PortraitCombatMath.PortraitOrbArcFit fit =
+            PortraitCombatMath.FitOrbArcBelow(top, bottom, origin, topLimit, bottomLimit, 0.66f);
+        float topAfter = origin + (top - origin) * fit.Scale + fit.ShiftY;
+        float bottomAfter = origin + (bottom - origin) * fit.Scale + fit.ShiftY;
+        Assert.True(fit.Scale < 1f);
+        Assert.True(topAfter >= topLimit - 0.01f);
+        Assert.True(bottomAfter <= bottomLimit + 0.01f);
     }
 }

@@ -290,7 +290,8 @@ internal sealed class PhoneTouchCards
         if (_failed || _r == null || !GodotObject.IsInstanceValid(tree.Root)) return;
         try
         {
-            Step();
+            using (PortraitFrameTiming.Begin(PortraitFrameTiming.Touch))
+                Step();
         }
         catch (Exception error)
         {

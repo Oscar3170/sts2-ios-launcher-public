@@ -124,6 +124,19 @@ public sealed class PhoneGraphicsSettingsTests : IDisposable
     }
 
     [Fact]
+    public void PerformanceLogRoundTripsAndDefaultsOffForOlderFiles()
+    {
+        Assert.False(Defaults.PerformanceLog);
+        var logging = Defaults.WithPerformanceLog(true);
+        logging.Save(SettingsFile);
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { PerformanceLog: true });
+        Assert.True(logging.WithPreset(BatteryPreset.Balanced) is { PerformanceLog: true, Preset: BatteryPreset.Balanced });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"portraitMode\":true,\"portraitDefault\":true}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { PerformanceLog: false });
+    }
+
+    [Fact]
     public void PortraitDefaultIsClearedOnLoadWhenPortraitModeIsOff()
     {
         File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"portraitMode\":false,\"portraitDefault\":true}");

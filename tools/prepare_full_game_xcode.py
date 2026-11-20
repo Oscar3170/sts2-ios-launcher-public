@@ -65,6 +65,7 @@ TRANSFORMATIONS = [
     "Compile the orientation guard that answers iOS on the app delegate level: portrait launcher, landscape game.",
     "Compile the power state reader and the launch-time render resolution choice.",
     "Adopt the scene life cycle iOS 27 requires; the scene delegate takes over the engine window.",
+    "Share the app's Documents folder with the Files app, so the game log can be read on the phone.",
     'Compile the Files picker behind the Mods screen\'s "Add mod from Files" button.',
     "Compile QuickMatch's voice audio; the microphone text only in a build that carries QuickMatch.",
 ]
@@ -253,6 +254,16 @@ def adopt_scene_lifecycle(properties: dict) -> None:
     properties["UIApplicationSceneManifest"] = manifest
 
 
+def share_documents(properties: dict) -> None:
+    """Let the Files app see the app's Documents folder, where the game's own log is written.
+
+    The log (`Documents/full-game-startup.log`, written by the engine's `--log-file user://…`) is the only way to read
+    the game's frame statistics on a phone without Xcode: favorites it in the Files app under "On My iPhone". In-place
+    opening lets Files hand a document back instead of copying it. Nothing is uploaded anywhere; the file stays local."""
+    properties["UIFileSharingEnabled"] = True
+    properties["LSSupportsOpeningDocumentsInPlace"] = True
+
+
 def add_native_source(name: str) -> None:
     """Compile a host source file into the app through the export's own C++ unit."""
     unit = EXPORT / "FullGame/dummy.cpp"
@@ -296,6 +307,7 @@ def prepare() -> None:
     text = use_app_store_launch_packaging(text, properties)
     fill_purpose_strings(properties, VOICE_MOD.is_file())
     adopt_scene_lifecycle(properties)
+    share_documents(properties)
     text = keep_exported_symbols(text)
     text = add_host_files(text)
     settings = local_settings()
