@@ -73,6 +73,12 @@ internal sealed partial class PortraitBetweenLayout
         public Func<bool>? IsOpen;
         public FieldInfo? TweenField;
         public FieldInfo? BackShowPosField;
+        public FieldInfo? BackHidePosField;
+        public FieldInfo? BackMoveTweenField;
+        public Vector2 BackShowHome;
+        public Vector2 BackHideHome;
+        public Vector2 BackSizeHome;
+        public bool BackCaptured;
         public FieldInfo? HoverTweenField;
         public Vector2 Canvas;
         public Vector2 DialogueHome;
@@ -99,6 +105,12 @@ internal sealed partial class PortraitBetweenLayout
         public readonly List<Control> Potions = new();
         public readonly List<Control> BlitzSlots = new();
         public Control? Removal;
+        public Control? CharacterGroup;
+        public Control? ColorlessGroup;
+        public Control? RelicsGroup;
+        public Control? PotionsGroup;
+        public Control? BlitzGroup;
+        public int GroupSignature = -1;
     }
 
     private sealed class ShopRoomState
@@ -148,18 +160,21 @@ internal sealed partial class PortraitBetweenLayout
             // Without the game's open state the shop cannot be told open from closed; leave it as the game has it.
             if (state.OpenProperty == null || state.Failed) return;
 
+            // The room fills the stock after the inventory enters the tree; find the slots again whenever that changes.
+            RefreshShopGroups(state);
             bool open = state.IsOpen?.Invoke() ?? false;
-            bool blitz = state.BlitzSlots.Count > 0;
-            if (state.Blitz != blitz || state.Canvas != canvas) state.Dirty = true;
+            if (state.Canvas != canvas) state.Dirty = true;
+            // The stock is complete by the time it can open: one fresh layout on the opening frame settles any late content.
+            if (open && !state.WasOpen) state.Dirty = true;
             if (state.Dirty || !state.LaidOut)
             {
                 ApplyShopLayout(inventory, state, capHeight, canvas, open);
                 state.Canvas = canvas;
-                state.Blitz = blitz;
                 state.Dirty = false;
                 state.LaidOut = true;
             }
 
+            PlaceShopBackButton(state, canvas);
             if (open)
             {
                 if (!state.WasOpen) OnShopOpened(inventory, state);
@@ -203,28 +218,76 @@ internal sealed partial class PortraitBetweenLayout
             try { state.IsOpen = (Func<bool>)Delegate.CreateDelegate(typeof(Func<bool>), inventory, getter); }
             catch (ArgumentException) { state.IsOpen = null; }
         }
-        state.BackShowPosField = state.BackButton == null ? null : FindPrivateField(state.BackButton.GetType(), "_showPos");
+        if (state.BackButton is { } backButton)
+        {
+            state.BackShowPosField = FindPrivateField(backButton.GetType(), "_showPos");
+            state.BackHidePosField = FindPrivateField(backButton.GetType(), "_hidePos");
+            state.BackMoveTweenField = FindPrivateField(backButton.GetType(), "_moveTween");
+            state.BackSizeHome = backButton.Size;
+            if (state.BackShowPosField?.GetValue(backButton) is Vector2 showHome) state.BackShowHome = showHome;
+            if (state.BackHidePosField?.GetValue(backButton) is Vector2 hideHome) state.BackHideHome = hideHome;
+            state.BackCaptured = state.BackShowPosField != null;
+            Capture(backButton, captureVisible: false);
+        }
         state.Weird = inventory.GetType().FullName == FakeMerchantInventoryTypeName;
 
-        AddGroup(state, stock, "CharacterCards", state.CardGroups, state.Cards);
-        AddGroup(state, stock, "ColorlessCards", state.CardGroups, state.Colorless);
-        AddGroup(state, stock, "Relics", state.ItemGroups, state.Relics);
-        AddGroup(state, stock, "Potions", state.ItemGroups, state.Potions);
-        if (stock.GetNodeOrNull<Control>("BlitzSlots") is { } blitz &&
-            blitz.GetChildren().OfType<Control>().Any())
-        {
-            state.ItemGroups.Add(blitz);
-            state.BlitzSlots.AddRange(blitz.GetChildren().OfType<Control>());
-            state.HoverTweenField = state.BlitzSlots.Count > 0 ? FindPrivateField(state.BlitzSlots[0].GetType(), "_hoverTween") : null;
-        }
-        if (stock.GetNodeOrNull<Control>("MerchantCardRemoval") is { } removal)
-        {
-            state.Removal = removal;
-            state.ItemGroups.Add(removal);
-            if (state.HoverTweenField == null) state.HoverTweenField = FindPrivateField(removal.GetType(), "_hoverTween");
-        }
+        // The stock groups are scene nodes; their slots are filled in after the inventory is readied, so only the groups are
+        // kept here and the slots are found again whenever their number changes (see RefreshShopGroups).
+        state.CharacterGroup = FindShopGroup(inventory, stock, "CharacterCards");
+        state.ColorlessGroup = FindShopGroup(inventory, stock, "ColorlessCards");
+        state.RelicsGroup = FindShopGroup(inventory, stock, "Relics");
+        state.PotionsGroup = FindShopGroup(inventory, stock, "Potions");
+        state.BlitzGroup = FindShopGroup(inventory, stock, "BlitzSlots");
+        state.Removal = stock.GetNodeOrNull<Control>("MerchantCardRemoval") ??
+                        inventory.GetNodeOrNull<Control>("%MerchantCardRemoval");
+        RefreshShopGroups(state);
+        return state;
+    }
+
+    private static Control? FindShopGroup(Control inventory, TextureRect stock, string name) =>
+        stock.GetNodeOrNull<Control>(name) ?? inventory.GetNodeOrNull<Control>("%" + name);
+
+    private static int GroupChildren(Control? group) =>
+        group != null && GodotObject.IsInstanceValid(group) ? group.GetChildCount() : 0;
+
+    /// <summary>
+    /// Finds the stocked slots again whenever the game has filled or rebuilt the groups. The room creates the slots after the
+    /// inventory enters the tree (a first pass sees empty groups), so the mode and every list are re-read from the group child
+    /// counts; a change asks for one new layout, never a reshuffle at any other time.
+    /// </summary>
+    private void RefreshShopGroups(ShopState state)
+    {
+        int signature = 17;
+        signature = signature * 31 + GroupChildren(state.CharacterGroup);
+        signature = signature * 31 + GroupChildren(state.ColorlessGroup);
+        signature = signature * 31 + GroupChildren(state.RelicsGroup);
+        signature = signature * 31 + GroupChildren(state.PotionsGroup);
+        signature = signature * 31 + GroupChildren(state.BlitzGroup);
+        signature = signature * 31 + (state.Removal != null && GodotObject.IsInstanceValid(state.Removal) ? 1 : 0);
+        if (signature == state.GroupSignature) return;
+        state.GroupSignature = signature;
+
+        state.CardGroups.Clear();
+        state.ItemGroups.Clear();
+        state.Cards.Clear();
+        state.Colorless.Clear();
+        state.Relics.Clear();
+        state.Potions.Clear();
+        state.BlitzSlots.Clear();
+        AddGroupSlots(state, state.CharacterGroup, state.CardGroups, state.Cards);
+        AddGroupSlots(state, state.ColorlessGroup, state.CardGroups, state.Colorless);
+        AddGroupSlots(state, state.RelicsGroup, state.ItemGroups, state.Relics);
+        AddGroupSlots(state, state.PotionsGroup, state.ItemGroups, state.Potions);
+        AddGroupSlots(state, state.BlitzGroup, state.ItemGroups, state.BlitzSlots);
+        if (state.Removal != null && GodotObject.IsInstanceValid(state.Removal)) state.ItemGroups.Add(state.Removal);
+
         state.Blitz = state.BlitzSlots.Count > 0;
         state.Paged = !state.Weird && !state.Blitz && state.CardGroups.Count > 0 && state.ItemGroups.Count > 0;
+        if (state.BlitzSlots.Count > 0 && state.HoverTweenField == null)
+            state.HoverTweenField = FindPrivateField(state.BlitzSlots[0].GetType(), "_hoverTween");
+        if (state.Removal != null && state.HoverTweenField == null)
+            state.HoverTweenField = FindPrivateField(state.Removal.GetType(), "_hoverTween");
+
         // Everything this pass moves or hides is kept first, so leaving portrait puts the game's own shop back exactly.
         foreach (Control group in state.CardGroups) Capture(group, captureVisible: true);
         foreach (Control group in state.ItemGroups) Capture(group, captureVisible: true);
@@ -234,12 +297,16 @@ internal sealed partial class PortraitBetweenLayout
         foreach (Control slot in state.Potions) Capture(slot, captureVisible: false);
         foreach (Control slot in state.BlitzSlots) Capture(slot, captureVisible: false);
         if (state.Removal != null) Capture(state.Removal, captureVisible: true);
-        return state;
+
+        state.Dirty = true;
+        GD.Print($"Portrait between layout: shop mode {(state.Paged ? "pages" : state.Weird ? "weird" : state.Blitz ? "blitz" : "stock")}: " +
+                 $"cards={state.Cards.Count} colorless={state.Colorless.Count} relics={state.Relics.Count} " +
+                 $"potions={state.Potions.Count} blitz={state.BlitzSlots.Count} removal={state.Removal != null} paged={state.Paged}.");
     }
 
-    private static void AddGroup(ShopState state, TextureRect stock, string name, List<Control> groups, List<Control> slots)
+    private static void AddGroupSlots(ShopState state, Control? group, List<Control> groups, List<Control> slots)
     {
-        if (stock.GetNodeOrNull<Control>(name) is not { } group) return;
+        if (group == null || !GodotObject.IsInstanceValid(group)) return;
         List<Control> children = group.GetChildren().OfType<Control>().ToList();
         if (children.Count == 0) return;
         groups.Add(group);
@@ -305,6 +372,9 @@ internal sealed partial class PortraitBetweenLayout
         stock.OffsetRight = rect.X + rect.Width;
         stock.OffsetTop = y;
         stock.OffsetBottom = y + rect.Height;
+        bool sliding = NativeShopTweenRunning(state, inventory);
+        if (open) stock.Show();
+        else if (!sliding) stock.Hide();
 
         if (state.Blitz)
             PlaceBlitzPage(state, rect);
@@ -633,6 +703,31 @@ internal sealed partial class PortraitBetweenLayout
         if (announce) PhoneSelectConfirm.Clear("shop page");
     }
 
+    /// <summary>
+    /// The shop's own Back button as a phone target: at least 44 points tall and fully on the canvas, beside the tab row.
+    /// The game animates the button to its <c>_showPos</c>/<c>_hidePos</c>, so those are moved instead of the position; the
+    /// running slide is never fought.
+    /// </summary>
+    private static void PlaceShopBackButton(ShopState state, Vector2 canvas)
+    {
+        if (!state.BackCaptured || state.BackButton is not { } back || !GodotObject.IsInstanceValid(back)) return;
+        var size = new Vector2(
+            Math.Max(state.BackSizeHome.X, PortraitBands.MinTarget),
+            Math.Max(state.BackSizeHome.Y, PortraitBands.MinTarget));
+        if (!back.Size.IsEqualApprox(size)) back.Size = size;
+        float centreY = state.BackShowHome.Y + state.BackSizeHome.Y / 2f;
+        var show = new Vector2(20f, centreY - size.Y / 2f);
+        Vector2 hide = show + (state.BackHideHome - state.BackShowHome);
+        if (state.BackShowPosField?.GetValue(back) is Vector2 currentShow && !currentShow.IsEqualApprox(show))
+            state.BackShowPosField.SetValue(back, show);
+        if (state.BackHidePosField?.GetValue(back) is Vector2 currentHide && !currentHide.IsEqualApprox(hide))
+            state.BackHidePosField.SetValue(back, hide);
+        if (state.BackMoveTweenField?.GetValue(back) is Tween move && GodotObject.IsInstanceValid(move) && move.IsRunning())
+            return;
+        Vector2 want = state.IsOpen?.Invoke() == true ? show : hide;
+        if (!back.GlobalPosition.IsEqualApprox(want)) back.GlobalPosition = want;
+    }
+
     private void PlaceShopTabs(Control inventory, ShopState state, Vector2 canvas, bool open)
     {
         if (!state.Paged) return;
@@ -685,6 +780,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         state.CloseTween?.Kill();
         state.CloseTween = null;
+        state.Stock?.Show();
         if (state.Paged) SetShopPage(inventory, state, 0, announce: false);
         else ShopPage = -1;
     }
@@ -715,8 +811,12 @@ internal sealed partial class PortraitBetweenLayout
                 .SetEase(Tween.EaseType.InOut).SetTrans(Tween.TransitionType.Sine).FromCurrent();
         tween.Finished += () =>
         {
-            if (GodotObject.IsInstanceValid(inventory) && GodotObject.IsInstanceValid(stock))
+            if (GodotObject.IsInstanceValid(stock))
+            {
                 stock.Position = new Vector2(stock.Position.X, state.ClosedY);
+                // TSUI's AfterClose: nothing of the shop is left in the tree's drawing after the slide.
+                stock.Hide();
+            }
             HideShopTabs(state);
             // The next open starts on the Cards page, chosen while nothing of the shop is on screen.
             if (GodotObject.IsInstanceValid(inventory)) SetShopPage(inventory, state, 0, announce: false);
@@ -829,6 +929,14 @@ internal sealed partial class PortraitBetweenLayout
             FreeShopTab(state.ItemsTab);
             if (state.Dialogue is { } dialogue && GodotObject.IsInstanceValid(dialogue) && state.DialogueCaptured)
                 dialogue.Position = state.DialogueHome;
+            if (state.BackCaptured && state.BackButton is { } back && GodotObject.IsInstanceValid(back))
+            {
+                if (state.BackMoveTweenField?.GetValue(back) is Tween move && GodotObject.IsInstanceValid(move)) move.Kill();
+                state.BackShowPosField?.SetValue(back, state.BackShowHome);
+                state.BackHidePosField?.SetValue(back, state.BackHideHome);
+                bool open = state.IsOpen?.Invoke() ?? false;
+                back.GlobalPosition = open ? state.BackShowHome : state.BackHideHome;
+            }
         }
         ShopPage = -1;
     }

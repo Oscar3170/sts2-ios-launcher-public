@@ -68,6 +68,9 @@ internal sealed class PhoneSelectConfirm
         /// <summary>Whether an outline goes around a whole card (328 x 450) or the item's own rectangle.</summary>
         internal abstract bool CardOutline { get; }
 
+        /// <summary>Whether <see cref="Model"/> may change under a selected item (a restock, a reroll).</summary>
+        internal virtual bool ModelCanChange => true;
+
         internal abstract int ItemCount(Control screen);
 
         internal abstract Control? ItemAt(Control screen, int index);
@@ -93,6 +96,7 @@ internal sealed class PhoneSelectConfirm
         /// <summary>The screen's own way of taking the item.</summary>
         internal abstract void Commit(Control screen, Control item);
 
+        /// <summary>Whether the item may be taken now (the chest's relics stay untouchable through its entrance and awards).</summary>
         internal virtual bool CanConfirm(Control screen, Control item) => true;
 
         internal virtual bool StillShown(Control screen, Control item) => item.IsVisibleInTree();
@@ -124,6 +128,7 @@ internal sealed class PhoneSelectConfirm
     private sealed class Selection
     {
         internal Control Screen = null!;
+        internal ulong ScreenId;
         internal Control Item = null!;
         internal SelectAdapter Adapter = null!;
         internal object? Model;
@@ -328,7 +333,7 @@ internal sealed class PhoneSelectConfirm
     {
         for (int i = _screens.Count - 1; i >= 0; i--)
             if (_screens[i].ScreenId == screenId) _screens.RemoveAt(i);
-        if (_selected != null && _selected.Screen.GetInstanceId() == screenId) Drop("screen closed", counted: true);
+        if (_selected != null && _selected.ScreenId == screenId) Drop("screen closed", counted: true);
     }
 
     /// <summary>Every press and release of the window's own input, before the game's controls see it.</summary>
@@ -405,7 +410,7 @@ internal sealed class PhoneSelectConfirm
                 }
                 WireItems(tracked.Screen, tracked.Adapter);
             }
-            if (_selected != null && !StillSelected(_selected)) Drop("item changed", counted: true);
+            if (_selected is { } kept && !StillSelected(kept, out string why)) Drop($"item changed ({why})", counted: true);
             StepHold();
         }
         catch (Exception error)
@@ -517,9 +522,9 @@ internal sealed class PhoneSelectConfirm
         if (!second || held || item == null || screen == null || adapter == null) return;
         if (SelectConfirmMath.Decide(moved, elapsed, released: true) != SelectPress.Confirm) return;
         if (_selected == null || !ReferenceEquals(_selected.Item, item)) return;
-        if (!StillSelected(_selected))
+        if (!StillSelected(_selected, out string changed))
         {
-            Drop("item changed", counted: true);
+            Drop($"item changed ({changed})", counted: true);
             return;
         }
         if (!adapter.HitRect(screen, item).HasPoint(_lastCanvas)) return;
@@ -542,13 +547,18 @@ internal sealed class PhoneSelectConfirm
 
     private bool IsSelected(Control screen, Control item, SelectAdapter adapter) =>
         _selected is { } selection && ReferenceEquals(selection.Item, item) && ReferenceEquals(selection.Screen, screen) &&
-        SelectConfirmMath.IsSameItem(item.GetInstanceId(), adapter.Model(item), selection.Item.GetInstanceId(), selection.Model);
+        (adapter.ModelCanChange
+            ? SelectConfirmMath.IsSameItem(item.GetInstanceId(), adapter.Model(item), selection.Item.GetInstanceId(), selection.Model)
+            : item.GetInstanceId() == selection.Item.GetInstanceId());
 
     private void Select(Control screen, Control item, SelectAdapter adapter)
     {
         Panel outline = adapter.AttachOutline(item);
         object? model = adapter.Model(item);
-        _selected = new Selection { Screen = screen, Item = item, Adapter = adapter, Model = model, Outline = outline };
+        _selected = new Selection
+        {
+            Screen = screen, ScreenId = screen.GetInstanceId(), Item = item, Adapter = adapter, Model = model, Outline = outline,
+        };
         try
         {
             adapter.ShowTip(screen, item);
@@ -613,13 +623,27 @@ internal sealed class PhoneSelectConfirm
         }
     }
 
-    private bool StillSelected(Selection selection)
+    /// <summary>
+    /// Whether the selection still stands on the item it was made on, with the reason when it does not (logged with the drop).
+    /// A screen that has gone, a hidden item and, where the adapter allows it, a swapped model end the selection; screen
+    /// state that changes during an animation (a holder's mouse filter) does not.
+    /// </summary>
+    private bool StillSelected(Selection selection, out string why)
     {
         Control item = selection.Item, screen = selection.Screen;
-        if (!GodotObject.IsInstanceValid(item) || !item.IsInsideTree() || item.IsQueuedForDeletion()) return false;
-        if (!GodotObject.IsInstanceValid(screen) || !screen.IsInsideTree()) return false;
-        if (!selection.Adapter.StillShown(screen, item)) return false;
-        return ReferenceEquals(selection.Adapter.Model(item), selection.Model);
+        if (!GodotObject.IsInstanceValid(item)) { why = "item gone"; return false; }
+        if (!item.IsInsideTree()) { why = "item left the tree"; return false; }
+        if (item.IsQueuedForDeletion()) { why = "item freed"; return false; }
+        if (!GodotObject.IsInstanceValid(screen)) { why = "screen gone"; return false; }
+        if (!screen.IsInsideTree()) { why = "screen left the tree"; return false; }
+        if (!selection.Adapter.StillShown(screen, item)) { why = "item hidden"; return false; }
+        if (selection.Adapter.ModelCanChange && !ReferenceEquals(selection.Adapter.Model(item), selection.Model))
+        {
+            why = "model changed";
+            return false;
+        }
+        why = "";
+        return true;
     }
 
     private void WireItems(Control screen, SelectAdapter adapter)
@@ -828,6 +852,10 @@ internal sealed class PhoneSelectConfirm
         internal override Rect2 HitRect(Control screen, Control item) => item.GetGlobalRect();
         internal override object? Model(Control item) => Owner.RelicModel(item);
 
+        // A chest holder is made once for its relic and never shows another; the collection is built again for the next
+        // chest. Its identity is the holder itself, not its relic node, so nothing read from the animating relic can drop it.
+        internal override bool ModelCanChange => false;
+
         internal override Panel AttachOutline(Control item)
         {
             Panel panel = MakeRectOutline(item.Size, 6f, 4f);
@@ -840,8 +868,9 @@ internal sealed class PhoneSelectConfirm
         internal override void Inspect(Control screen, Control item) => Owner.OpenRelicInspect(item);
         internal override void Commit(Control screen, Control item) => Owner.CallScreen(screen, "PickRelic", item);
 
-        // The chest's relics ignore touches through their entrance, and the collection ignores picks for its first 200 ms.
-        internal override bool StillShown(Control screen, Control item) => item.IsVisibleInTree() && item.MouseFilter != Control.MouseFilterEnum.Ignore;
+        // The holders ignore touches through the entrance, so a press cannot select one then; the collection also ignores
+        // picks for its first 200 ms (its own guard). The entrance state is not part of the selection's life: a live
+        // MouseFilter read there would let a closing animation drop a selection that is still on screen.
         internal override bool CanConfirm(Control screen, Control item) => item.MouseFilter != Control.MouseFilterEnum.Ignore;
     }
 

@@ -575,12 +575,21 @@ internal sealed partial class PortraitBetweenLayout
 
     // ---- Proceed button (rewards, shop, rest site, treasure) ------------------------------------------------------------
 
-    private static void UpdateProceedButtonPortrait(Control button, Vector2 canvas)
+    private void UpdateProceedButtonPortrait(Control button, Vector2 canvas)
     {
         // ShowPos is a fraction of the canvas (1583/1920 across), which leaves the button partly off the narrow portrait edge.
         if (button.GetType().GetField("_animTween", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(button) is Tween { } tween &&
             tween.IsValid() && tween.IsRunning())
             return;
+        // The ribbon is 108 units tall natively; its rectangle grows to the phone's smallest touch target, keeping its centre
+        // (the game animates the position, not the size, so the slide is untouched).
+        if (button.Size.Y < PortraitBands.MinTarget)
+        {
+            Capture(button, captureVisible: false);
+            float grow = PortraitBands.MinTarget - button.Size.Y;
+            button.Size = new Vector2(button.Size.X, PortraitBands.MinTarget);
+            button.Position -= new Vector2(0f, grow / 2f);
+        }
         float width = button.Size.X * button.Scale.X;
         if (button.Position.X >= canvas.X - 1f || button.Position.X + width <= canvas.X - 16f) return;
         button.Position = new Vector2(canvas.X - width - 24f, button.Position.Y);
