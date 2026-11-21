@@ -80,6 +80,7 @@ public sealed partial class PhoneGraphics : Node
         _portraitLayout.Detach();
         _touchCards.Detach();
         _touchScroll.Detach();
+        _hoverTips.Release();
         GetTree().ProcessFrame -= OnTouchFrame;
     }
 

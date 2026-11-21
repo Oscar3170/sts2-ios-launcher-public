@@ -4,12 +4,11 @@ using System.Collections.Generic;
 namespace STS2Mobile.Platform;
 
 /// <summary>
-/// The touch decisions for a hand card in portrait. A press is not a pickup: the card stays in the hand until the finger
-/// has moved <see cref="PickupSlop"/>, so a tap does nothing and a still finger can open the card large. While an
+/// The touch decisions and placements for the portrait overlays. A press is not a pickup: the card stays in the hand until
+/// the finger has moved <see cref="PickupSlop"/>, so a tap does nothing and a still finger can open the card large. While an
 /// untargeted card is dragged its bottom edge stays <see cref="DragLift"/> above the finger; a targeted card parks at
 /// <see cref="AimingCardCenter"/> once aiming starts. A release reaches for a target a little outside the creature's hit
-/// box. Distances are canvas units on the 1080-wide portrait canvas, where one phone point is about 2.9 units; the
-/// starting values are converted from a 1680-wide design canvas (<c>1080 / 1680</c>).
+/// box. Distances are canvas units on the 1080-wide portrait canvas, where one phone point is about 2.9 units.
 /// </summary>
 public static class TouchCardMath
 {
@@ -25,10 +24,16 @@ public static class TouchCardMath
     /// <summary>How far from the nearest valid creature a release still snaps to it, past the padding (about 31 pt).</summary>
     public const float TargetSnap = 90f;
 
-    /// <summary>How far above the finger the dragged card's bottom edge is held, so the finger does not hide it.</summary>
+    /// <summary>How far above the finger the dragged card's bottom edge is held, so the finger does not hide it
+    /// (51 canvas units, about 17.6 pt).</summary>
     public const float DragLift = 51f;
 
     private const float EdgeMargin = 8f;
+
+    /// <summary>The gap a hand card's hover tips keep from the stage top and from the control rail (24 canvas units, about 8.3 pt).</summary>
+    public const float StageTipMargin = 24f;
+
+    private const float UpgradeBoxLeft = 8f, UpgradeBoxWidth = 272f, UpgradeBoxHeight = 64f, UpgradeBoxScale = 0.85f;
 
     /// <summary>
     /// The aiming card's size: one value per shape, 1.5 times the shape's largest resting hand card
@@ -59,6 +64,27 @@ public static class TouchCardMath
     /// <summary>Whether a finger that has not crossed <see cref="PickupSlop"/> has rested long enough to inspect.</summary>
     public static bool IsStationaryHold(float movedCanvasUnits, double heldSeconds) =>
         movedCanvasUnits < PickupSlop && heldSeconds >= HoldSeconds;
+
+    /// <summary>
+    /// The vertical band a hand card's hover tips may use: <see cref="StageTipMargin"/> below the stage top to the same
+    /// margin above the control rail. One rule for every pass that places something against the stage.
+    /// </summary>
+    public static (float Top, float Bottom) HandTipBand(float stageTop, float railTop) =>
+        (stageTop + StageTipMargin, railTop - StageTipMargin);
+
+    /// <summary>
+    /// The inspect screen's native "View Upgrades" box in portrait, on the canvas: the native 272 x 64 box at
+    /// <see cref="UpgradeBoxScale"/> scale, its left edge in the free margin beside the centred card and its top
+    /// <see cref="StageTipMargin"/> below the stage top or the card's top, whichever is lower, so it clears the card, the
+    /// arrows, the rail and the hand. Width and height are unscaled (the caller scales the control about its top-left).
+    /// </summary>
+    public static (float Left, float Top, float Width, float Height, float Scale) InspectUpgradeRect(
+        float screenHeight, float stageTop)
+    {
+        float cardTop = screenHeight * 0.5f - PortraitCombatMath.CardDefaultHeight;
+        float top = MathF.Max(stageTop + StageTipMargin, cardTop + StageTipMargin);
+        return (UpgradeBoxLeft, top, UpgradeBoxWidth, UpgradeBoxHeight, UpgradeBoxScale);
+    }
 
     /// <summary>A creature's hit box as a centre and half extents on the portrait canvas.</summary>
     public readonly record struct TargetBox(float CenterX, float CenterY, float HalfWidth, float HalfHeight);
@@ -94,27 +120,51 @@ public static class TouchCardMath
     }
 
     /// <summary>
+    /// The uniform scale a hover-tip column takes on the canvas: at most <paramref name="preferred"/>, reduced to keep
+    /// <paramref name="margin"/> clear on each side; the height fit never goes below 0.5, so a column keeps a readable
+    /// size even when it has to run under the item it describes.
+    /// </summary>
+    public static float FitTipColumnScale(
+        float preferred, float columnWidth, float columnHeight, float canvasWidth, float canvasHeight, float margin)
+    {
+        float s = Math.Min(preferred, (canvasWidth - 2f * margin) / Math.Max(columnWidth, 0.01f));
+        return Math.Min(s, Math.Max(0.5f, (canvasHeight - 2f * margin) / Math.Max(columnHeight, 0.01f)));
+    }
+
+    /// <summary>
+    /// Keeps a placed hover-tip column inside the hand band (see <see cref="HandTipBand"/>): a column taller than the band
+    /// is shrunk to it and pinned to its top; otherwise it is moved up so its bottom never passes the band's bottom. A band
+    /// with no height leaves the column untouched. The scale comes back for the caller's control.
+    /// </summary>
+    public static (float X, float Y, float Width, float Height, float Scale) FitTipColumnToBand(
+        float x, float y, float width, float height, float scale, float bandTop, float bandBottom)
+    {
+        if (bandBottom <= bandTop) return (x, y, width, height, scale);
+        float bandHeight = bandBottom - bandTop;
+        if (height > bandHeight)
+        {
+            float shrink = bandHeight / height;
+            return (x, bandTop, width * shrink, bandHeight, scale * shrink);
+        }
+        return (x, Math.Max(bandTop, Math.Min(y, bandBottom - height)), width, height, scale);
+    }
+
+    /// <summary>
     /// Where a dragged card's centre goes for a finger at <paramref name="fingerX"/>, <paramref name="fingerY"/>: above
     /// the finger so the card's bottom edge is <see cref="DragLift"/> clear of it, and clamped inside the canvas. The
     /// scale is the card's on-canvas size (its own scale times the hand's), so the visual hit box lands where the finger
     /// expects even when the hand container is scaled.
     /// </summary>
     public static (float X, float Y) DraggedCardCenter(
-        float fingerX, float fingerY, float scaleX, float scaleY, float canvasWidth, float canvasHeight)
+        float fingerX, float fingerY, float scale, float canvasWidth, float canvasHeight)
     {
-        float sx = Math.Max(scaleX, 0.01f);
-        float sy = Math.Max(scaleY, 0.01f);
-        float halfWidth = PortraitCombatMath.CardDefaultWidth * sx * 0.5f;
-        float halfHeight = PortraitCombatMath.CardDefaultHeight * sy * 0.5f;
+        float s = Math.Max(scale, 0.01f);
+        float halfWidth = PortraitCombatMath.CardDefaultWidth * s * 0.5f;
+        float halfHeight = PortraitCombatMath.CardDefaultHeight * s * 0.5f;
         float x = Math.Clamp(fingerX, halfWidth + EdgeMargin,
             Math.Max(halfWidth + EdgeMargin, canvasWidth - halfWidth - EdgeMargin));
         float y = Math.Clamp(fingerY - halfHeight - DragLift, halfHeight + EdgeMargin,
             Math.Max(halfHeight + EdgeMargin, canvasHeight - halfHeight - EdgeMargin));
         return (x, y);
     }
-
-    /// <summary>The single-scale case of <see cref="DraggedCardCenter(float, float, float, float, float, float)"/>.</summary>
-    public static (float X, float Y) DraggedCardCenter(
-        float fingerX, float fingerY, float scale, float canvasWidth, float canvasHeight) =>
-        DraggedCardCenter(fingerX, fingerY, scale, scale, canvasWidth, canvasHeight);
 }

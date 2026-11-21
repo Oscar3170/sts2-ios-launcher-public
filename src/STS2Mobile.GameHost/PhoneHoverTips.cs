@@ -155,7 +155,7 @@ internal sealed class PhoneHoverTips
             Rect2 canvas = tree.Root.GetVisibleRect();
             float stageTop = PortraitLayout.ComputeCapHeight(tree.Root) + PortraitBands.RunContentTop;
             float railTop = PortraitCombatMath.ComputeCombatBands(canvas.Size.Y, 0f).RailTopY;
-            (float Top, float Bottom) handBand = (stageTop + 24f, railTop - 24f);
+            (float Top, float Bottom) handBand = TouchCardMath.HandTipBand(stageTop, railTop);
             foreach (Node child in container.GetChildren())
             {
                 if (child is not Control set || set.GetType().FullName != TipSetTypeName || set.IsQueuedForDeletion() || !set.Visible) continue;
@@ -214,9 +214,9 @@ internal sealed class PhoneHoverTips
         Rect2? owner = ownerControl != null && GodotObject.IsInstanceValid(ownerControl) && ownerControl.IsInsideTree()
             ? ItemRect(ownerControl, canvas)
             : null;
-        // A hand card's keyword tip must stay in the stage band: it is clamped between stageTop+24 and railTop-24 so it
-        // can never cover the hand. The game may own the tip with the holder, the NCard under it, or a child, so any node
-        // under the hand counts.
+        // A hand card's keyword tip must stay in the stage band (TouchCardMath.HandTipBand: one StageTipMargin below the
+        // stage top and above the rail) so it can never cover the hand. The game may own the tip with the holder, the NCard
+        // under it, or a child, so any node under the hand counts.
         bool isHandTip = IsHandTip(ownerControl);
         (float Top, float Bottom)? band = isHandTip ? handBand : null;
         Transform2D toCanvas = set.GetGlobalTransformWithCanvas();
@@ -344,8 +344,8 @@ internal sealed class PhoneHoverTips
 
         Vector2 origin = toCanvas * state.Original;
         var desktop = new Rect2(origin, column.Size);
-        float s = Math.Min(scale, (canvas.Size.X - 2f * Margin) / column.Size.X);
-        s = Math.Min(s, Math.Max(0.5f, (canvas.Size.Y - 2f * Margin) / column.Size.Y));
+        float s = TouchCardMath.FitTipColumnScale(scale, column.Size.X, column.Size.Y,
+            canvas.Size.X, canvas.Size.Y, Margin);
         Vector2 size = column.Size * s;
 
         // Grow away from the item: a column left of it keeps its right edge, one above it keeps its bottom edge.
@@ -365,19 +365,13 @@ internal sealed class PhoneHoverTips
 
         // A hand-card tip stays between the stage top and the rail: clamp the bottom (never over the hand) and, if it is
         // taller than the band, shrink it to the band.
-        if (band is { } limits && limits.Bottom > limits.Top)
+        if (band is { } limits)
         {
-            float bandHeight = limits.Bottom - limits.Top;
-            if (placed.Size.Y > bandHeight)
-            {
-                s *= bandHeight / placed.Size.Y;
-                placed = new Rect2(placed.Position.X, limits.Top, placed.Size.X * (bandHeight / placed.Size.Y), bandHeight);
-            }
-            else
-            {
-                float clampedY = Math.Min(placed.Position.Y, limits.Bottom - placed.Size.Y);
-                placed = new Rect2(placed.Position.X, Math.Max(limits.Top, clampedY), placed.Size);
-            }
+            (float bandX, float bandY, float bandWidth, float bandHeight, float bandScale) =
+                TouchCardMath.FitTipColumnToBand(
+                    placed.Position.X, placed.Position.Y, placed.Size.X, placed.Size.Y, s, limits.Top, limits.Bottom);
+            placed = new Rect2(bandX, bandY, bandWidth, bandHeight);
+            s = bandScale;
         }
 
         Vector2 local = toCanvas.AffineInverse() * placed.Position;

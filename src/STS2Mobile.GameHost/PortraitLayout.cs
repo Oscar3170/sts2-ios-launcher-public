@@ -113,6 +113,7 @@ internal sealed class PortraitLayout
     {
         if (_tree == null) return;
         PortraitCombatLayout.SetFlatHandListener(null);
+        _combat.Detach();
         _tree.Root.SizeChanged -= OnRootSizeChanged;
         _tree.NodeAdded -= OnNodeAdded;
         _tree.ProcessFrame -= OnProcessFrame;

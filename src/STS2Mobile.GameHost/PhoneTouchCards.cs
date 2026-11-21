@@ -69,6 +69,9 @@ internal sealed class PhoneTouchCards
     internal static Control? PressedHolder { get; private set; }
 
     private readonly Reflection? _r;
+    private readonly List<Control> _targetCreatures = new();
+    private readonly List<TouchCardMath.TargetBox> _targetBoxes = new();
+    private Callable _renderFrame;
     private bool _failed;
     private SceneTree? _tree;
 
@@ -128,6 +131,7 @@ internal sealed class PhoneTouchCards
     public void Attach(SceneTree tree)
     {
         _tree = tree;
+        _renderFrame = Callable.From(OnRenderFrame);
         tree.Root.WindowInput += OnWindowInput;
         // One pass per frame: the gesture decisions read the hand, and a deferred call after the frame's process-frame
         // callbacks writes the dragged card's presentation after the game's own move for that frame.
@@ -160,12 +164,14 @@ internal sealed class PhoneTouchCards
                 RestoreInspectUpgrade();
             if (!SafeAreaCanvas.IsPortrait)
             {
-                if (_dragHolder != null || CardIsBeingDragged || _down || _pendingHolder != null || _inspectShield != null)
+                HoverFromTouch = false;
+                if (_dragHolder != null || CardIsBeingDragged || _down || _pendingHolder != null || _inspectShield != null ||
+                    _placedInspectScreen != null)
                     ReleaseEverything();
                 else HandPickupGate.Disable();
                 return;
             }
-            if (_dragHolder != null) Callable.From(OnRenderFrame).CallDeferred();
+            if (_dragHolder != null) _renderFrame.CallDeferred();
         }
         catch (Exception error)
         {
@@ -534,7 +540,7 @@ internal sealed class PhoneTouchCards
         {
             _aimParked = false;
             (float x, float y) = TouchCardMath.DraggedCardCenter(
-                finger.X, finger.Y, onCanvas, onCanvas, canvas.X, canvas.Y);
+                finger.X, finger.Y, onCanvas, canvas.X, canvas.Y);
             canvasTarget = new Vector2(x, y);
             local = parentTransform.AffineInverse() * canvasTarget;
         }
@@ -622,11 +628,13 @@ internal sealed class PhoneTouchCards
         if (target != null) r.Hover(target);
     }
 
-    private static Control? FindTarget(Reflection r, Vector2 point)
+    private Control? FindTarget(Reflection r, Vector2 point)
     {
         if (!r.CanTarget) return null;
-        var creatures = new List<Control>();
-        var boxes = new List<TouchCardMath.TargetBox>();
+        List<Control> creatures = _targetCreatures;
+        List<TouchCardMath.TargetBox> boxes = _targetBoxes;
+        creatures.Clear();
+        boxes.Clear();
         foreach (object? node in r.Creatures())
         {
             if (node is not Control creature || !GodotObject.IsInstanceValid(creature) || !creature.IsInsideTree()) continue;
@@ -830,14 +838,13 @@ internal sealed class PhoneTouchCards
         float stageTop = screen.GetTree() is { } tree
             ? PortraitLayout.ComputeCapHeight(tree.Root) + PortraitBands.RunContentTop
             : 0f;
-        float cardTop = screen.Size.Y * 0.5f - PortraitCombatMath.CardDefaultHeight;
-        float top = MathF.Max(stageTop + 24f, cardTop + 24f);
-        const float width = 272f, height = 64f, scale = 0.85f;
+        (float left, float top, float width, float height, float scale) =
+            TouchCardMath.InspectUpgradeRect(screen.Size.Y, stageTop);
         upgrade.PivotOffset = Vector2.Zero;
         upgrade.Scale = new Vector2(scale, scale);
         float halfW = screen.Size.X * 0.5f, halfH = screen.Size.Y * 0.5f;
-        upgrade.OffsetLeft = 8f - halfW;
-        upgrade.OffsetRight = 8f - halfW + width;
+        upgrade.OffsetLeft = left - halfW;
+        upgrade.OffsetRight = left - halfW + width;
         upgrade.OffsetTop = top - halfH;
         upgrade.OffsetBottom = top - halfH + height;
     }

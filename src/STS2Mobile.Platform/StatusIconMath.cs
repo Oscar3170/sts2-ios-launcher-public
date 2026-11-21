@@ -31,8 +31,11 @@ public readonly record struct StatusIconLayout(
 /// </summary>
 public static class StatusIconMath
 {
-    /// <summary>The icon width as a share of the design width (82 of 1680).</summary>
-    public const float IconWidthShare = 82f / 1680f;
+    /// <summary>The icon width on the portrait canvas: 52.7 canvas units wide (about 18.2 pt at 2.9 units per point).</summary>
+    public const float IconWidth = 52.71429f;
+
+    /// <summary>The icon width as a share of the canvas width.</summary>
+    public const float IconWidthShare = IconWidth / SafeAreaCanvas.PortraitWidth;
 
     /// <summary>The native <c>NPowerContainer</c> padding: 25 display units at the 1.33 state-display scale.</summary>
     public const float ContainerPadding = 25f * 1.33f;

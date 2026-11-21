@@ -82,8 +82,8 @@ internal static class PhonePatches
     // pressed handler asks HandPickupGate whether to start the play. The launcher starts the play itself once the finger has
     // moved, while it is still down, so the game's release-to-target path is used unchanged. Holding the play back is the
     // robust way: cancelling one already started would still click, flash and move the card for a frame on every tap. A real
-    // mouse, landscape and the hand's selection modes are left exactly as the game has them; the dragged card's lift and
-    // fade are the launcher's presentation, drawn after the game's own move.
+    // mouse, landscape and the hand's selection modes are left exactly as the game has them; the dragged card's lift is
+    // the launcher's presentation, drawn after the game's own move.
     private static void PickUpHandCardAfterTheFingerMoves(GamePatch patch)
     {
         var notePress = patch.Adapter("HandPickupGate", "NotePress");

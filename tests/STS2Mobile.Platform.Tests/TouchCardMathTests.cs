@@ -117,4 +117,69 @@ public class TouchCardMathTests
         Assert.Equal(-1, TouchCardMath.NearestTarget(targets, 755f + 100f + TouchCardMath.TargetSnap + 1f, 900f));
         Assert.Equal(-1, TouchCardMath.NearestTarget(new List<TouchCardMath.TargetBox>(), 755f, 900f));
     }
+
+    [Fact]
+    public void TheTouchDistancesAreTheCanvasValuesTheyAchieve()
+    {
+        // Canvas units on the 1080-wide portrait canvas, one point about 2.9 units: the pin is the value and the distance
+        // a player sees, not a conversion from another canvas.
+        Assert.Equal(16f, TouchCardMath.PickupSlop);
+        Assert.Equal(39f, TouchCardMath.TargetPadding);
+        Assert.Equal(90f, TouchCardMath.TargetSnap);
+        Assert.Equal(51f, TouchCardMath.DragLift);
+        Assert.InRange(TouchCardMath.PickupSlop / 2.9f, 5.4f, 5.6f);
+        Assert.InRange(TouchCardMath.TargetPadding / 2.9f, 13.3f, 13.5f);
+        Assert.InRange(TouchCardMath.TargetSnap / 2.9f, 30.9f, 31.1f);
+        Assert.InRange(TouchCardMath.DragLift / 2.9f, 17.5f, 17.7f);
+    }
+
+    [Fact]
+    public void TheHandTipBandKeepsTheStageMarginAtBothEnds()
+    {
+        Assert.Equal(24f, TouchCardMath.StageTipMargin);
+        Assert.Equal((324f, 1576f), TouchCardMath.HandTipBand(300f, 1600f));
+    }
+
+    [Fact]
+    public void TheInspectUpgradeBoxSitsInTheLeftMarginBelowTheStageOrTheCard()
+    {
+        // A 2340-tall canvas: the centred card's top is 1170 - 422 = 748, below the stage.
+        (float left, float top, float width, float height, float scale) = TouchCardMath.InspectUpgradeRect(2340f, 300f);
+        Assert.Equal(8f, left);
+        Assert.Equal(748f + 24f, top, 0.01f);
+        Assert.Equal((272f, 64f), (width, height));
+        Assert.Equal(0.85f, scale);
+
+        // A stage lower than the card wins.
+        (_, float stageTop, _, _, _) = TouchCardMath.InspectUpgradeRect(2340f, 900f);
+        Assert.Equal(900f + 24f, stageTop, 0.01f);
+    }
+
+    [Fact]
+    public void ATipColumnShrinksToTheCanvasAndNeverBelowTheFloor()
+    {
+        Assert.Equal(1.4f, TouchCardMath.FitTipColumnScale(1.4f, 300f, 600f, 1080f, 2340f, 10f), 0.001f);
+        // Wider than the canvas: the side margins decide.
+        Assert.Equal((1080f - 20f) / 800f,
+            TouchCardMath.FitTipColumnScale(1.4f, 800f, 600f, 1080f, 2340f, 10f), 0.001f);
+        // Taller than the canvas: the height fit stops at the readable floor.
+        Assert.Equal(0.5f, TouchCardMath.FitTipColumnScale(1.4f, 300f, 9000f, 1080f, 2340f, 10f), 0.001f);
+    }
+
+    [Fact]
+    public void ATipColumnIsClampedIntoTheHandBandAndShrinksToIt()
+    {
+        // Shorter than the band: moved up so its bottom is inside.
+        (float x, float y, float width, float height, float scale) =
+            TouchCardMath.FitTipColumnToBand(40f, 1500f, 200f, 80f, 1f, 300f, 1500f);
+        Assert.Equal((40f, 1420f, 200f, 80f, 1f), (x, y, width, height, scale));
+
+        // Taller than the band: pinned to its top and shrunk to it.
+        (x, y, width, height, scale) = TouchCardMath.FitTipColumnToBand(40f, 500f, 200f, 1200f, 1f, 300f, 900f);
+        Assert.Equal((40f, 300f, 100f, 600f, 0.5f), (x, y, width, height, scale));
+
+        // No band: untouched.
+        (x, y, width, height, scale) = TouchCardMath.FitTipColumnToBand(40f, 10f, 200f, 80f, 1f, 300f, 300f);
+        Assert.Equal((40f, 10f, 200f, 80f, 1f), (x, y, width, height, scale));
+    }
 }

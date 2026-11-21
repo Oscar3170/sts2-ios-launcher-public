@@ -67,6 +67,13 @@ internal sealed class HandStillness
         return true;
     }
 
+    /// <summary>
+    /// Forgets every record. The transform a record holds belongs to the hand session that is ending: a card returning to
+    /// a later session must be placed at the draw pile again (no record means a first pass), not capped against where it
+    /// stood before the leave.
+    /// </summary>
+    public void Clear() => _records.Clear();
+
     /// <summary>Whether this holder has been through a pass (a returning card keeps its record; a brand-new one has none).</summary>
     public bool HasRecord(Control holder) => _records.ContainsKey(holder.GetInstanceId());
 

@@ -118,7 +118,7 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void TallBandsAndHandUseTheTallDesign()
+    public void TallBandsAndHandUseTheTallShape()
     {
         const float canvasHeight = 2340f;
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
@@ -476,9 +476,8 @@ public class PortraitCombatMathTests
         Assert.True(endTurnVisualTop >= bands.RailTopY + 0.01f);
         Assert.True(endTurnVisualBottom <= bands.HandTopY - 0.01f);
 
-        // The energy counter's orb centre is 267 canvas units (415 on the 1680-wide design canvas), which leaves 45 units
-        // to End Turn's left edge (71 design units, same relative gap). The star keeps its native scene size and only
-        // inherits the counter's 1.12 scale.
+        // The energy counter's orb centre is 267 canvas units (a quarter of the canvas width), which leaves 45 units to
+        // End Turn's left edge. The star keeps its native scene size and only inherits the counter's 1.12 scale.
         Assert.Equal(203f, hud.EnergyContainerX, 3);
         float orbSize = PortraitCombatMath.EnergyOrbSize * hud.EnergyScale;
         float orbCenterX = hud.EnergyContainerX + PortraitCombatMath.EnergyOrbSize * 0.5f;
@@ -720,7 +719,7 @@ public class PortraitCombatMathTests
         Assert.Equal(PortraitCombatMath.PeerScaleFloor, PortraitCombatMath.SharedRoomScale(oversized, out floored));
         Assert.True(floored);
 
-        // Nothing caps an ordinary body at more than the preferred shared scale (2.05 at the design width).
+        // Nothing caps an ordinary body at more than the preferred shared scale (1.32 on this canvas).
         var tiny = new[] { new PortraitCombatMath.PortraitFrameFit(100f, 100f, 600f, 600f, 1f) };
         Assert.Equal(PortraitCombatMath.PreferredSharedBodyScale, PortraitCombatMath.SharedRoomScale(tiny, out floored));
         Assert.False(floored);
@@ -1004,7 +1003,7 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void TallFormationUsesConvertedDepths()
+    public void TallFormationUsesCanvasDepths()
     {
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 612f);
         float floor = bands.FrontFeetY;
@@ -1012,14 +1011,14 @@ public class PortraitCombatMathTests
         PortraitCreatureSlot[] pair = PortraitCombatMath.ComputeTallFormation(2, bands);
         Assert.Equal(1080f * 0.475f, pair[0].CanvasX, 0.5f);
         Assert.Equal(1080f * 0.805f, pair[1].CanvasX, 0.5f);
-        Assert.Equal(floor - 100f * (1080f / 1680f), pair[0].CanvasFeetY, 0.5f);
-        Assert.Equal(floor - 20f * (1080f / 1680f), pair[1].CanvasFeetY, 0.5f);
+        Assert.Equal(floor - 64.28571f, pair[0].CanvasFeetY, 0.5f);
+        Assert.Equal(floor - 12.857142f, pair[1].CanvasFeetY, 0.5f);
 
         PortraitCreatureSlot[] three = PortraitCombatMath.ComputeTallFormation(3, bands);
         Assert.Equal(0, three[1].RowDepth);
-        Assert.Equal(floor - 510f * (1080f / 1680f), three[1].CanvasFeetY, 0.5f);
+        Assert.Equal(floor - 327.85715f, three[1].CanvasFeetY, 0.5f);
         Assert.Equal(1, three[0].RowDepth);
-        Assert.Equal(floor + 125f * (1080f / 1680f), three[0].CanvasFeetY, 0.5f);
+        Assert.Equal(floor + 80.35714f, three[0].CanvasFeetY, 0.5f);
 
         PortraitCreatureSlot[] five = PortraitCombatMath.ComputeTallFormation(5, bands);
         Assert.Equal(1080f * 0.18f, five[0].CanvasX, 0.5f);
@@ -1027,7 +1026,7 @@ public class PortraitCombatMathTests
         Assert.Equal(1080f * 0.49f, five[1].CanvasX, 0.5f);
         Assert.Equal(1080f * 0.81f, five[4].CanvasX, 0.5f);
 
-        // Frame width cannot exceed the column pitch; height is the converted 220–475 range.
+        // Frame width cannot exceed the column pitch; height is the 305-unit body cap.
         (float w3, float h3, float l3, float r3) = PortraitCombatMath.TallFormationFrame(three, 0, bands);
         Assert.InRange(w3, 60f, MathF.Abs(three[2].CanvasX - three[0].CanvasX) - 9f);
         Assert.InRange(h3, 141f, 305f);
@@ -1261,5 +1260,143 @@ public class PortraitCombatMathTests
         PortraitCombatMath.HpTextBlockFit wide = PortraitCombatMath.FitHpTextBesideBlock(
             inkLeft: 134f, inkWidth: 160f, pivotX: 0f, shieldRight: 40f, barRight: 400f, gap: 4f, minScale: 0.70f);
         Assert.Equal(new PortraitCombatMath.HpTextBlockFit(0f, 1f), wide);
+    }
+
+    [Fact]
+    public void ACardWithinTwoUnitsOfItsSlotSettlesExactlyOntoIt()
+    {
+        // The native loop stops within a unit, so a card a fraction short is pinned: position, angle and scale all rest.
+        PortraitCombatMath.PortraitCardMotion motion = PortraitCombatMath.CapCardArrival(
+            currentX: 200f, currentY: 100f, previousX: 199f, previousY: 99f,
+            currentScale: 0.9f, currentRotationDegrees: 3f,
+            slotX: 200f, slotY: 100.5f, slotScale: 0.87f, slotAngleDegrees: 2f, restingAngleDegrees: 2f,
+            previousRotationDegrees: 3f, interactive: false, turnDrawBatch: false, frameSeconds: 1f / 60f);
+        Assert.Equal(200f, motion.X);
+        Assert.Equal(100.5f, motion.Y);
+        Assert.Equal(2f, motion.RotationDegrees);
+        Assert.True(motion.ScaleCapped);
+        Assert.True(motion.Settled);
+        Assert.Equal(0.87f, motion.Scale);
+
+        // A card the game is still shrinking as it lands is lifted to the resting scale too (no cap flag: it is the pin).
+        PortraitCombatMath.PortraitCardMotion shrinking = PortraitCombatMath.CapCardArrival(
+            currentX: 200f, currentY: 100f, previousX: 199f, previousY: 99f,
+            currentScale: 0.70f, currentRotationDegrees: 3f,
+            slotX: 200f, slotY: 100.5f, slotScale: 0.87f, slotAngleDegrees: 2f, restingAngleDegrees: 2f,
+            previousRotationDegrees: 3f, interactive: false, turnDrawBatch: false, frameSeconds: 1f / 60f);
+        Assert.False(shrinking.ScaleCapped);
+        Assert.True(shrinking.Settled);
+        Assert.Equal(0.87f, shrinking.Scale);
+    }
+
+    [Fact]
+    public void OnAnOrdinaryPassNoFrameDrawsMoreThanOneNativeStep()
+    {
+        // clamp(frameSeconds * 7) of the distance left at the last pass, plus a unit, in whatever direction the game took.
+        const float frameSeconds = 1f / 60f;
+        float allowed = 1000f * Math.Clamp(frameSeconds * 7f, 0f, 1f) + 1f;
+        PortraitCombatMath.PortraitCardMotion motion = PortraitCombatMath.CapCardArrival(
+            currentX: 500f, currentY: 0f, previousX: 0f, previousY: 0f,
+            currentScale: 0.8f, currentRotationDegrees: 4f,
+            slotX: 1000f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 2.4f, restingAngleDegrees: 2.4f,
+            previousRotationDegrees: 4f, interactive: true, turnDrawBatch: true, frameSeconds: frameSeconds);
+        Assert.Equal(allowed, motion.X, 0.01f);
+        Assert.Equal(0f, motion.Y);
+        // The always-on rule never turns a card: the game's angle is left exactly as it wrote it.
+        Assert.Equal(4f, motion.RotationDegrees);
+        Assert.False(motion.ScaleCapped);
+    }
+
+    [Fact]
+    public void ATurnDrawOnlyMovesACardAlongTheLineToItsSlot()
+    {
+        // A native step in another direction is projected onto slot − previous and clamped to the same one-step share.
+        PortraitCombatMath.PortraitCardMotion sideways = PortraitCombatMath.CapCardArrival(
+            currentX: 0f, currentY: 50f, previousX: 0f, previousY: 0f,
+            currentScale: 0.8f, currentRotationDegrees: 0f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 0f, restingAngleDegrees: 0f,
+            previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
+        Assert.Equal(0f, sideways.X, 0.01f);
+        Assert.Equal(0f, sideways.Y, 0.01f);
+
+        PortraitCombatMath.PortraitCardMotion diagonal = PortraitCombatMath.CapCardArrival(
+            currentX: 100f, currentY: 100f, previousX: 0f, previousY: 0f,
+            currentScale: 0.8f, currentRotationDegrees: 0f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 0f, restingAngleDegrees: 0f,
+            previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
+        // The projection is 100 of the 100-unit line, clamped to 100 * 0.7 + 1 = 71.
+        Assert.Equal(71f, diagonal.X, 0.01f);
+        Assert.Equal(0f, diagonal.Y, 0.01f);
+    }
+
+    [Fact]
+    public void ATurnDrawTurnsACardOnlyTowardItsSlot()
+    {
+        // weight = 0.1 s × 7 = 0.7: at most 0.7 of the 5-degree gap plus a tenth of a degree may be taken this frame, and
+        // never a turn away from the slot.
+        PortraitCombatMath.PortraitCardMotion toward = PortraitCombatMath.CapCardArrival(
+            currentX: 90f, currentY: 0f, previousX: 0f, previousY: 0f,
+            currentScale: 0.8f, currentRotationDegrees: 20f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 5f, restingAngleDegrees: 5f,
+            previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
+        Assert.Equal(3.6f, toward.RotationDegrees, 0.001f);
+
+        PortraitCombatMath.PortraitCardMotion away = PortraitCombatMath.CapCardArrival(
+            currentX: 90f, currentY: 0f, previousX: 0f, previousY: 0f,
+            currentScale: 0.8f, currentRotationDegrees: -20f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 5f, restingAngleDegrees: 5f,
+            previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
+        Assert.Equal(0f, away.RotationDegrees);
+    }
+
+    [Fact]
+    public void DrawQuietWindowFollowsTheDeliveringGap()
+    {
+        // A turn draw with a known size gets the long patience; any other draw one pile tween plus half the gap it sees.
+        Assert.Equal(PortraitCombatMath.TurnDrawQuietMsec, PortraitCombatMath.DrawQuietWindowMsec(2000f, true));
+        Assert.Equal(PortraitCombatMath.DrawFirstAddQuietMsec, PortraitCombatMath.DrawQuietWindowMsec(0f, false));
+        Assert.Equal(PortraitCombatMath.DrawFirstAddQuietMsec, PortraitCombatMath.DrawQuietWindowMsec(200f, false));
+        Assert.Equal(1.5f * 1000f, PortraitCombatMath.DrawQuietWindowMsec(1000f, false), 0.01f);
+    }
+
+    [Fact]
+    public void StarBadgeHangsOnTheOrbsLowerLeftCorner()
+    {
+        (float x, float y) = PortraitCombatMath.StarBadgeCenter(500f, 300f, 200f, 200f);
+        Assert.Equal(500f + 200f * PortraitCombatMath.StarOrbOffsetX, x, 0.001f);
+        Assert.Equal(300f + 200f * PortraitCombatMath.StarOrbOffsetY, y, 0.001f);
+        Assert.True(x < 500f && y > 300f);
+
+        // The rail layout and the per-frame placement use the same formula.
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(2340f, stageTopY: 612f);
+        PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(2340f, bands);
+        float orbSize = PortraitCombatMath.EnergyOrbSize * hud.EnergyScale;
+        (float hudX, float hudY) = PortraitCombatMath.StarBadgeCenter(
+            hud.EnergyContainerX + PortraitCombatMath.EnergyOrbSize * 0.5f, hud.EnergyContainerY + 64f, orbSize, orbSize);
+        Assert.Equal(hud.StarCenterX, hudX, 0.001f);
+        Assert.Equal(hud.StarCenterY, hudY, 0.001f);
+    }
+
+    [Fact]
+    public void PierFramingPutsItsPlankLineOnTheFrontFootLine()
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(2340f, stageTopY: 612f);
+        const float artWidth = 1296f, artTop = 0f, artBottom = 1296f;
+        float plank = artBottom - (artBottom - artTop) * (861f / 1296f);
+        PortraitCombatMath.PortraitPierFraming framing = PortraitCombatMath.ComputePierFraming(
+            artWidth, artTop, artBottom, plank, 1080f, bands);
+
+        // The plank line lands exactly on the front foot line, and the art covers the canvas width.
+        Assert.Equal(bands.FrontFeetY, framing.OriginY + plank * framing.Scale, 0.01f);
+        Assert.True(artWidth * framing.Scale >= 1080f - 0.01f);
+        // The art also reaches the stage top, so no seam shows inside the stage.
+        Assert.True(framing.OriginY + artTop * framing.Scale <= bands.StageTopY + 0.01f);
+        Assert.Equal(framing.OriginY + PortraitCombatMath.PierFarEdgeArtY * framing.Scale, framing.FarEdgeY, 0.001f);
+
+        // A wider art needs less scale to cover the canvas, and the foot line still holds.
+        PortraitCombatMath.PortraitPierFraming wide = PortraitCombatMath.ComputePierFraming(
+            artWidth * 2f, artTop, artBottom, plank, 1080f, bands);
+        Assert.Equal(bands.FrontFeetY, wide.OriginY + plank * wide.Scale, 0.01f);
+        Assert.True(wide.Scale > 0f);
     }
 }

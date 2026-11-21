@@ -19,230 +19,258 @@ namespace STS2Mobile.GameHost;
 /// </summary>
 internal sealed class PortraitCombatLayout
 {
-/// <summary>
-/// Runs after the game's own process/tween steps and before the frame is drawn. It re-applies only what a native tween can
-/// move after the full rail pass (End Turn, the energy counter, the three piles, the star on the counter), and the hand
-/// only when its inputs changed; everything else on the rail is set once per state change.
-/// </summary>
-private void OnFramePreDraw()
-{
-    // The frame's timing bucket closes on every path, including the early returns (PortraitFrameTiming folds a frame only
-    // once, so a second call is harmless, but a missed one would carry this frame's passes into the next).
-    try
+    /// <summary>
+    /// Runs after the game's own process/tween steps and before the frame is drawn. It re-applies only what a native tween can
+    /// move after the full rail pass (End Turn, the energy counter, the three piles, the star on the counter), and the hand
+    /// only when its inputs changed; everything else on the rail is set once per state change.
+    /// </summary>
+    private void OnFramePreDraw()
     {
-        if (!SafeAreaCanvas.IsPortrait)
-            return;
-        CombatReflection refl = EnsureReflection();
-        if (refl.GetActiveCombatRoom() is not Control room || !GodotObject.IsInstanceValid(room) || !room.IsInsideTree())
-            return;
-        Control? ui = room.GetNodeOrNull<Control>("%CombatUi") ?? room.GetNodeOrNull<Control>("CombatUi");
-        if (ui == null || !ui.IsVisibleInTree())
-            return;
-
+        // The frame's timing bucket closes on every path, including the early returns (PortraitFrameTiming folds a frame only
+        // once, so a second call is harmless, but a missed one would carry this frame's passes into the next).
         try
         {
-            using (PortraitFrameTiming.Begin(PortraitFrameTiming.PreDraw))
+            if (!SafeAreaCanvas.IsPortrait)
+                return;
+            CombatReflection refl = EnsureReflection();
+            Control? room = refl.GetActiveCombatRoom() as Control;
+            if (room != null && (!GodotObject.IsInstanceValid(room) || !room.IsInsideTree()))
+                room = null;
+            Control? ui = room?.GetNodeOrNull<Control>("%CombatUi") ?? room?.GetNodeOrNull<Control>("CombatUi");
+            Control? hand = ui is { } liveUi && liveUi.IsVisibleInTree()
+                ? liveUi.GetNodeOrNull<Control>("%Hand") ?? liveUi.GetNodeOrNull<Control>("Hand")
+                : null;
+            if (room == null || ui == null || hand == null)
             {
-                EnsureRoomState(room, refl);
-                float canvasHeight = Math.Max(room.GetViewport().GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
-                PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 0f);
-                PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvasHeight, bands);
-                using (PortraitFrameTiming.Begin(PortraitFrameTiming.Rail))
+                // The room, its UI or the hand went away while a card was still losing its glow or shadow: put back anything
+                // the passes took away. The card pool does not reset these, so the card would draw them on its next use.
+                RestoreCardEffectsWithoutPass(refl);
+                return;
+            }
+
+            try
+            {
+                using (PortraitFrameTiming.Begin(PortraitFrameTiming.PreDraw))
                 {
-                    CorrectRailTweenPortrait(ui, room, refl, hud);
-                    ForceNewlyVisiblePiles(ui, refl, hud);
-                }
-                Control? hand = ui.GetNodeOrNull<Control>("%Hand") ?? ui.GetNodeOrNull<Control>("Hand");
-                if (hand != null)
+                    EnsureRoomState(room, refl);
+                    float canvasHeight = Math.Max(room.GetViewport().GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
+                    PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 0f);
+                    PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvasHeight, bands);
+                    using (PortraitFrameTiming.Begin(PortraitFrameTiming.Rail))
+                    {
+                        CorrectRailTweenPortrait(ui, room, refl, hud);
+                        ForceNewlyVisiblePiles(ui, refl, hud);
+                    }
                     using (PortraitFrameTiming.Begin(PortraitFrameTiming.Hand))
                         SyncHandAndPlayabilityPortrait(hand, refl, bands);
-                // The game writes its orb manager's own place and scale from the creature's bounds whenever it lays the
-                // creature out (NCreature.SetOrbManagerPosition), and that write lands after this frame's stage pass: the
-                // arc's fit is re-applied here, after every native process/tween step and before the draw, like the rail.
-                using (PortraitFrameTiming.Begin(PortraitFrameTiming.Orbs))
-                    RefitOrbArcs(room, refl);
+                    // The game writes its orb manager's own place and scale from the creature's bounds whenever it lays the
+                    // creature out (NCreature.SetOrbManagerPosition), and that write lands after this frame's stage pass: the
+                    // arc's fit is re-applied here, after every native process/tween step and before the draw, like the rail.
+                    using (PortraitFrameTiming.Begin(PortraitFrameTiming.Orbs))
+                        RefitOrbArcs(room, refl);
+                }
+            }
+            catch (Exception error)
+            {
+                GD.PrintErr("Portrait pre-draw rail layout failed: ", error.Message);
             }
         }
-        catch (Exception error)
+        finally
         {
-            GD.PrintErr("Portrait pre-draw rail layout failed: ", error.Message);
+            PortraitFrameTiming.EndFrame();
         }
     }
-    finally
-    {
-        PortraitFrameTiming.EndFrame();
-    }
-}
 
-/// <summary>
-/// Keeps every player's orb arc inside the canvas and under the run bars in the frame that is drawn: the arc's fit is a
-/// function of the orbs' settled positions, and the game re-places its own orb manager from the creature's bounds after
-/// the stage pass, so the fit has to be the last writer of the manager's transform.
-/// </summary>
-private void RefitOrbArcs(Control room, CombatReflection refl)
-{
-    if (!_orbsOnStage || _lastBands is not { } bands || refl.RoomCreatureNodesField?.GetValue(room) is not IEnumerable creatures)
-        return;
-    foreach (object? item in creatures)
+    /// <summary>
+    /// Puts back what the hand and playability passes may have taken away when they no longer run (the fight ended, the room
+    /// or its UI is gone, the hand is not there): a card's glow and shadow, an unplayable body's dim, a playable highlight's
+    /// boost. A card keeps its node through the pool, and the pool resets neither, so without this the card would be reused
+    /// later with no glow or shadow.
+    /// </summary>
+    private void RestoreCardEffectsWithoutPass(CombatReflection refl)
     {
-        if (item is not Control creature || !GodotObject.IsInstanceValid(creature) || creature.IsQueuedForDeletion())
-            continue;
-        object? entity = refl.CreatureEntityProp?.GetValue(creature);
-        if (entity == null || !refl.IsPlayerSide(entity) || !refl.CreatureHasOrbs(creature))
-            continue;
-        if (refl.CreatureOrbManagerProp?.GetValue(creature) is Control orbMgr && OrbCount(orbMgr) > 0)
-            KeepOrbArcOnCanvas(orbMgr, bands, SafeAreaCanvas.PortraitWidth);
-    }
-}
-
-/// <summary>
-/// The rail places a native show/hide tween can move after the full pass: the energy counter's own slide, the End Turn
-/// button, the three piles, and the star, which hangs off the counter's live rect. Nothing here runs on a frame where no
-/// tween moved: each place is only written when it differs.
-/// </summary>
-private void CorrectRailTweenPortrait(Control ui, Control room, CombatReflection refl, PortraitHudLayout hud)
-{
-    Control? energyCounter = refl.EnergyCounterField?.GetValue(ui) as Control;
-    if (energyCounter != null && GodotObject.IsInstanceValid(energyCounter))
-    {
-        if (energyCounter.Position != Vector2.Zero)
-            energyCounter.Position = Vector2.Zero;
-        if (refl.StarCounterField?.GetValue(ui) is Control starCounter && starCounter.IsVisibleInTree())
-            PlaceStarCounter(starCounter, energyCounter);
+        if (_reducedCardEffects.Count > 0)
+            RestoreAllReducedCardEffects();
+        if (_dimmedCardChildren.Count > 0 || _boostedHighlights.Count > 0)
+            RestoreAllDimmedCards(refl);
     }
 
-    if ((ui.GetNodeOrNull<Control>("%EndTurnButton") ?? ui.GetNodeOrNull<Control>("EndTurnButton")) is { } endTurn &&
-        GodotObject.IsInstanceValid(endTurn))
+    /// <summary>
+    /// Keeps every player's orb arc inside the canvas and under the run bars in the frame that is drawn: the arc's fit is a
+    /// function of the orbs' settled positions, and the game re-places its own orb manager from the creature's bounds after
+    /// the stage pass, so the fit has to be the last writer of the manager's transform.
+    /// </summary>
+    private void RefitOrbArcs(Control room, CombatReflection refl)
     {
-        if (refl.EndTurnPosTweenField?.GetValue(endTurn) is Tween posTween)
-        {
-            if (posTween.IsRunning()) posTween.Kill();
-            refl.EndTurnPosTweenField.SetValue(endTurn, null);
-        }
-        Vector2 target = EndTurnRailPosition(endTurn, refl, hud);
-        if (endTurn.Position != target)
-            endTurn.Position = target;
-    }
-
-    if ((ui.GetNodeOrNull<Control>("%PingButton") ?? ui.GetNodeOrNull<Control>("PingButton")) is { } pingBtn &&
-        GodotObject.IsInstanceValid(pingBtn) && pingBtn.Visible)
-    {
-        int pingState = Convert.ToInt32(refl.PingStateField?.GetValue(pingBtn) ?? 2);
-        if (refl.PingPosTweenField?.GetValue(pingBtn) is Tween pingTween)
-        {
-            if (pingTween.IsRunning()) pingTween.Kill();
-            refl.PingPosTweenField.SetValue(pingBtn, null);
-        }
-        Vector2 target = new(pingState == 2 ? 1140f : hud.PingShowX, hud.PingShowY);
-        if (pingBtn.Position != target)
-            pingBtn.Position = target;
-    }
-
-    if ((room.GetNodeOrNull<Control>("%ProceedButton") ?? room.GetNodeOrNull<Control>("ProceedButton")) is { } proceedBtn &&
-        GodotObject.IsInstanceValid(proceedBtn))
-    {
-        bool enabled = (bool)(refl.ButtonIsEnabledProp?.GetValue(proceedBtn) ?? false);
-        if (refl.ProceedAnimTweenField?.GetValue(proceedBtn) is Tween procTween)
-        {
-            if (procTween.IsRunning()) procTween.Kill();
-            refl.ProceedAnimTweenField.SetValue(proceedBtn, null);
-        }
-        float procW = Math.Max(200f, proceedBtn.Size.X);
-        Vector2 target = new(enabled ? hud.EndTurnShowX + 110f - procW * 0.5f : 1140f, hud.EndTurnShowY);
-        if (proceedBtn.Position != target)
-            proceedBtn.Position = target;
-    }
-
-    if ((ui.GetNodeOrNull<Control>("%CombatPileContainer") ?? ui.GetNodeOrNull<Control>("CombatPileContainer")) is { } pileContainer &&
-        GodotObject.IsInstanceValid(pileContainer))
-    {
-        CorrectPile(pileContainer, refl, "%DrawPile", "DrawPile",
-            new Vector2(hud.DrawShowX, hud.DrawShowY), new Vector2(hud.DrawHideX, hud.DrawHideY), hud.PileScale);
-        CorrectPile(pileContainer, refl, "%DiscardPile", "DiscardPile",
-            new Vector2(hud.DiscardShowX, hud.DiscardShowY), new Vector2(hud.DiscardHideX, hud.DiscardHideY), hud.PileScale);
-        CorrectPile(pileContainer, refl, "%ExhaustPile", "ExhaustPile",
-            new Vector2(hud.ExhaustShowX, hud.ExhaustShowY), new Vector2(hud.ExhaustHideX, hud.ExhaustShowY), hud.PileScale);
-    }
-}
-
-private static void CorrectPile(Control pileContainer, CombatReflection refl, string unique, string name,
-    Vector2 showPos, Vector2 hidePos, float scale)
-{
-    if ((pileContainer.GetNodeOrNull<Control>(unique) ?? pileContainer.GetNodeOrNull<Control>(name)) is not { } pile ||
-        !GodotObject.IsInstanceValid(pile) || !pile.IsVisibleInTree())
-        return;
-    LayoutPileButton(pile, refl, showPos, hidePos, scale);
-}
-
-/// <summary>
-/// The End Turn button's place on the rail: its own x while the fight runs, the hidden x once it is over (the Proceed
-/// button takes its place), clamped so the scaled button stays on the canvas.
-/// </summary>
-private static Vector2 EndTurnRailPosition(Control endTurn, CombatReflection refl, PortraitHudLayout hud)
-{
-    float showX = Math.Min(hud.EndTurnShowX, SafeAreaCanvas.PortraitWidth - HudEdgeMargin - 110f * (1f + hud.EndTurnScale));
-    int btnState = Convert.ToInt32(refl.EndTurnStateField?.GetValue(endTurn) ?? 2);
-    return new Vector2(btnState == 2 && refl.IsCombatOver() ? hud.EndTurnHideX : showX, hud.EndTurnShowY);
-}
-
-/// <summary>
-/// The star's place from the energy counter's live rect: native size and TopLeft anchors, hung on the orb's
-/// lower-left corner. The native size is captured once per star node, before any of our writes.
-/// </summary>
-private void PlaceStarCounter(Control starCounter, Control energyCounter)
-{
-    ulong starId = starCounter.GetInstanceId();
-    if (!_starNativeSizes.TryGetValue(starId, out Vector2 nativeSize))
-        _starNativeSizes[starId] = nativeSize = starCounter.Size;
-    // The node stays the counter's last child, so it draws in front of the orb's art and the "3/3".
-    starCounter.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
-    starCounter.Size = nativeSize;
-    Rect2 orb = energyCounter.GetGlobalRect();
-    Vector2 span = nativeSize * starCounter.GetGlobalTransform().Scale.Abs();
-    starCounter.GlobalPosition = orb.GetCenter()
-        + orb.Size * new Vector2(PortraitCombatMath.StarOrbOffsetX, PortraitCombatMath.StarOrbOffsetY)
-        - span * 0.5f;
-}
-
-/// <summary>
-/// A pile that first becomes visible after combat start (normally exhaust) gets the same entrance treatment as the
-/// initial draw/discard piles: no native desktop tween, placed on its rail show position from its first drawn frame.
-/// Later AnimOut tweens are left alone once the pile has been seen.
-/// </summary>
-private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitHudLayout hud)
-{
-    if ((ui.GetNodeOrNull<Control>("%CombatPileContainer") ?? ui.GetNodeOrNull<Control>("CombatPileContainer")) is not { } pileContainer)
-        return;
-    Check(pileContainer.GetNodeOrNull<Control>("%DrawPile") ?? pileContainer.GetNodeOrNull<Control>("DrawPile"),
-        new Vector2(hud.DrawShowX, hud.DrawShowY));
-    Check(pileContainer.GetNodeOrNull<Control>("%DiscardPile") ?? pileContainer.GetNodeOrNull<Control>("DiscardPile"),
-        new Vector2(hud.DiscardShowX, hud.DiscardShowY));
-    Check(pileContainer.GetNodeOrNull<Control>("%ExhaustPile") ?? pileContainer.GetNodeOrNull<Control>("ExhaustPile"),
-        new Vector2(hud.ExhaustShowX, hud.ExhaustShowY));
-
-    void Check(Control? pile, Vector2 show)
-    {
-        if (pile == null)
+        if (!_orbsOnStage || _lastBands is not { } bands || refl.RoomCreatureNodesField?.GetValue(room) is not IEnumerable creatures)
             return;
-        ulong id = pile.GetInstanceId();
-        bool visible = pile.IsVisibleInTree();
-        if (!visible)
+        foreach (object? item in creatures)
         {
-            _railVisiblePiles.Remove(id);
-            return;
+            if (item is not Control creature || !GodotObject.IsInstanceValid(creature) || creature.IsQueuedForDeletion())
+                continue;
+            object? entity = refl.CreatureEntityProp?.GetValue(creature);
+            if (entity == null || !refl.IsPlayerSide(entity) || !refl.CreatureHasOrbs(creature))
+                continue;
+            if (refl.CreatureOrbManagerProp?.GetValue(creature) is Control orbMgr && OrbCount(orbMgr) > 0)
+                KeepOrbArcOnCanvas(orbMgr, bands, SafeAreaCanvas.PortraitWidth);
         }
-        if (!_railVisiblePiles.Add(id))
-            return;
-        if (refl.PilePosTweenField?.GetValue(pile) is Tween tween)
-        {
-            if (tween.IsRunning()) tween.Kill();
-            refl.PilePosTweenField.SetValue(pile, null);
-        }
-        refl.PileShowPosField?.SetValue(pile, show);
-        refl.PileHidePosField?.SetValue(pile, show);
-        pile.Position = show;
     }
-}
+
+    /// <summary>
+    /// The rail places a native show/hide tween can move after the full pass: the energy counter's own slide, the End Turn
+    /// button, the three piles, and the star, which hangs off the counter's live rect. Nothing here runs on a frame where no
+    /// tween moved: each place is only written when it differs.
+    /// </summary>
+    private void CorrectRailTweenPortrait(Control ui, Control room, CombatReflection refl, PortraitHudLayout hud)
+    {
+        Control? energyCounter = refl.EnergyCounterField?.GetValue(ui) as Control;
+        if (energyCounter != null && GodotObject.IsInstanceValid(energyCounter))
+        {
+            if (energyCounter.Position != Vector2.Zero)
+                energyCounter.Position = Vector2.Zero;
+            if (refl.StarCounterField?.GetValue(ui) is Control starCounter && starCounter.IsVisibleInTree())
+                PlaceStarCounter(starCounter, energyCounter);
+        }
+
+        if ((ui.GetNodeOrNull<Control>("%EndTurnButton") ?? ui.GetNodeOrNull<Control>("EndTurnButton")) is { } endTurn &&
+            GodotObject.IsInstanceValid(endTurn))
+        {
+            if (refl.EndTurnPosTweenField?.GetValue(endTurn) is Tween posTween)
+            {
+                if (posTween.IsRunning()) posTween.Kill();
+                refl.EndTurnPosTweenField.SetValue(endTurn, null);
+            }
+            Vector2 target = EndTurnRailPosition(endTurn, refl, hud);
+            if (endTurn.Position != target)
+                endTurn.Position = target;
+        }
+
+        if ((ui.GetNodeOrNull<Control>("%PingButton") ?? ui.GetNodeOrNull<Control>("PingButton")) is { } pingBtn &&
+            GodotObject.IsInstanceValid(pingBtn) && pingBtn.Visible)
+        {
+            int pingState = Convert.ToInt32(refl.PingStateField?.GetValue(pingBtn) ?? 2);
+            if (refl.PingPosTweenField?.GetValue(pingBtn) is Tween pingTween)
+            {
+                if (pingTween.IsRunning()) pingTween.Kill();
+                refl.PingPosTweenField.SetValue(pingBtn, null);
+            }
+            Vector2 target = new(pingState == 2 ? 1140f : hud.PingShowX, hud.PingShowY);
+            if (pingBtn.Position != target)
+                pingBtn.Position = target;
+        }
+
+        if ((room.GetNodeOrNull<Control>("%ProceedButton") ?? room.GetNodeOrNull<Control>("ProceedButton")) is { } proceedBtn &&
+            GodotObject.IsInstanceValid(proceedBtn))
+        {
+            bool enabled = (bool)(refl.ButtonIsEnabledProp?.GetValue(proceedBtn) ?? false);
+            if (refl.ProceedAnimTweenField?.GetValue(proceedBtn) is Tween procTween)
+            {
+                if (procTween.IsRunning()) procTween.Kill();
+                refl.ProceedAnimTweenField.SetValue(proceedBtn, null);
+            }
+            float procW = Math.Max(200f, proceedBtn.Size.X);
+            Vector2 target = new(enabled ? hud.EndTurnShowX + 110f - procW * 0.5f : 1140f, hud.EndTurnShowY);
+            if (proceedBtn.Position != target)
+                proceedBtn.Position = target;
+        }
+
+        if ((ui.GetNodeOrNull<Control>("%CombatPileContainer") ?? ui.GetNodeOrNull<Control>("CombatPileContainer")) is { } pileContainer &&
+            GodotObject.IsInstanceValid(pileContainer))
+        {
+            CorrectPile(pileContainer, refl, "%DrawPile", "DrawPile",
+                new Vector2(hud.DrawShowX, hud.DrawShowY), new Vector2(hud.DrawHideX, hud.DrawHideY), hud.PileScale);
+            CorrectPile(pileContainer, refl, "%DiscardPile", "DiscardPile",
+                new Vector2(hud.DiscardShowX, hud.DiscardShowY), new Vector2(hud.DiscardHideX, hud.DiscardHideY), hud.PileScale);
+            CorrectPile(pileContainer, refl, "%ExhaustPile", "ExhaustPile",
+                new Vector2(hud.ExhaustShowX, hud.ExhaustShowY), new Vector2(hud.ExhaustHideX, hud.ExhaustShowY), hud.PileScale);
+        }
+    }
+
+    private static void CorrectPile(Control pileContainer, CombatReflection refl, string unique, string name,
+        Vector2 showPos, Vector2 hidePos, float scale)
+    {
+        if ((pileContainer.GetNodeOrNull<Control>(unique) ?? pileContainer.GetNodeOrNull<Control>(name)) is not { } pile ||
+            !GodotObject.IsInstanceValid(pile) || !pile.IsVisibleInTree())
+            return;
+        LayoutPileButton(pile, refl, showPos, hidePos, scale);
+    }
+
+    /// <summary>
+    /// The End Turn button's place on the rail: its own x while the fight runs, the hidden x once it is over (the Proceed
+    /// button takes its place), clamped so the scaled button stays on the canvas.
+    /// </summary>
+    private static Vector2 EndTurnRailPosition(Control endTurn, CombatReflection refl, PortraitHudLayout hud)
+    {
+        float showX = Math.Min(hud.EndTurnShowX, SafeAreaCanvas.PortraitWidth - HudEdgeMargin - 110f * (1f + hud.EndTurnScale));
+        int btnState = Convert.ToInt32(refl.EndTurnStateField?.GetValue(endTurn) ?? 2);
+        return new Vector2(btnState == 2 && refl.IsCombatOver() ? hud.EndTurnHideX : showX, hud.EndTurnShowY);
+    }
+
+    /// <summary>
+    /// The star's place from the energy counter's live rect: native size and TopLeft anchors, hung on the orb's
+    /// lower-left corner. The native size is captured once per star node, before any of our writes. The target is computed
+    /// first and each property is only written when it differs, so a settled star costs a rect read and no layout
+    /// invalidation (the node is the counter's last child, so it already draws in front of the orb and the "3/3").
+    /// </summary>
+    private void PlaceStarCounter(Control starCounter, Control energyCounter)
+    {
+        ulong starId = starCounter.GetInstanceId();
+        if (!_starNativeSizes.TryGetValue(starId, out Vector2 nativeSize))
+            _starNativeSizes[starId] = nativeSize = starCounter.Size;
+        Rect2 orb = energyCounter.GetGlobalRect();
+        Vector2 span = nativeSize * starCounter.GetGlobalTransform().Scale.Abs();
+        (float centerX, float centerY) = PortraitCombatMath.StarBadgeCenter(
+            orb.GetCenter().X, orb.GetCenter().Y, orb.Size.X, orb.Size.Y);
+        var target = new Vector2(centerX, centerY) - span * 0.5f;
+
+        if (starCounter.AnchorLeft != 0f || starCounter.AnchorTop != 0f ||
+            starCounter.AnchorRight != 0f || starCounter.AnchorBottom != 0f)
+            starCounter.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+        if (starCounter.Size != nativeSize)
+            starCounter.Size = nativeSize;
+        if (starCounter.GlobalPosition != target)
+            starCounter.GlobalPosition = target;
+    }
+
+    /// <summary>
+    /// A pile that first becomes visible after combat start (normally exhaust) gets the same entrance treatment as the
+    /// initial draw/discard piles: no native desktop tween, placed on its rail show position from its first drawn frame.
+    /// Later AnimOut tweens are left alone once the pile has been seen.
+    /// </summary>
+    private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitHudLayout hud)
+    {
+        if ((ui.GetNodeOrNull<Control>("%CombatPileContainer") ?? ui.GetNodeOrNull<Control>("CombatPileContainer")) is not { } pileContainer)
+            return;
+        Check(pileContainer.GetNodeOrNull<Control>("%DrawPile") ?? pileContainer.GetNodeOrNull<Control>("DrawPile"),
+            new Vector2(hud.DrawShowX, hud.DrawShowY));
+        Check(pileContainer.GetNodeOrNull<Control>("%DiscardPile") ?? pileContainer.GetNodeOrNull<Control>("DiscardPile"),
+            new Vector2(hud.DiscardShowX, hud.DiscardShowY));
+        Check(pileContainer.GetNodeOrNull<Control>("%ExhaustPile") ?? pileContainer.GetNodeOrNull<Control>("ExhaustPile"),
+            new Vector2(hud.ExhaustShowX, hud.ExhaustShowY));
+
+        void Check(Control? pile, Vector2 show)
+        {
+            if (pile == null)
+                return;
+            ulong id = pile.GetInstanceId();
+            bool visible = pile.IsVisibleInTree();
+            if (!visible)
+            {
+                _railVisiblePiles.Remove(id);
+                return;
+            }
+            if (!_railVisiblePiles.Add(id))
+                return;
+            if (refl.PilePosTweenField?.GetValue(pile) is Tween tween)
+            {
+                if (tween.IsRunning()) tween.Kill();
+                refl.PilePosTweenField.SetValue(pile, null);
+            }
+            refl.PileShowPosField?.SetValue(pile, show);
+            refl.PileHidePosField?.SetValue(pile, show);
+            pile.Position = show;
+        }
+    }
 
     public PortraitCombatLayout()
     {
@@ -250,6 +278,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // run after the normal process pass, so the per-draw rail correction belongs here.
         RenderingServer.FramePreDraw += OnFramePreDraw;
     }
+
+    /// <summary>Takes the pre-draw correction out of the rendering server when the phone host is detached.</summary>
+    public void Detach() => RenderingServer.FramePreDraw -= OnFramePreDraw;
 
     public const string CombatRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom";
     private const string ConfirmButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NConfirmButton";
@@ -385,21 +416,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// <summary>The game's hand limit (<c>CardPile.MaxCardsInHand</c>).</summary>
     private const int HandCardLimit = 10;
 
-    /// <summary>
-    /// How long the first card of a draw may stand alone before the hand stops waiting for the rest of it, in process
-    /// time: one pile tween (250 ms, 100 ms in fast mode) plus the long frames of a slow device.
-    /// </summary>
-    private const double HandDrawFirstAddMsec = 400.0;
-
-    /// <summary>How much longer than the gap the draw is actually delivering at the next card may take.</summary>
-    private const double HandDrawIntervalFactor = 1.5;
-
-    /// <summary>
-    /// How long a turn draw with a known size waits after its last arrival before giving up on the rest (the draw came up
-    /// short, e.g. the pile ran out): long enough that a slow device's gaps between arrivals never end the draw early.
-    /// </summary>
-    private const double TurnDrawQuietMsec = 3000.0;
-
     /// <summary>The largest single frame counted into the draw's clock, so one load hitch cannot end a draw early.</summary>
     private const double HandDrawMaxFrameMsec = 100.0;
 
@@ -451,14 +467,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private int _turnDrawCount = -1;
     private bool _turnDrawInnate;
     private bool _turnDrawPending;
-    // Temporary: prints the draw's first frames so one run can prove the lock and the motion cap. Remove once proven.
-    private const bool DiagnoseHandDraw = false;
-    private int _diagnoseFrames;
-    private bool _diagnoseNeedsPass;
-    private double _diagnoseFrameMsec;
-    private float _diagnoseStep;
-    private float _diagnoseAllowed;
-    private float _diagnoseWeight;
     private double _handBatchMsec;
     private double _handAddIntervalMsec;
     private bool _handDirty;
@@ -535,7 +543,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private readonly Dictionary<ulong, Control.MouseFilterEnum> _endTurnFilters = new();
     private readonly Dictionary<ulong, ControlDesktopState> _selectionControls = new();
     private readonly Dictionary<ulong, SelectionHolderEase> _selectionHolderEase = new();
-    private readonly Dictionary<ulong, Vector2> _selectionHolderScales = new();
+    private readonly Dictionary<ulong, (Vector2 Position, Vector2 Scale)> _selectionHolderOriginals = new();
     private ulong _selectionSession;
     private long _selectionFrame = -1;
     private PortraitSelectedCardsLayout _selectionTarget;
@@ -544,20 +552,15 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private float _selectionCenterY;
     private float _selectionPromptBottom;
     private readonly Dictionary<ulong, (Vector2 Position, Vector2 Scale)> _bossArmOriginals = new();
-    private readonly Dictionary<ulong, BossArmFit> _bossArmFits = new();
     private bool _crabArmFitFrozen;
     private CombatReflection? _reflection;
 
     private const string KaiserCrabBackgroundTypeName = "MegaCrit.Sts2.Core.Nodes.Vfx.Backgrounds.NKaiserCrabBossBackground";
-    private const string CrabSkeletonNodeName = "KaiserCrab";
     private const string BackdropNodeName = "PortraitCombatBackdrop";
     private const string ForegroundVisibleMeta = "portrait_foreground_visible";
     // The Underdocks deck's plank line sits 320 units from the container origin in the authored 1296-tall layer art, i.e.
     // 861 units above the art's bottom. Measured from the art so any Underdocks layer background keeps its own plank line.
     private const float PlankFromBottomFraction = 861f / 1296f;
-    // The Underdocks pier's visible far edge in the pier layer's own art space, calibrated from the 9:19.5 captures (~740
-    // canvas at the pier transform). Back ranks stand between this line and the plank surface.
-    private const float PierFarEdgeArtY = -27f;
     private const string DecimillipedeSegmentTypeName = "DecimillipedeSegment";
     private const string CrusherMonsterTypeName = "Crusher";
     private const string RocketMonsterTypeName = "Rocket";
@@ -638,11 +641,14 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         CombatReflection refl = EnsureReflection();
 
         FitCombatFtueModal(root, portrait: false);
-        RestoreAllDimmedCards(refl);
+        // The reduce restore writes each card the width the game would show at rest; the dim restore resets boosted widths
+        // to the game's own 0.075 and clears the boost set, so it must run first or a playable card keeps the portrait boost.
         RestoreAllReducedCardEffects();
+        RestoreAllDimmedCards(refl);
         RestoreEndTurnFilters();
         RestoreSelectionUi();
         RestoreBackgroundBosses();
+        _warmup.Stop();
 
         foreach ((ulong labelId, int fontSize) in _enlargedFonts)
         {
@@ -650,6 +656,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 label.AddThemeFontSizeOverride("font_size", fontSize);
         }
         _enlargedFonts.Clear();
+        _enlargedPowerAmounts.Clear();
 
         foreach ((ulong creatureId, CreatureDesktopState state) in _creatures)
         {
@@ -673,6 +680,39 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
         _rooms.Clear();
         _failedRooms.Clear();
+        // The rail and hand bookkeeping belongs to the fight that just ended: a later portrait session in the same room
+        // must force the piles' entrance and place every pile again, and a returning card must start from the draw pile
+        // rather than be capped against where it stood before the leave.
+        _railEntranceRooms.Clear();
+        _railVisiblePiles.Clear();
+        ResetHandSession();
+        _stillness.Clear();
+    }
+
+    /// <summary>
+    /// Forgets the draw and turn bookkeeping of the hand session that is ending, so the next portrait session reads its
+    /// first draw from scratch: a stale count lock would hold the row at the old size, a stale turn number would swallow
+    /// the new turn's draw, and stale "last" inputs would suppress the first pass's work.
+    /// </summary>
+    private void ResetHandSession()
+    {
+        _handDrawBatch = false;
+        _turnDrawBatch = false;
+        _handCountLock = 0;
+        _handAddIntervalMsec = 0.0;
+        _handBatchMsec = 0.0;
+        _turnDrawCount = -1;
+        _turnDrawInnate = false;
+        _turnDrawPending = false;
+        _lastHandHolderCount = 0;
+        _lastPlayerTurnNumber = 0;
+        _lastHandBands = null;
+        _lastHandFlat = _flatHand;
+        _lastInCardPlay = false;
+        _lastPressedHolder = 0;
+        _lastReduceEffects = false;
+        _handLastMotionFrame = long.MinValue / 4;
+        _handDirty = true;
     }
 
     public void PruneDead()
@@ -717,6 +757,11 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         foreach (ulong id in dead) _enlargedFonts.Remove(id);
 
         dead.Clear();
+        foreach (ulong id in _enlargedPowerAmounts)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _enlargedPowerAmounts.Remove(id);
+
+        dead.Clear();
         foreach (ulong id in _endTurnFilters.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _endTurnFilters.Remove(id);
@@ -757,9 +802,24 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         foreach (ulong id in dead) _wiredCombatUis.Remove(id);
 
         dead.Clear();
+        foreach (ulong id in _wiredPowerContainers.Keys)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _wiredPowerContainers.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _wiredVfxContainers)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _wiredVfxContainers.Remove(id);
+
+        dead.Clear();
         foreach (ulong id in _railEntranceRooms)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _railEntranceRooms.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _railVisiblePiles)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _railVisiblePiles.Remove(id);
 
         dead.Clear();
         foreach (ulong id in _selectionHolderEase.Keys)
@@ -767,9 +827,14 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         foreach (ulong id in dead) _selectionHolderEase.Remove(id);
 
         dead.Clear();
-        foreach (ulong id in _selectionHolderScales.Keys)
+        foreach (ulong id in _selectionHolderOriginals.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
-        foreach (ulong id in dead) _selectionHolderScales.Remove(id);
+        foreach (ulong id in dead) _selectionHolderOriginals.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _bossArmOriginals.Keys)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _bossArmOriginals.Remove(id);
 
         dead.Clear();
         foreach (ulong id in _starNativeSizes.Keys)
@@ -1191,12 +1256,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 // A size is known from here on: the batch becomes a turn draw's, which means the long patience below
                 // (a slow device delivers its cards far apart) and the direction lock in CapArrivalMotion.
                 _turnDrawBatch = _handCountLock > 0;
-                if (DiagnoseHandDraw)
-                {
-                    GD.Print($"[Portrait hand] turn={playerTurn} hook={_turnDrawCount} expected={expected} " +
-                        $"lock={_handCountLock} before={_lastHandHolderCount} batch={_handDrawBatch}");
-                    _diagnoseFrames = 6;
-                }
             }
             _handBatchMsec = 0.0;
         }
@@ -1245,18 +1304,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             || frame - _handLastPassFrame >= HandIdlePassFrames;
         PortraitFrameTiming.SetCards(activeHolders.Count);
         PortraitFrameTiming.SetDrawing(_handDrawBatch);
-        _diagnoseNeedsPass = needsPass;
-        _diagnoseFrameMsec = frameMsec;
         if (!needsPass)
-        {
-            if (DiagnoseHandDraw && _diagnoseFrames > 0)
-            {
-                _diagnoseFrames--;
-                GD.Print($"[Portrait hand] frame={frame} needsPass=False dt={frameMsec:F1}ms " +
-                    $"lock={_handCountLock} batch={_handDrawBatch} cards={activeHolders.Count}");
-            }
             return;
-        }
         _handDirty = false;
         _handLastPassFrame = frame;
         _lastInCardPlay = inCardPlay;
@@ -1372,20 +1421,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // see the hand move; decide again now, with it moving, so not even that frame is held at the idle rate.
         if (_handMoving) PhoneFrameCap.Apply();
 
-        if (DiagnoseHandDraw && _diagnoseFrames > 0)
-        {
-            _diagnoseFrames--;
-            GD.Print($"[Portrait hand] frame={frame} needsPass={_diagnoseNeedsPass} dt={_diagnoseFrameMsec:F1}ms " +
-                $"lock={_handCountLock} batch={_handDrawBatch} cards={activeHolders.Count} handCount={handCount} " +
-                $"step={_diagnoseStep:F1} allowed={_diagnoseAllowed:F1} weight={_diagnoseWeight:F3}");
-        }
-
         // The batch closes on the count it was waiting for, or when the draw stops arriving: a turn draw with a known size
         // gets the long patience, so a slow device's gaps between its cards never end it early (only a draw that comes up
         // short, e.g. the pile ran out, does); every other batch keeps the adaptive quiet window, which follows the gap the
         // draw is actually delivering at.
         if (_handDrawBatch && (_handCountLock > 0 && activeHolders.Count >= _handCountLock
-                || _handBatchMsec > (_turnDrawBatch ? TurnDrawQuietMsec : QuietWindowMsec())))
+                || _handBatchMsec > PortraitCombatMath.DrawQuietWindowMsec((float)_handAddIntervalMsec, _turnDrawBatch)))
         {
             // The hand reached the draw size, or the draw stopped arriving. A hand that ended up smaller than the draw size
             // is centred now, from the left, which is the only direction it can move: nothing is ever sent right of where
@@ -1459,15 +1500,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     }
 
     /// <summary>
-    /// How long the draw may go without a new card before the hand stops waiting for the rest of it: the gap it has been
-    /// delivering at (plus half), or one pile tween plus a slow device's frames while that gap is not known yet.
-    /// </summary>
-    private double QuietWindowMsec() =>
-        _handAddIntervalMsec > 1.0
-            ? Math.Max(HandDrawFirstAddMsec, _handAddIntervalMsec * HandDrawIntervalFactor)
-            : HandDrawFirstAddMsec;
-
-    /// <summary>
     /// The draw pile's point in the holder container's coordinates: where the game starts a drawn card, taken from the pile
     /// node the player sees. Only asked for on a holder's first pass.
     /// </summary>
@@ -1487,86 +1519,32 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     }
 
     /// <summary>
-    /// Two rules for a card's drawn transform, in one place.
-    /// <para>Always: no drawn frame draws a card further than one step of the game's own animation toward its portrait slot —
-    /// <c>clamp(dt·7)</c> of the distance it had left at the last pass, plus a unit — and no frame draws it larger than its
-    /// resting scale. This is what keeps the game's own retargets off the screen until the next pass applies the portrait
-    /// slot: the synchronous first step of a press's desktop hover target, a re-layout on an add, a card put back. A card
-    /// that is gliding normally is never touched.</para>
-    /// <para>While a turn draw's batch is open, for a card the player is not holding: the step may only go along the line
-    /// to the slot (the frame's displacement is projected on <c>slot − previous</c> and clamped to the same one-step share),
-    /// so a native step in another direction is never drawn; a card within 2 u of its slot is settled exactly onto it (the
-    /// last native step is under a unit, so a card could otherwise stay a fraction short of its slot for ever); and the
-    /// angle may only turn toward the slot's.</para>
+    /// Applies <see cref="PortraitCombatMath.CapCardArrival"/>: the pure rule decides where one frame may draw the card, and
+    /// only what differs is written (a set on the same float still dirties the transform and re-pins the card).
     /// </summary>
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
         CombatReflection refl, bool interactive, float restingAngle)
     {
-        if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
-        {
-            holder.Scale = new Vector2(slot.Scale, slot.Scale);
-            refl.HolderTargetScaleField?.SetValue(holder, new Vector2(slot.Scale, slot.Scale));
-        }
         Vector2 previous = _stillness.PreviousPosition(holder, holder.Position);
-        float weight = Mathf.Clamp((float)hand.GetProcessDeltaTime() * 7f, 0f, 1f);
-        Vector2 toSlot = slotPosition - previous;
-        float length = toSlot.Length();
-        _diagnoseStep = holder.Position.DistanceTo(previous);
-        _diagnoseWeight = weight;
-        _diagnoseAllowed = length * weight + 1f;
-        if (length <= 2f)
+        PortraitCombatMath.PortraitCardMotion motion = PortraitCombatMath.CapCardArrival(
+            holder.Position.X, holder.Position.Y, previous.X, previous.Y,
+            MathF.Max(holder.Scale.X, holder.Scale.Y), holder.RotationDegrees,
+            slotPosition.X, slotPosition.Y, slot.Scale, slot.AngleDegrees, restingAngle,
+            _stillness.PreviousRotation(holder, holder.RotationDegrees),
+            interactive, _turnDrawBatch, (float)hand.GetProcessDeltaTime());
+        if (motion.ScaleCapped || motion.Settled)
         {
-            // The card has arrived: settle it exactly onto its slot and hold it there, whatever the game wrote this frame.
-            // The native position loop stops within a unit of its target, so a card that arrived a fraction short and was
-            // only held at its previous place could stay short for ever — and the stall detector kept restarting the
-            // loop for it, one CancellationTokenSource and Task per pass. A 2 u move is invisible. This is also the
-            // settled card a release, an add or a focus nudges with the first step of a native retarget, and it was the
-            // only motion a still hand showed on the phone. A value the game did not change is not written back: a set on
-            // the same float still dirties the control's transform and its render item, and a draw re-pins every landed
-            // card on every frame of its batch.
-            if (holder.Position != slotPosition)
-                holder.Position = slotPosition;
-            if (holder.RotationDegrees != restingAngle)
-                holder.RotationDegrees = restingAngle;
-            var restScale = new Vector2(slot.Scale, slot.Scale);
+            var restScale = new Vector2(motion.Scale, motion.Scale);
             if (holder.Scale != restScale)
                 holder.Scale = restScale;
-            return;
+            if (motion.ScaleCapped)
+                refl.HolderTargetScaleField?.SetValue(holder, restScale);
         }
-        if (interactive || !_turnDrawBatch)
-        {
-            // The always-on rule: a step longer than one native step is shortened, in whatever direction it took.
-            float step = _diagnoseStep;
-            if (step > _diagnoseAllowed)
-            {
-                Vector2 capped = previous + (holder.Position - previous) * (_diagnoseAllowed / step);
-                if (capped != holder.Position)
-                    holder.Position = capped;
-            }
-            return;
-        }
-        Vector2 direction = toSlot / length;
-        float travelled = (holder.Position - previous).Dot(direction);
-        Vector2 pinned = previous + direction * Mathf.Clamp(travelled, 0f, length * weight + 1f);
-        if (pinned != holder.Position)
-            holder.Position = pinned;
-
-        float seenAngle = _stillness.PreviousRotation(holder, holder.RotationDegrees);
-        float turnToSlot = slot.AngleDegrees - seenAngle;
-        float turned;
-        if (Mathf.Abs(turnToSlot) <= 0.1f)
-        {
-            turned = seenAngle;
-        }
-        else
-        {
-            float sign = MathF.Sign(turnToSlot);
-            float along = (holder.RotationDegrees - seenAngle) * sign;
-            float most = Mathf.Abs(turnToSlot) * weight + 0.1f;
-            turned = seenAngle + sign * Mathf.Clamp(along, 0f, most);
-        }
-        if (turned != holder.RotationDegrees)
-            holder.RotationDegrees = turned;
+        var target = new Vector2(motion.X, motion.Y);
+        if (holder.Position != target)
+            holder.Position = target;
+        if (holder.RotationDegrees != motion.RotationDegrees)
+            holder.RotationDegrees = motion.RotationDegrees;
     }
 
     /// <summary>
@@ -1745,7 +1723,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         {
             _selectionSession = selectedId;
             _selectionHolderEase.Clear();
-            _selectionHolderScales.Clear();
+            _selectionHolderOriginals.Clear();
             _selectionFrame = -1;
             _selectionTargetReady = false;
             _selectionTargetCount = -1;
@@ -1793,7 +1771,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         {
             Control holder = holders[i];
             ulong holderId = holder.GetInstanceId();
-            _selectionHolderScales.TryAdd(holderId, holder.Scale);
+            _selectionHolderOriginals.TryAdd(holderId, (holder.Position, holder.Scale));
 
             int row = i / columns;
             int column = i % columns;
@@ -1923,12 +1901,18 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// <summary>Puts the native selection nodes back when selection ends or portrait is left.</summary>
     private void RestoreSelectionUi()
     {
-        foreach ((ulong holderId, Vector2 scale) in _selectionHolderScales)
+        foreach ((ulong holderId, (Vector2 position, Vector2 scale)) in _selectionHolderOriginals)
         {
             if (GodotObject.InstanceFromId(holderId) is Control holder && GodotObject.IsInstanceValid(holder))
-                holder.Scale = scale;
+            {
+                // The holder's place and size belong to the native row: the portrait grid wrote both, so both go back.
+                if (holder.Position != position)
+                    holder.Position = position;
+                if (holder.Scale != scale)
+                    holder.Scale = scale;
+            }
         }
-        _selectionHolderScales.Clear();
+        _selectionHolderOriginals.Clear();
         _selectionHolderEase.Clear();
         _selectionSession = 0;
         _selectionFrame = -1;
@@ -3061,25 +3045,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             plan.CrowdComputed = true;
 
-            // One scale for the whole row (the boss excepted), the tightest fit any starting peer needs; a body spawned
-            // into a later slot is fitted to that slot's cell so it cannot spill onto its neighbours.
-            float rowScale = 0f;
-            foreach (Control enemy in currentEnemies)
-            {
-                if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex) || slotIndex >= plan.Capacity)
-                    continue;
-                if (plan.BackBoss && slotIndex == plan.CrowdBoss)
-                    continue;
-                int cellIndex = plan.CrowdMap[slotIndex];
-                float fit = CrowdCellFit(enemy, plan.Crowd, cellIndex, refl, bands);
-                rowScale = rowScale <= 0f ? fit : Math.Min(rowScale, fit);
-            }
-            plan.RowScale = rowScale > 0f ? Math.Max(rowScale, PortraitCombatMath.MinBodyScale) : 0.82f;
-            plan.RowScaleComputed = true;
-
-            // A1: one shared body scale for the encounter (plus the authored-size floor), then the encounter's own body
+            // One shared body scale for the encounter (plus the authored-size floor), then the encounter's own body
             // multiplier. It is still capped by the tightest cell so bodies cannot leave their cells; the boss keeps its own
-            // frame (and the Ovicopter its back rank).
+            // frame (and the Ovicopter its back rank). Every peer is later drawn at <c>min(shared, its own cell fit)</c>.
             float target = plan.BodyTargetScale > 0f
                 ? plan.BodyTargetScale
                 : PortraitCombatMath.MaxBodyScale;
@@ -3162,34 +3130,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 plan.StaggerWidths = new float[count];
                 plan.StaggerHeights = new float[count];
                 plan.StaggerBars = new float[count];
-                plan.StaggerScales = new float[count];
-                var slotFit = new float[count];
                 for (int i = 0; i < count; i++)
                 {
                     plan.StaggerSlots[i] = temp[i].Slot;
                     plan.StaggerWidths[i] = temp[i].W;
                     plan.StaggerHeights[i] = temp[i].H;
                     plan.StaggerBars[i] = temp[i].Bar;
-                    foreach (Control enemy in currentEnemies)
-                    {
-                        if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex) || slotIndex != i)
-                            continue;
-                        slotFit[i] = CellFit(enemy, temp[i].W, temp[i].H, refl, bands);
-                        break;
-                    }
-                }
-                // One shared scale per rank (row depth), from the enemies present at freeze.
-                for (int i = 0; i < count; i++)
-                {
-                    int depth = plan.StaggerSlots[i].RowDepth;
-                    float rankScale = 0f;
-                    for (int j = 0; j < count; j++)
-                    {
-                        if (plan.StaggerSlots[j].RowDepth != depth || slotFit[j] <= 0f)
-                            continue;
-                        rankScale = rankScale <= 0f ? slotFit[j] : Math.Min(rankScale, slotFit[j]);
-                    }
-                    plan.StaggerScales[i] = rankScale > 0f ? rankScale : 0.82f;
                 }
                 plan.Staggered = true;
             }
@@ -3265,17 +3211,55 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             (float maxW, float maxH, float minLeft, float maxRight) = EnemySlotLimits(plan, slotIndex, enemyLeft);
             float maxBar = EnemyBarLimit(plan, slotIndex);
             float forceScale = 0f;
-            if (!overflow && plan.TallFormation.Length > 0 && slotIndex < plan.TallFormation.Length)
+            // One chain: the Ovicopter's own back slot and the staggered pair rows come before the crowded row they are
+            // carved out of, so exactly one rule lays each enemy out and none is written twice in a frame.
+            if (!overflow && plan.OviFight && slotIndex == plan.OviSlot && plan.CrowdComputed &&
+                slotIndex < plan.CrowdMap.Length)
             {
-                slot = plan.TallFormation[slotIndex];
-                (maxW, maxH, minLeft, maxRight) = PortraitCombatMath.TallFormationFrame(plan.TallFormation, slotIndex, bands);
-                maxBar = Math.Max(90f, maxW - 6f);
+                // The Ovicopter slot at both shapes: an upper back slot over the right end of the egg row, 0.43W wide and
+                // 170 units above the floor at 9:16, 0.55W wide and 257 units above it at 9:19.5. The flyer is drawn as
+                // large as the room scale allows once its intent row is kept just under the potion/relic header, never
+                // under the header itself.
+                float oviFrameW = (bands.Compact ? 0.43f : 0.55f) * SafeAreaCanvas.PortraitWidth;
+                float oviLift = bands.Compact ? 170f : 257f;
+                float oviFeet = bands.FrontFeetY - oviLift;
+                if (bands.Compact)
+                {
+                    // The egg row stands on the front line with its intent row drawn above it, and the flyer's whole HUD
+                    // box (bar plus the HP value under it) hangs under its own feet: at 9:16 that box was drawn inside
+                    // those intents. Stand the flyer high enough that the box's bottom clears the row by 4; maxH below
+                    // keeps its own intent row under the header floor, and the frame it leaves decides its scale.
+                    float eggIntentTop = bands.FrontFeetY - PortraitBands.MinTarget - EggIntentRise;
+                    float hudDrop = BarBandClearance + EnemyHudBoxHeight;
+                    oviFeet = Math.Min(oviFeet, eggIntentTop - 4f - hudDrop);
+                }
+                float oviX = (bands.Compact ? 0.76f : 0.70f) * SafeAreaCanvas.PortraitWidth;
+                slot = new PortraitCreatureSlot(oviX, oviFeet, 0.94f, 0);
+                float hudFloor = PortraitHudFloorY(bands);
+                maxW = oviFrameW;
+                maxH = Math.Max(180f, oviFeet - (hudFloor + (bands.Compact ? OviIntentRise : IntentBandHeight)));
+                maxBar = Math.Min(oviFrameW, bands.Compact ? 360f : 480f);
+                minLeft = Math.Max(StageSideMargin, oviX - maxW * 0.5f);
+                maxRight = Math.Min(SafeAreaCanvas.PortraitWidth - 8f, oviX + maxW * 0.5f);
+                Vector2 oviNative = refl.GetCreatureFootprintSize(enemy);
+                float fitW = oviNative.X > 1f ? maxW / oviNative.X : PortraitCombatMath.MaxBodyScale;
+                float fitH = oviNative.Y > 1f ? maxH / oviNative.Y : PortraitCombatMath.MaxBodyScale;
+                float roomScale = plan.BodyScaleFrozen ? plan.FrozenBodyScale : plan.BodyTargetScale;
+                forceScale = Math.Min(roomScale, Math.Min(fitW, fitH));
+            }
+            else if (!overflow && plan.Staggered && slotIndex < plan.Capacity)
+            {
+                slot = plan.StaggerSlots[slotIndex];
+                maxW = plan.StaggerWidths[slotIndex];
+                maxH = plan.StaggerHeights[slotIndex];
+                maxBar = plan.StaggerBars[slotIndex];
                 float fit = CellFit(enemy, maxW, maxH, refl, bands);
                 float shared = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
-                forceScale = fit >= shared - 0.02f ? shared : Math.Min(shared, fit);
+                forceScale = Math.Min(shared, fit);
+                minLeft = plan.CrowdLeft;
+                maxRight = SafeAreaCanvas.PortraitWidth - 8f;
             }
-            bool oviUpper = false;
-            if (!overflow && !oviUpper && plan.CrowdEnabled && plan.CrowdComputed)
+            else if (!overflow && plan.CrowdEnabled && plan.CrowdComputed)
             {
                 if (plan.BackBoss && slotIndex == plan.CrowdBoss)
                 {
@@ -3321,53 +3305,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     }
                 }
             }
-            if (!overflow && plan.Staggered && slotIndex < plan.Capacity)
+            else if (!overflow && plan.TallFormation.Length > 0 && slotIndex < plan.TallFormation.Length)
             {
-                slot = plan.StaggerSlots[slotIndex];
-                maxW = plan.StaggerWidths[slotIndex];
-                maxH = plan.StaggerHeights[slotIndex];
-                maxBar = plan.StaggerBars[slotIndex];
+                slot = plan.TallFormation[slotIndex];
+                (maxW, maxH, minLeft, maxRight) = PortraitCombatMath.TallFormationFrame(plan.TallFormation, slotIndex, bands);
+                maxBar = Math.Max(90f, maxW - 6f);
                 float fit = CellFit(enemy, maxW, maxH, refl, bands);
                 float shared = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
-                forceScale = Math.Min(shared, fit);
-                minLeft = plan.CrowdLeft;
-                maxRight = SafeAreaCanvas.PortraitWidth - 8f;
+                forceScale = fit >= shared - 0.02f ? shared : Math.Min(shared, fit);
             }
-            if (!overflow && plan.OviFight && slotIndex == plan.OviSlot && plan.CrowdComputed &&
-                slotIndex < plan.CrowdMap.Length)
-            {
-                // The Ovicopter slot at both shapes: an upper back slot over the right end of the egg row, 0.43W wide and
-                // 170 above the floor at 9:16, 0.55W wide and 400 design units (257 canvas) above it at 9:19.5. The flyer
-                // is drawn as large as the room scale allows once its intent row is kept just under the potion/relic
-                // header, never under the header itself.
-                float oviFrameW = (bands.Compact ? 0.43f : 0.55f) * SafeAreaCanvas.PortraitWidth;
-                float oviLift = bands.Compact ? 170f : 257f;
-                float oviFeet = bands.FrontFeetY - oviLift;
-                if (bands.Compact)
-                {
-                    // The egg row stands on the front line with its intent row drawn above it, and the flyer's whole HUD
-                    // box (bar plus the HP value under it) hangs under its own feet: at 9:16 that box was drawn inside
-                    // those intents. Stand the flyer high enough that the box's bottom clears the row by 4; maxH below
-                    // keeps its own intent row under the header floor, and the frame it leaves decides its scale.
-                    float eggIntentTop = bands.FrontFeetY - PortraitBands.MinTarget - EggIntentRise;
-                    float hudDrop = BarBandClearance + EnemyHudBoxHeight;
-                    oviFeet = Math.Min(oviFeet, eggIntentTop - 4f - hudDrop);
-                }
-                float oviX = (bands.Compact ? 0.76f : 0.70f) * SafeAreaCanvas.PortraitWidth;
-                slot = new PortraitCreatureSlot(oviX, oviFeet, 0.94f, 0);
-                float hudFloor = PortraitHudFloorY(bands);
-                maxW = oviFrameW;
-                maxH = Math.Max(180f, oviFeet - (hudFloor + (bands.Compact ? OviIntentRise : IntentBandHeight)));
-                maxBar = Math.Min(oviFrameW, bands.Compact ? 360f : 480f);
-                minLeft = Math.Max(StageSideMargin, oviX - maxW * 0.5f);
-                maxRight = Math.Min(SafeAreaCanvas.PortraitWidth - 8f, oviX + maxW * 0.5f);
-                Vector2 oviNative = refl.GetCreatureFootprintSize(enemy);
-                float fitW = oviNative.X > 1f ? maxW / oviNative.X : PortraitCombatMath.MaxBodyScale;
-                float fitH = oviNative.Y > 1f ? maxH / oviNative.Y : PortraitCombatMath.MaxBodyScale;
-                float roomScale = plan.BodyScaleFrozen ? plan.FrozenBodyScale : plan.BodyTargetScale;
-                forceScale = Math.Min(roomScale, Math.Min(fitW, fitH));
-            }
-            if (!overflow && plan.ReservedBoss && plan.DominantStage.Slots.Length > 0)
+            else if (!overflow && plan.ReservedBoss && plan.DominantStage.Slots.Length > 0)
             {
                 // The dominant frame on the front line, capped by the frozen room scale: the boss fills its
                 // 0.55W/0.43W frame and the reserved lanes fit their own bodies when their summons arrive, without the
@@ -3383,7 +3330,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 else
                     forceScale = fit;
             }
-            if (!overflow && plan.Segmented && plan.ChainComputed)
+            else if (!overflow && plan.Segmented && plan.ChainComputed)
             {
                 slot = new PortraitCreatureSlot(plan.ChainLeft + plan.ChainLane * (slotIndex + 0.5f),
                     bands.FrontFeetY, 0.76f, 1);
@@ -3606,11 +3553,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         Side(leftEnemies, StageSideMargin, middle - SurroundedPlayerHalf);
         Side(right, middle + SurroundedPlayerHalf, SafeAreaCanvas.PortraitWidth - StageSideMargin);
+        // The fit freezes itself only when it succeeded (FitBackgroundBossArms); a failed fit (no skeleton yet, no hit
+        // boxes, a span too small) is retried on the next frame instead of being frozen for the room.
         if (plan.EmbeddedCrab && !_crabArmFitFrozen && leftEnemies.Count == 1 && right.Count == 1)
-        {
             FitBackgroundBossArms(sceneContainer, leftEnemies[0], right[0]);
-            _crabArmFitFrozen = true;
-        }
     }
 
     /// <summary>
@@ -3678,11 +3624,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
         }
         _bossArmOriginals.Clear();
-        _bossArmFits.Clear();
         _crabArmFitFrozen = false;
     }
-
-    private readonly record struct BossArmFit(Vector2 TargetL, Vector2 TargetR);
 
     private void ApplyCreatureSlot(
         Control creature,
@@ -3909,9 +3852,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             state.LastOrbChildren = children;
             state.LastOrbBodyScale = fittedScale;
         }
-        // The orbs are drawn at about 1.22 world units on the 1080 canvas (1.9 on the 1680 design canvas); the harness
-        // floor for an orb icon is 75 canvas units, so target the larger high-count presentation (~1.45), then divide by
-        // the body scale because the manager is a child of the creature.
+        // The orbs are drawn at about 1.22 world units on the 1080 canvas; the harness floor for an orb icon is 75 canvas
+        // units, so target the larger high-count presentation (~1.45), then divide by the body scale because the manager
+        // is a child of the creature.
         float orbWorld = 1.48f;
         int orbs = OrbCount(orbMgr);
         if (orbs > 5)
@@ -4909,8 +4852,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             return plan;
         }
 
+        bool freshRoom = plan == null;
         if (plan != null)
             RestoreStageBackground(room, plan);
+        if (freshRoom)
+        {
+            // A new room's stage: the Kaiser Crab's arm fit and the game transform it replaced belonged to the previous
+            // fight, so a second Crab encounter fits its own arms instead of skipping the fit.
+            _crabArmFitFrozen = false;
+            _bossArmOriginals.Clear();
+        }
 
         plan = new CombatStagePlan { CanvasHeight = canvasHeight, Bands = bands };
         state.Stage = plan;
@@ -5642,18 +5593,15 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         float plankLocal = bottomRight.Y - artHeight * PlankFromBottomFraction;
         if (plan.Pier && plankLocal > topLeft.Y + 1f && plankLocal < bottomRight.Y - 1f)
         {
-            // Scale so the art reaches the stage top (no seam inside the visible stage) and fills the band behind the
-            // cards; the plank line then lands exactly on the front foot line, so the creatures stand on the planks.
-            float abovePlank = Math.Max(1f, plankLocal - topLeft.Y);
-            float belowPlank = Math.Max(1f, bottomRight.Y - plankLocal);
-            scale = Math.Max(SafeAreaCanvas.PortraitWidth / artWidth, (bands.HandTopY - bands.FrontFeetY) / belowPlank);
-            scale = Math.Max(scale, (bands.FrontFeetY - bands.StageTopY) / abovePlank);
-            originY = bands.FrontFeetY - plankLocal * scale;
+            // The art reaches the stage top with no seam, fills the band behind the cards, and its own plank line lands
+            // exactly on the front foot line, so the creatures stand on the planks.
+            PortraitCombatMath.PortraitPierFraming pier = PortraitCombatMath.ComputePierFraming(
+                artWidth, topLeft.Y, bottomRight.Y, plankLocal, SafeAreaCanvas.PortraitWidth, bands);
+            scale = pier.Scale;
+            originY = pier.OriginY;
             plan.FloorAligned = false;
             plan.PierSurface = bands.FrontFeetY;
-            // The visible pier recedes to a far edge well above the plank surface; calibrated from the 9:19.5 captures
-            // (far edge at ≈740 canvas with this transform), expressed in the same layer art space as GroundArtY.
-            float pierHorizon = originY + PierFarEdgeArtY * scale;
+            float pierHorizon = pier.FarEdgeY;
             plan.FloorHorizon = pierHorizon;
             plan.HorizonY = pierHorizon;
             // If a back rank would stand beyond the plank area, keep it inside the pier instead.
@@ -5803,6 +5751,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         room.SetMeta("portrait_formation_offset", plan.FormationOffset);
     }
 
+    /// <summary>Removes a portrait measurement a node carries, if the node still has it.</summary>
+    private static void RemoveMeta(GodotObject node, string key)
+    {
+        if (node.HasMeta(key))
+            node.RemoveMeta(key);
+    }
+
     /// <summary>Puts the background back the way the game drew it and removes the underlay this pass added.</summary>
     private static void RestoreStageBackground(Control room, CombatStagePlan plan)
     {
@@ -5823,6 +5778,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         Control? bgContainer = sceneContainer?.GetNodeOrNull<Control>("%BgContainer") ?? sceneContainer?.GetNodeOrNull<Control>("BgContainer");
         if (bgContainer != null)
         {
+            // The backdrop facts are the portrait framing's measurements (the harness reads them in portrait); the game's own
+            // landscape background must not be reported as if it were framed.
+            RemoveMeta(bgContainer, "portrait_floor_horizon");
+            RemoveMeta(bgContainer, "portrait_formation_offset");
             foreach (Node child in bgContainer.GetChildren())
             {
                 if (child is not Control bgRoot)
@@ -5831,6 +5790,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     foreground.Visible = plan.ForegroundWasVisible;
                 if (bgRoot.HasMeta(ForegroundVisibleMeta))
                     bgRoot.RemoveMeta(ForegroundVisibleMeta);
+                RemoveMeta(bgRoot, "portrait_floor_aligned");
+                RemoveMeta(bgRoot, "portrait_art_bottom");
+                RemoveMeta(bgRoot, "portrait_pier");
+                RemoveMeta(bgRoot, "portrait_custom_arena");
+                RemoveMeta(bgRoot, "portrait_pier_surface");
+                RemoveMeta(bgRoot, "portrait_floor_horizon");
+                RemoveMeta(bgRoot, "portrait_formation_offset");
                 break;
             }
         }
@@ -6024,7 +5990,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         public float[] StaggerWidths = Array.Empty<float>();
         public float[] StaggerHeights = Array.Empty<float>();
         public float[] StaggerBars = Array.Empty<float>();
-        public float[] StaggerScales = Array.Empty<float>();
         public bool BackBoss;
         public int CrowdBoss = -1;
         public float BossBackFeet;
@@ -6049,7 +6014,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         public float CrabSharedScale;
         public readonly Dictionary<ulong, PortraitCreatureSlot> CrabSlots = new();
         public readonly Dictionary<ulong, (float MinLeft, float MaxLeft)> CrabBounds = new();
-        public float RowScale;
         public float SharedBodyScale;
         public bool SharedLocked;
         /// <summary>The world scale the hero's own frame allows, frozen with the roster; caps the whole room.</summary>
@@ -6063,7 +6027,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         public bool StageLogged;
         public readonly HashSet<ulong> PlacementLogged = new();
         public float BodyTargetScale;
-        public bool RowScaleComputed;
         public TextureRect? Seam;
         public bool Provisional;
         public bool ForegroundWasVisible = true;
@@ -6096,6 +6059,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         private readonly Vector2 _intentScale, _intentPivot;
         private readonly Vector2 _powerScale, _powerPosition, _powerPivot, _powerSize;
         private readonly float _barHitboxLeft, _barHitboxRight;
+        // The bar's own place inside the health display: the band rule shifts its global Y every frame.
+        private readonly Vector2 _hpBarPosition;
         private Control? _boundsStandIn;
         /// <summary>The visuals' scale when the game's own bounds layout last ran (see ApplyCreatureSlot).</summary>
         public Vector2 LastSyncedVisualsScale;
@@ -6291,6 +6256,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             _powerSize = PowerContainer?.Size ?? Vector2.Zero;
             _barHitboxLeft = HpBarHitbox?.OffsetLeft ?? -138f;
             _barHitboxRight = HpBarHitbox?.OffsetRight ?? 120f;
+            _hpBarPosition = HpBar?.Position ?? Vector2.Zero;
             BarExtraWidth = refl.GetHealthBarExtraWidth(creature);
         }
 
@@ -6352,6 +6318,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 Display.Scale = _displayScale;
                 Display.PivotOffset = _displayPivot;
             }
+            if (HpBar != null && GodotObject.IsInstanceValid(HpBar))
+                HpBar.Position = _hpBarPosition;
             if (HpBarHitbox != null && GodotObject.IsInstanceValid(HpBarHitbox))
             {
                 HpBarHitbox.OffsetLeft = _barHitboxLeft;
@@ -6412,6 +6380,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             if (creature.HasMeta("portrait_hp_shift_capped"))
                 creature.RemoveMeta("portrait_hp_shift_capped");
+            // The stage's foot assignment is portrait bookkeeping (the harness reads it there): landscape must not carry it.
+            if (creature.HasMeta("portrait_feet_y"))
+                creature.RemoveMeta("portrait_feet_y");
             refl.InvokeUpdateBounds(creature);
         }
     }
@@ -6591,6 +6562,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 RestoreStageBackground(room, plan);
                 Stage = null;
             }
+            // These are the stage's portrait measurements (the harness reads them while the room is in portrait): they must
+            // not outlive the layout and be read as facts about the game's own room.
+            RemoveMeta(room, "portrait_hud_floor_y");
+            RemoveMeta(room, "portrait_peer_scale");
+            RemoveMeta(room, "portrait_peer_scale_floored");
+            RemoveMeta(room, "portrait_floor_horizon");
+            RemoveMeta(room, "portrait_formation_offset");
             Control? scene = room.GetNodeOrNull<Control>("%CombatSceneContainer") ?? room.GetNodeOrNull<Control>("CombatSceneContainer");
             if (scene != null)
             {
@@ -6665,11 +6643,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     star.OffsetBottom = _starOffBottom;
                     star.Size = _starSize;
                     star.Scale = _starScale;
-                    // Portrait draws the badge before the energy Label so the count stays on top; restore the game's own
-                    // order (the reparented star last) when portrait is left.
-                    if (star.GetParent() is Control starParent && refl.EnergyCounterField?.GetValue(ui) == starParent &&
-                        starParent.GetChildCount() > 0)
-                        starParent.MoveChild(star, starParent.GetChildCount() - 1);
                 }
                 if (refl.FoolCombatUiField?.GetValue(ui) is Control fool)
                 {
@@ -6701,6 +6674,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     Vector2 vpSize = room.GetViewportRect().Size;
                     if ((piles.GetNodeOrNull<Control>("%DrawPile") ?? piles.GetNodeOrNull<Control>("DrawPile")) is { } draw)
                     {
+                        PhoneHitArea.Remove(draw);
                         draw.Scale = _drawScale;
                         Vector2 show = new(15f, vpSize.Y - 95f);
                         Vector2 hide = show + new Vector2(-150f, 100f);
@@ -6710,6 +6684,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     }
                     if ((piles.GetNodeOrNull<Control>("%DiscardPile") ?? piles.GetNodeOrNull<Control>("DiscardPile")) is { } discard)
                     {
+                        PhoneHitArea.Remove(discard);
                         discard.Scale = _discardScale;
                         Vector2 show = new(vpSize.X - 94f, vpSize.Y - 95f);
                         Vector2 hide = show + new Vector2(150f, 100f);
@@ -6719,6 +6694,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     }
                     if ((piles.GetNodeOrNull<Control>("%ExhaustPile") ?? piles.GetNodeOrNull<Control>("ExhaustPile")) is { } exhaust)
                     {
+                        PhoneHitArea.Remove(exhaust);
                         exhaust.Scale = _exhaustScale;
                         refl.ExhaustSetAnimPositionsMethod?.Invoke(exhaust, null);
                         if (exhaust.Visible && refl.PileShowPosField?.GetValue(exhaust) is Vector2 show)
@@ -7484,43 +7460,5 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             return null;
         }
-    }
-}
-
-/// <summary>
-/// The idle frame cap's one write, shared by the two places that need it: <c>PhoneGraphics</c> publishes the player's
-/// choices and touch state every frame and applies the cap, and the portrait hand pass applies it again on a frame where
-/// a draw has just started — that frame's process step, where <c>PhoneGraphics</c> ran, could not see the motion yet. The
-/// test host makes the same two calls, so a run exercises the app's own path. Nothing is written until the choices have
-/// been published.
-/// </summary>
-internal static class PhoneFrameCap
-{
-    private static PhoneGraphicsSettings _settings = PhoneGraphicsSettings.Default;
-    private static int _gameLimit;
-    private static double _secondsSinceTouch;
-    private static int _thermalState = DevicePower.UnknownThermalState;
-    private static bool _touching;
-    private static bool _published;
-
-    /// <summary>The state the pure <see cref="FrameRateGovernor.Target"/> decides from; called once a frame by PhoneGraphics.</summary>
-    public static void SetInputs(int gameLimit, PhoneGraphicsSettings settings, bool touching, double secondsSinceTouch,
-        int thermalState)
-    {
-        _gameLimit = gameLimit;
-        _settings = settings;
-        _touching = touching;
-        _secondsSinceTouch = secondsSinceTouch;
-        _thermalState = thermalState;
-        _published = true;
-    }
-
-    /// <summary>Writes <c>Engine.MaxFps</c> from the published state and the game's activity now.</summary>
-    public static void Apply()
-    {
-        if (!_published) return;
-        int target = FrameRateGovernor.Target(_gameLimit, _settings, _touching, _secondsSinceTouch, _thermalState,
-            PortraitCombatLayout.CombatAnimating);
-        if (Engine.MaxFps != target) Engine.MaxFps = target;
     }
 }

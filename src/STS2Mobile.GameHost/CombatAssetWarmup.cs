@@ -115,6 +115,22 @@ internal sealed class CombatAssetWarmup
         }
     }
 
+    /// <summary>
+    /// The fight or portrait session is over: drop the loading session and everything collected for it, so the next fight
+    /// starts clean. The assets it already loaded stay in the game's cache; a failure is kept, so a broken warm-up is not
+    /// retried every room.
+    /// </summary>
+    public void Stop()
+    {
+        _session = null;
+        _paths.Clear();
+        _seen.Clear();
+        _roomId = 0;
+        _frames = 0;
+        _started = false;
+        _reported = false;
+    }
+
     private void CollectPaths(Control room, Control hand, PortraitCombatLayout.CombatReflection refl, List<Control> creatures)
     {
         // 1. The deck: every card's pool frame material and energy sprite font, its banner material and atlas sprites.

@@ -265,8 +265,7 @@ internal static partial class PortraitProof
             string hitText = hit == null ? "none" : $"pos={hit.Position} size={hit.Size} filter={hit.MouseFilter} enabled={hit.GetType().GetProperty("IsEnabled")?.GetValue(hit)} rect={CanvasRect(hit)}";
             string cardText = card == null ? "none" : $"pos={card.Position} size={card.Size} pivot={card.PivotOffset} rect={CanvasRect(card)}";
             Vector2 probe = PointOnCard(h, 0.12f, 0.4f);
-            Control? over = null;
-            GD.Print($"Touch geometry {label} {i} {CardId(h)} holder={h.Position} rot={h.RotationDegrees:F1} scale={h.Scale.X:F2} z={h.ZIndex} hitbox[{hitText}] card[{cardText}] probe=({probe.X:F0},{probe.Y:F0}) over={over?.GetParent()?.Name}/{over?.Name}");
+            GD.Print($"Touch geometry {label} {i} {CardId(h)} holder={h.Position} rot={h.RotationDegrees:F1} scale={h.Scale.X:F2} z={h.ZIndex} hitbox[{hitText}] card[{cardText}] probe=({probe.X:F0},{probe.Y:F0})");
         }
     }
 

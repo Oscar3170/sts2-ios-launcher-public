@@ -109,17 +109,17 @@ public static class PortraitCombatMath
     public const float CardDefaultWidth = 300f;
     public const float CardDefaultHeight = 422f;
 
-    /// <summary>The portrait design is a 1680-wide canvas; every converted value is multiplied by this.</summary>
-    private const float DesignScale = SafeAreaCanvas.PortraitWidth / 1680f;
-
     /// <summary>
     /// A hand card's resting scale on the compact (9:16) canvas; both rows use it at every hand size. Ten cards at this
     /// scale are 75 by 105 points, and the two rows plus the rail leave the stage about 350 units at 9:16.
     /// </summary>
     public const float CompactHandCardScale = 0.72f;
 
-    /// <summary>The tall hand's resting card scale (1.35 on the 1680 design canvas): cards are 24.1% of the canvas width.</summary>
-    public const float TallHandCardScale = 1.35f * DesignScale;
+    /// <summary>
+    /// The tall hand's resting card scale: a 300-unit card draws 260 units wide, 24.1% of the canvas (75 points), and the
+    /// two rows plus the rail still leave the stage its floor. Every hand size uses it; a crowded row overlaps instead.
+    /// </summary>
+    public const float TallHandCardScale = 0.86785716f;
 
     /// <summary>A pressed card grows by this factor of its own resting scale, in place about its centre.</summary>
     public const float HeldCardGrowth = 1.08f;
@@ -133,12 +133,13 @@ public static class PortraitCombatMath
     private const float CompactHandBottomMargin = 100f;
     private const float CompactRailHeight = 170f;
 
-    // The portrait hand, converted from the 1680-wide design canvas: card 1.35, gap 10, row gap 18,
-    // side margin 72, bottom margin 6 + SafeBottom 90, rail 250 above the hand.
-    private const float TallHandGap = 10f * DesignScale;
-    private const float TallHandRowGap = 18f * DesignScale;
-    private const float TallHandBottomMargin = (6f + 90f) * DesignScale;
-    private const float TallRailHeight = 250f * DesignScale;
+    // The tall hand: a 6.43-unit gap between cards of one row, 11.57 units between the two rows, 61.71 units of air under
+    // the lower row (21 points, clear of the home indicator's gesture area), and a 160.71-unit rail (56 points, room for
+    // the 44-point End Turn button with its clearance).
+    private const float TallHandGap = 6.428571f;
+    private const float TallHandRowGap = 11.571428f;
+    private const float TallHandBottomMargin = 61.714287f;
+    private const float TallRailHeight = 160.71428f;
 
     private const float CompactFloorGap = 70f;
     private const float TallFloorGap = 130f;
@@ -147,9 +148,9 @@ public static class PortraitCombatMath
     public static float RailHeightFor(bool compact) => compact ? CompactRailHeight : TallRailHeight;
 
     /// <summary>
-    /// The energy counter's rail X. The counter sits at <c>safe.X + 300</c> on the 1680-wide design canvas with a
-    /// 1.8 scale, i.e. an orb centre of 415 units there; on the 1080 canvas that is 267, so the counter (pivot 64) starts
-    /// at 203. End Turn keeps the canvas centre, which leaves a 71-unit gap between the orb and the button.
+    /// The energy counter's rail X. The orb's centre is 267 units from the left edge (a quarter of the 1080-wide canvas)
+    /// and the counter's pivot is its own 64-unit half, so the counter starts at 203. End Turn keeps the canvas centre,
+    /// which leaves a 45-unit gap between the orb and the button.
     /// </summary>
     public const float EnergyRailX = 203f;
 
@@ -158,18 +159,28 @@ public static class PortraitCombatMath
 
     /// <summary>
     /// The star badge's centre offsets from the energy orb's centre: the badge hangs on the orb's lower-left corner.
-    /// The star draws in front of the orb (it is the counter's last child, as the native game
-    /// leaves it), which is what keeps its count clear of the draw pile and lets its right tip cross the orb's spikes.
+    /// The star is drawn in front of the orb (the game reparents it after the counter's children, and nothing here moves
+    /// it), which is what keeps its count clear of the draw pile and lets its right tip cross the orb's spikes.
     /// </summary>
     public const float StarOrbOffsetX = -0.4f;
     public const float StarOrbOffsetY = 0.3f;
+
+    /// <summary>
+    /// The star badge's centre on the canvas from the energy orb's drawn centre and size: the badge is placed by its
+    /// centre and hangs on the orb's lower-left corner. One formula for the layout and for the per-frame placement.
+    /// </summary>
+    public static (float X, float Y) StarBadgeCenter(float orbCenterX, float orbCenterY, float orbWidth, float orbHeight) =>
+        (orbCenterX + orbWidth * StarOrbOffsetX, orbCenterY + orbHeight * StarOrbOffsetY);
 
     /// <summary>The native selected-card holder is drawn at 0.8 of a card, with a 24-unit gap when laid out in a row.</summary>
     public const float SelectionCardSmallScale = 0.8f;
     public const float SelectionCardGap = 24f;
 
-    /// <summary>The largest scale a selected preview takes (1.72 at the 1680-wide design canvas, converted).</summary>
-    public const float SelectionCardMaxScale = 1.72f * (SafeAreaCanvas.PortraitWidth / 1680f) / SelectionCardSmallScale;
+    /// <summary>
+    /// The largest scale a selected preview takes: 1.38 of the native 0.8 holder, i.e. cards drawn at 1.106 of their
+    /// authored size (one card is 331 units wide), so a picked card is readable without reaching past the canvas.
+    /// </summary>
+    public const float SelectionCardMaxScale = 1.3821429f;
 
     /// <summary>
     /// The fan angle of the outermost card of a hand row; the row's middle card is upright. At 2.4 degrees the rotated
@@ -291,6 +302,125 @@ public static class PortraitCombatMath
     public static float MaxHandCenterOffset(float scale, float angleDegrees) =>
         Math.Max(0f, CanvasHalfWidth - HandEdgeMargin - HandSlotHalfExtent(scale, angleDegrees));
 
+    /// <summary>How much of a draw's gap the hand adds before it stops waiting for the next card.</summary>
+    public const float DrawFirstAddQuietMsec = 400f;
+
+    /// <summary>How much longer than the gap a draw is delivering at its next card may take.</summary>
+    public const float DrawIntervalQuietFactor = 1.5f;
+
+    /// <summary>
+    /// How long a turn draw with a known size waits after its last card before giving up on the rest (the draw came up
+    /// short, e.g. the pile ran out): long enough that a slow device's gaps between cards never end it early.
+    /// </summary>
+    public const float TurnDrawQuietMsec = 3000f;
+
+    /// <summary>
+    /// How long the hand may wait for the next card of a draw before it stops reserving slots for it: the gap the draw
+    /// has actually been delivering at (plus half), or one pile tween plus a slow device's frames while that gap is not
+    /// known yet. A turn draw with a known size gets the long patience instead.
+    /// </summary>
+    public static float DrawQuietWindowMsec(float addIntervalMsec, bool turnDraw)
+    {
+        if (turnDraw)
+            return TurnDrawQuietMsec;
+        return addIntervalMsec > 1f
+            ? MathF.Max(DrawFirstAddQuietMsec, addIntervalMsec * DrawIntervalQuietFactor)
+            : DrawFirstAddQuietMsec;
+    }
+
+    /// <summary>
+    /// Where one drawn frame may put a hand card: the uniform scale to draw it at (and whether the resting cap had to be
+    /// applied), its position, and its angle. <see cref="Settled"/> marks a card that has arrived at its slot, whose scale
+    /// is always the resting scale (the game may be shrinking it as it lands).
+    /// </summary>
+    public readonly record struct PortraitCardMotion(float X, float Y, float RotationDegrees, float Scale,
+        bool ScaleCapped, bool Settled);
+
+    /// <summary>
+    /// Two rules for a card's drawn transform, in one place.
+    /// <para>Always: no drawn frame draws a card further than one step of the game's own animation toward its portrait slot —
+    /// <c>clamp(frameSeconds·7)</c> of the distance it had left at the last pass, plus a unit — and no frame draws it
+    /// larger than its resting scale. This is what keeps the game's own retargets off the screen until the next pass
+    /// applies the portrait slot: the synchronous first step of a press's desktop hover target, a re-layout on an add, a
+    /// card put back. A card that is gliding normally is never touched.</para>
+    /// <para>While a turn draw's batch is open, for a card the player is not holding: the step may only go along the line
+    /// to the slot (the frame's displacement is projected on <c>slot − previous</c> and clamped to the same one-step
+    /// share), so a native step in another direction is never drawn; a card within 2 units of its slot is settled exactly
+    /// onto it (the last native step is under a unit, so a card could otherwise stay a fraction short of its slot for
+    /// ever); and the angle may only turn toward the slot's.</para>
+    /// </summary>
+    /// <param name="currentX">Where the game drew the card this frame.</param>
+    /// <param name="currentY">Where the game drew the card this frame.</param>
+    /// <param name="previousX">Where the last pass left the card.</param>
+    /// <param name="previousY">Where the last pass left the card.</param>
+    /// <param name="currentScale">The scale the game gave the card this frame (its larger axis; holders are uniform).</param>
+    /// <param name="currentRotationDegrees">The angle the game gave the card this frame.</param>
+    /// <param name="slotX">The card's portrait slot.</param>
+    /// <param name="slotY">The card's portrait slot.</param>
+    /// <param name="slotScale">The resting scale of the card's slot.</param>
+    /// <param name="slotAngleDegrees">The tilt the slot gives an unfocused card.</param>
+    /// <param name="restingAngleDegrees">The angle the card rests at (0 when focused).</param>
+    /// <param name="previousRotationDegrees">The angle the last pass drew the card at.</param>
+    /// <param name="interactive">The card is under a finger or focused: the always-on rule applies, never the direction lock.</param>
+    /// <param name="turnDrawBatch">A turn draw with a known size is arriving: the direction lock applies.</param>
+    /// <param name="frameSeconds">The frame's process time, which sizes one native animation step.</param>
+    public static PortraitCardMotion CapCardArrival(
+        float currentX, float currentY, float previousX, float previousY,
+        float currentScale, float currentRotationDegrees,
+        float slotX, float slotY, float slotScale, float slotAngleDegrees, float restingAngleDegrees,
+        float previousRotationDegrees, bool interactive, bool turnDrawBatch, float frameSeconds)
+    {
+        float weight = Math.Clamp(frameSeconds * 7f, 0f, 1f);
+        bool scaleCapped = currentScale > slotScale + 0.002f;
+        float scale = scaleCapped ? slotScale : currentScale;
+        float stepX = currentX - previousX;
+        float stepY = currentY - previousY;
+        float lengthX = slotX - previousX;
+        float lengthY = slotY - previousY;
+        float length = MathF.Sqrt(lengthX * lengthX + lengthY * lengthY);
+        if (length <= 2f)
+            // The card has arrived: settle it exactly onto its slot and hold it there, whatever the game wrote this frame.
+            // The native position loop stops within a unit of its target, so a card that arrived a fraction short and was
+            // only held at its previous place could stay short for ever, and the stall detector kept restarting the loop
+            // for it. A 2-unit move is invisible. This is also the settled card a release, an add or a focus nudges with
+            // the first step of a native retarget.
+            return new PortraitCardMotion(slotX, slotY, restingAngleDegrees, slotScale, scaleCapped, Settled: true);
+
+        float step = MathF.Sqrt(stepX * stepX + stepY * stepY);
+        float allowed = length * weight + 1f;
+        if (interactive || !turnDrawBatch)
+        {
+            // The always-on rule: a step longer than one native step is shortened, in whatever direction it took.
+            if (step > allowed)
+            {
+                float share = allowed / step;
+                return new PortraitCardMotion(previousX + stepX * share, previousY + stepY * share,
+                    currentRotationDegrees, scale, scaleCapped, Settled: false);
+            }
+            return new PortraitCardMotion(currentX, currentY, currentRotationDegrees, scale, scaleCapped, Settled: false);
+        }
+
+        float directionX = lengthX / length;
+        float directionY = lengthY / length;
+        float travelled = stepX * directionX + stepY * directionY;
+        float pinned = Math.Clamp(travelled, 0f, allowed);
+        float turnToSlot = slotAngleDegrees - previousRotationDegrees;
+        float turned;
+        if (MathF.Abs(turnToSlot) <= 0.1f)
+        {
+            turned = previousRotationDegrees;
+        }
+        else
+        {
+            float sign = MathF.Sign(turnToSlot);
+            float along = (currentRotationDegrees - previousRotationDegrees) * sign;
+            float most = MathF.Abs(turnToSlot) * weight + 0.1f;
+            turned = previousRotationDegrees + sign * Math.Clamp(along, 0f, most);
+        }
+        return new PortraitCardMotion(previousX + directionX * pinned, previousY + directionY * pinned, turned, scale,
+            scaleCapped, Settled: false);
+    }
+
     /// <summary>
     /// The card's place in its row, as a local offset from the bottom-centre holder container: the upper row fills first,
     /// rows are centred, and the focused card only grows in place (same centre and row; an edge card is straightened as
@@ -359,11 +489,11 @@ public static class PortraitCombatMath
         const float endTurnScale = 1.42f;
         const float endTurnShowX = SafeAreaCanvas.PortraitWidth * 0.5f - 110f;
 
-        // The star keeps its native scene size and is simply placed from the orb: orb centre +
-        // orb.Size * offset, top-left from the star's drawn span. It draws in front of the orb, as its count must.
+        // The star keeps its native scene size and is placed by its centre from the orb's drawn rect, one formula shared
+        // with the per-frame placement; it draws in front of the orb, as its count must.
         float orbSize = EnergyOrbSize * energyScale;
-        float starCenterX = energyX + EnergyOrbSize * 0.5f + orbSize * StarOrbOffsetX;
-        float starCenterY = railCenter + orbSize * StarOrbOffsetY;
+        (float starCenterX, float starCenterY) =
+            StarBadgeCenter(energyX + EnergyOrbSize * 0.5f, railCenter, orbSize, orbSize);
         float endTurnVisualLeft = endTurnShowX - 110f * (endTurnScale - 1f);
         float endTurnVisualRight = endTurnVisualLeft + 220f * endTurnScale;
 
@@ -512,7 +642,7 @@ public static class PortraitCombatMath
     /// <summary>The largest a creature body is drawn; a lone enemy already uses this for the stage.</summary>
     public const float MaxBodyScale = 1.32f;
 
-    /// <summary>Preferred shared body scale for an ordinary encounter, re-derived for the 1080 canvas (2.05 at the design width).</summary>
+    /// <summary>Preferred shared body scale for an ordinary encounter: the biggest a body is drawn before its own frame caps it.</summary>
     public const float PreferredSharedBodyScale = 1.32f;
 
     /// <summary>
@@ -550,7 +680,7 @@ public static class PortraitCombatMath
 
     /// <summary>
     /// The absolute world scale every body in the room is drawn at: the tightest fit any creature needs in its frame,
-    /// one multiplier for the whole room (2.05 preferred and a 1.0 legibility floor at the 1680 design width).
+    /// one multiplier for the whole room (at most 1.32, never under the 0.62 legibility floor).
     /// Unlike <see cref="SharedPeerScale"/> this is not a multiplier over a slot's own occupancy: it caps the hero and the
     /// enemies alike, so a room cannot draw its hero at one size and its monsters at another.
     /// </summary>
@@ -777,9 +907,10 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// The tall (9:19.5 and taller) enemy formation, converted to the 1080 canvas and re-based on the launcher's
-    /// floor line. Depths are design-canvas units ×0.642857: a negative depth stands in front of the floor (below it on
-    /// screen), a positive one behind it. The Ovicopter back rank, the Crab and the segment chain have their own layouts.
+    /// The tall (9:19.5 and taller) enemy formation, measured in canvas units from the launcher's floor line. The depth of
+    /// each marker is the height it stands above or below the front foot line: a negative depth stands in front of the
+    /// floor (below it on screen), a positive one behind it. The Ovicopter back rank, the Crab and the segment chain have
+    /// their own layouts.
     /// </summary>
     public static PortraitCreatureSlot[] ComputeTallFormation(int capacity, PortraitCombatBands bands)
     {
@@ -788,37 +919,36 @@ public static class PortraitCombatMath
         if (count == 0)
             return slots;
         float floor = bands.FrontFeetY;
-        const float S = 1080f / 1680f;
-        PortraitCreatureSlot Slot(float fraction, float depthTsu) =>
-            new(SafeAreaCanvas.PortraitWidth * fraction, floor - depthTsu * S, 0.94f, depthTsu > 0f ? 0 : 1);
+        PortraitCreatureSlot Slot(float fraction, float depthCanvas) =>
+            new(SafeAreaCanvas.PortraitWidth * fraction, floor - depthCanvas, 0.94f, depthCanvas > 0f ? 0 : 1);
 
         if (count == 1)
         {
-            slots[0] = Slot(0.675f, 25f);
+            slots[0] = Slot(0.675f, 16.071428f);
             return slots;
         }
         if (count == 2)
         {
-            slots[0] = Slot(0.475f, 100f);
-            slots[1] = Slot(0.805f, 20f);
+            slots[0] = Slot(0.475f, 64.28571f);
+            slots[1] = Slot(0.805f, 12.857142f);
             return slots;
         }
         if (count == 3)
         {
-            slots[0] = Slot(0.46f, -125f);
-            slots[1] = Slot(0.655f, 510f);
-            slots[2] = Slot(0.85f, -75f);
+            slots[0] = Slot(0.46f, -80.35714f);
+            slots[1] = Slot(0.655f, 327.85715f);
+            slots[2] = Slot(0.85f, -48.214287f);
             return slots;
         }
         if (count == 5)
-            slots[0] = Slot(0.18f, 510f);
+            slots[0] = Slot(0.18f, 327.85715f);
         int o = count == 5 ? 1 : 0;
-        slots[o] = Slot(0.49f, -125f);
-        slots[o + 1] = Slot(0.49f, 480f);
-        slots[o + 2] = Slot(0.81f, -125f);
-        slots[o + 3] = Slot(0.81f, 510f);
+        slots[o] = Slot(0.49f, -80.35714f);
+        slots[o + 1] = Slot(0.49f, 308.5714f);
+        slots[o + 2] = Slot(0.81f, -80.35714f);
+        slots[o + 3] = Slot(0.81f, 327.85715f);
         for (int i = o + 4; i < count; i++)
-            slots[i] = Slot(0.50f + (i % 2) * 0.30f, 1030f);
+            slots[i] = Slot(0.50f + (i % 2) * 0.30f, 662.1428f);
         return slots;
     }
 
@@ -838,14 +968,14 @@ public static class PortraitCombatMath
         {
             float x = left + (column + 0.5f) * pitch;
             slots[column] = new PortraitCreatureSlot(x, floor, 0.94f, 1);
-            slots[3 + column] = new PortraitCreatureSlot(x, floor - 510f * (SafeAreaCanvas.PortraitWidth / 1680f), 0.94f, 0);
+            slots[3 + column] = new PortraitCreatureSlot(x, floor - 327.85715f, 0.94f, 0);
         }
         return slots;
     }
 
     /// <summary>
-    /// A tall-formation slot's frame: width capped by the nearest column pitch (so bodies and bars cannot touch), height by
-    /// the 220–475 design-unit height range converted to the launcher canvas.
+    /// A tall-formation slot's frame: width capped by the nearest column pitch (so bodies and bars cannot touch), height at
+    /// the 305-unit canvas cap for the table's 3–5 bodies (or the whole stage for one or two).
     /// </summary>
     public static (float MaxWidth, float MaxHeight, float MinLeft, float MaxRight) TallFormationFrame(
         PortraitCreatureSlot[] formation,
@@ -869,10 +999,11 @@ public static class PortraitCombatMath
             : formation.Length == 2 ? SafeAreaCanvas.PortraitWidth * 0.31f
             : SafeAreaCanvas.PortraitWidth * 0.29f;
         float width = Math.Max(90f, Math.Min(baseWidth, pitch - 10f));
-        // The 475 clamp belongs to the 3–5 table; 1–2 use the whole stage from the top to their feet.
+        // A 3–5 body is capped at 305 canvas units: the tallest a slot's row allows above its intent band and bar. One or
+        // two bodies use the whole stage from the top down to their feet.
         float height = formation.Length <= 2
             ? Math.Max(120f, slot.CanvasFeetY - bands.StageTopY)
-            : Math.Clamp(475f * (SafeAreaCanvas.PortraitWidth / 1680f), 141f, 305f);
+            : 305f;
         height = Math.Min(height, Math.Max(60f, slot.CanvasFeetY - bands.StageTopY));
         float half = Math.Max(width, pitch) * 0.5f;
         return (width, height, Math.Max(8f, slot.CanvasX - half),
@@ -1167,6 +1298,41 @@ public static class PortraitCombatMath
     /// measured against that line, which is why the layer's authored offset must stay part of the scene frame.
     /// </summary>
     public const float NativeOriginArtistY = 200f;
+
+    /// <summary>
+    /// The pier layer's visible far edge in the layer's own art space, calibrated from the 9:19.5 captures (about 740
+    /// canvas units at the pier transform). Back ranks stand between this line and the plank surface.
+    /// </summary>
+    public const float PierFarEdgeArtY = -27f;
+
+    /// <summary>
+    /// Where a narrow pier art is drawn: the container scale, the canvas line its local origin sits on, and the pier's
+    /// visible far edge on the canvas.
+    /// </summary>
+    public readonly record struct PortraitPierFraming(float Scale, float OriginY, float FarEdgeY);
+
+    /// <summary>
+    /// Frames the narrow Underdocks pier: the art is scaled so it reaches the stage top with no seam, covers the band
+    /// behind the hand cards, and its own plank line lands exactly on the front foot line — so the creatures stand on the
+    /// planks and the water above recedes behind them. The far edge follows the same transform.
+    /// </summary>
+    /// <param name="artWidth">The art's authored width in the background container's space.</param>
+    /// <param name="artTopLocal">The art's top edge in the container's local space.</param>
+    /// <param name="artBottomLocal">The art's bottom edge in the container's local space.</param>
+    /// <param name="plankLocalY">The plank line in the same local space (the line that must land on the foot line).</param>
+    /// <param name="canvasWidth">The portrait canvas width.</param>
+    public static PortraitPierFraming ComputePierFraming(float artWidth, float artTopLocal, float artBottomLocal,
+        float plankLocalY, float canvasWidth, PortraitCombatBands bands)
+    {
+        float width = Math.Max(1f, artWidth);
+        float abovePlank = Math.Max(1f, plankLocalY - artTopLocal);
+        float belowPlank = Math.Max(1f, artBottomLocal - plankLocalY);
+        float scale = Math.Max(
+            Math.Max(canvasWidth / width, (bands.HandTopY - bands.FrontFeetY) / belowPlank),
+            (bands.FrontFeetY - bands.StageTopY) / abovePlank);
+        float originY = bands.FrontFeetY - plankLocalY * scale;
+        return new PortraitPierFraming(scale, originY, originY + PierFarEdgeArtY * scale);
+    }
 
     /// <summary>
     /// Frames a broad arena's floor art: the scale covers the canvas

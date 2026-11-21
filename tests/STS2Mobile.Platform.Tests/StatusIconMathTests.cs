@@ -195,4 +195,13 @@ public class StatusIconMathTests
         Assert.Equal(7f * Normal * StatusIconMath.MinIconScale, fit.RowWidth, 0.01f);
         Assert.Equal(StatusIconMath.EdgeMargin, fit.Left, 0.01f);
     }
+
+    [Fact]
+    public void TheIconWidthIsTheCanvasValue()
+    {
+        Assert.Equal(52.71429f, StatusIconMath.IconWidth);
+        Assert.Equal(StatusIconMath.IconWidth / 1080f, StatusIconMath.IconWidthShare);
+        Assert.Equal(52.71429f, Normal, 0.0001f);
+        Assert.InRange(StatusIconMath.IconWidth / 2.9f, 18.1f, 18.3f);
+    }
 }
