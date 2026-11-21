@@ -81,16 +81,42 @@ internal sealed class HandStillness
     /// <summary>
     /// Whether the holder's drawn transform, or its place on screen, differs from what the last pass recorded: a native
     /// animation loop is still running (or the game wrote the transform), or the hand itself is moving (its enable and
-    /// disable tweens slide the whole hand), so the pass has work to do and the card is moving as far as the player can
-    /// see. Engine reads only, no reflection.
+    /// disable tweens slide the whole hand), so the pass has work to do. Engine reads only, no reflection.
     /// </summary>
     public bool Moved(Control holder)
     {
         if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return true;
         if ((holder.Position - record.Position).LengthSquared() > 0.25f) return true;
-        if ((holder.GlobalPosition - record.Global).LengthSquared() > 0.25f) return true;
         if ((holder.Scale - record.Scale).LengthSquared() > 0.000004f) return true;
         return Mathf.Abs(holder.RotationDegrees - record.Rotation) > 0.05f;
+    }
+
+    /// <summary>
+    /// Whether the holder has moved <b>on screen</b> since the last pass: its position, local or global, changed by more
+    /// than half a unit. Scale and angle do not count — they are not the card travelling — so this is the measure an
+    /// observer watching the hand takes, and the one the effects and the frame cap follow. Engine reads only.
+    /// </summary>
+    public bool MovedOnScreen(Control holder)
+    {
+        if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return true;
+        if ((holder.Position - record.Position).LengthSquared() > 0.25f) return true;
+        return (holder.GlobalPosition - record.Global).LengthSquared() > 0.25f;
+    }
+
+    /// <summary>Diagnostic (temporary, Reduce Effects restore): which component still differs from the last record.</summary>
+    internal string MovedDetail(Control holder)
+    {
+        if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return "new";
+        var parts = new List<string>(4);
+        Vector2 position = holder.Position - record.Position;
+        if (position.LengthSquared() > 0.25f) parts.Add("pos=" + position + "@" + holder.Position + "/" + record.Position);
+        Vector2 global = holder.GlobalPosition - record.Global;
+        if (global.LengthSquared() > 0.25f) parts.Add("global=" + global);
+        Vector2 scale = holder.Scale - record.Scale;
+        if (scale.LengthSquared() > 0.000004f) parts.Add("scale=" + holder.Scale + "/" + record.Scale);
+        float angle = holder.RotationDegrees - record.Rotation;
+        if (Mathf.Abs(angle) > 0.05f) parts.Add("angle=" + angle.ToString("F2") + "@" + holder.RotationDegrees + "/" + record.Rotation);
+        return parts.Count == 0 ? "none" : string.Join(" ", parts);
     }
 
     /// <summary>
