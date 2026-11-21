@@ -32,6 +32,9 @@ internal sealed class HandStillness
         public Vector2 Position;
         public Vector2 Scale;
         public float Rotation;
+        // Where the holder sat on screen: the game slides the whole hand on its enable/disable tween, and a card carried
+        // by that slide is moving even when its own transform did not change.
+        public Vector2 Global;
         public ulong Frame;
     }
 
@@ -76,13 +79,16 @@ internal sealed class HandStillness
         _records.TryGetValue(holder.GetInstanceId(), out Place record) ? record.Rotation : fallback;
 
     /// <summary>
-    /// Whether the holder's drawn transform differs from what the last pass recorded: a native animation loop is still
-    /// running (or the game wrote the transform), so the pass has work to do. Engine reads only, no reflection.
+    /// Whether the holder's drawn transform, or its place on screen, differs from what the last pass recorded: a native
+    /// animation loop is still running (or the game wrote the transform), or the hand itself is moving (its enable and
+    /// disable tweens slide the whole hand), so the pass has work to do and the card is moving as far as the player can
+    /// see. Engine reads only, no reflection.
     /// </summary>
     public bool Moved(Control holder)
     {
         if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return true;
         if ((holder.Position - record.Position).LengthSquared() > 0.25f) return true;
+        if ((holder.GlobalPosition - record.Global).LengthSquared() > 0.25f) return true;
         if ((holder.Scale - record.Scale).LengthSquared() > 0.000004f) return true;
         return Mathf.Abs(holder.RotationDegrees - record.Rotation) > 0.05f;
     }
@@ -110,6 +116,7 @@ internal sealed class HandStillness
             TargetScale = targetScale,
             TargetAngle = targetAngle,
             Position = holder.Position,
+            Global = holder.GlobalPosition,
             Scale = holder.Scale,
             Rotation = holder.RotationDegrees,
             Frame = Engine.GetProcessFrames(),
