@@ -54,11 +54,8 @@ private void OnFramePreDraw()
                 }
                 Control? hand = ui.GetNodeOrNull<Control>("%Hand") ?? ui.GetNodeOrNull<Control>("Hand");
                 if (hand != null)
-                {
-                    TickHandLock(hand);
                     using (PortraitFrameTiming.Begin(PortraitFrameTiming.Hand))
                         SyncHandAndPlayabilityPortrait(hand, refl, bands);
-                }
                 // The game writes its orb manager's own place and scale from the creature's bounds whenever it lays the
                 // creature out (NCreature.SetOrbManagerPosition), and that write lands after this frame's stage pass: the
                 // arc's fit is re-applied here, after every native process/tween step and before the draw, like the rail.
@@ -339,12 +336,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// </summary>
     private const double HandDrawFirstAddMsec = 400.0;
 
-    /// <summary>
-    /// How long a turn draw with a known size may take to deliver its cards before the hand stops waiting (the draw came up
-    /// short, e.g. the pile ran out): long enough that a slow device's gaps between arrivals never end the draw early.
-    /// </summary>
-    private const double HandDrawLockTimeoutMsec = 3000.0;
-
     /// <summary>How much longer than the gap the draw is actually delivering at the next card may take.</summary>
     private const double HandDrawIntervalFactor = 1.5;
 
@@ -401,8 +392,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private double _handBatchMsec;
     private double _handAddIntervalMsec;
     private bool _handDirty;
-    private bool _handLockStrict;
-    private double _handLockMsec;
     private long _handLastPassFrame;
     private bool _lastInCardPlay;
     private ulong _lastPressedHolder;
@@ -963,6 +952,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // made the whole hand bounce.
         int effectiveCount = PortraitCombatMath.EffectiveCardCount(activeHolders.Count, holding);
         int heldIndex = holding && refl.HandDraggedIndexField?.GetValue(hand) is int dragged ? Math.Clamp(dragged, 0, activeHolders.Count) : -1;
+        int handCount = heldIndex >= 0 ? effectiveCount : Math.Max(activeHolders.Count, _handCountLock);
 
         // The card under a finger is the one that grows. The pickup gate suppresses the native hover/focus on a touch
         // press, so the touch pass's pressed holder comes first and the native focus is only the fallback (mouse,
@@ -986,7 +976,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // still open belongs to the old turn, and the game's own hand-draw query gives this turn's size (see
             // TurnDrawCount for why it can only under-count; the innate bump is added at the first card, when the hand and
             // the draw pile hold exactly that draw's innate cards).
-            ReleaseHandLock();
+            _handDrawBatch = false;
+            _handCountLock = 0;
             _turnDrawCount = refl.TurnDrawCount(hand);
             _turnDrawInnate = playerTurn == 1;
             _turnDrawPending = true;
@@ -1003,8 +994,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 _handDrawBatch = true;
                 _handAddIntervalMsec = 0.0;
                 _handCountLock = 0;
-                _handLockStrict = false;
-                _handLockMsec = 0.0;
             }
             else if (_handBatchMsec > 1.0)
             {
@@ -1021,7 +1010,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 if (expected < 0)
                     expected = refl.HandDrawCount();
                 _handCountLock = Math.Clamp(_lastHandHolderCount + expected, 0, HandCardLimit);
-                _handLockStrict = _handCountLock > 0;
                 if (DiagnoseHandDraw)
                 {
                     GD.Print($"[Portrait hand] turn={playerTurn} hook={_turnDrawCount} expected={expected} " +
@@ -1031,24 +1019,20 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             else if (startingBatch && _lastHandHolderCount == 0)
             {
-                // BISECT EXPERIMENT: the committed (3443cb4) empty-hand fallback, restored to test whether its removal broke touch.
+                // No turn was seen (the query failed or the turn number is unreadable): an empty hand still starts from the
+                // game's base draw size, which is the old fallback and covers the first turn of a fight.
                 _handCountLock = Math.Clamp(refl.HandDrawCount(), 0, HandCardLimit);
             }
-            // Only a turn change may lock a draw's size (see the turn-number block above); any other batch, including one
-            // that starts from an empty hand (a hand emptied by Exhaust and refilled, or a test's SetHand), lays out for the
-            // count it actually holds, so a live count is never replaced by a guessed draw size.
             _handBatchMsec = 0.0;
         }
-        int previousHolderCount = _lastHandHolderCount;
         _lastPlayerTurnNumber = playerTurn;
         _lastHandHolderCount = activeHolders.Count;
         if (activeHolders.Count == 0)
-            ReleaseHandLock();
-
-        // The count the hand is laid out for, taken after the lock this pass may have just set: a draw's first card is
-        // placed for the size the draw ends at on its own frame, not one frame later (which sent it to the centred slot
-        // first and then glided it back).
-        int handCount = heldIndex >= 0 ? effectiveCount : Math.Max(activeHolders.Count, _handCountLock);
+        {
+            _handDrawBatch = false;
+            _handCountLock = 0;
+            _handAddIntervalMsec = 0.0;
+        }
 
         // Everything below is reflective work per card, and the game only re-lays the hand out after an add, a focus, a
         // selection or a card-play change, all of which are signals or one cheap field. So the pass runs when one of those
@@ -1125,9 +1109,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
             bool isFocused = focusedIndex == i;
             var slotPosition = new Vector2(slot.LocalX, slot.LocalY);
-            // A card pressed, focused or being dragged owns itself; the draw's cap never touches it.
-            bool interactive = isFocused || PhoneTouchCards.CardIsBeingDragged ||
-                PhoneTouchCards.PressedHolder == holder;
 
             // A card's first pass is its arrival: the game has just created the holder at the draw pile and stepped it once
             // toward its desktop target. Put it back at the pile, at its resting size, so the first drawn frame is the card
@@ -1153,7 +1134,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // never touched: it moved since the last pass.
             if (_stillness.IsStalled(holder, slotPosition))
                 refl.HolderSetTargetPosMethod?.Invoke(holder, [slotPosition]);
-            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive);
+            CapArrivalMotion(holder, slot, slotPosition, hand, refl);
             _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale),
                 isFocused ? 0f : slot.AngleDegrees);
 
@@ -1171,31 +1152,14 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 $"step={_diagnoseStep:F1} allowed={_diagnoseAllowed:F1} weight={_diagnoseWeight:F3}");
         }
 
-        // A strict lock belongs to the draw that set it. A hand that shrank (a card played, discarded, exhausted, or the
-        // whole hand replaced), a card under a finger or being dragged, or an open card selection makes the locked size
-        // stale at once: the live count is the right layout from this frame on.
-        if (_handLockStrict &&
-            (activeHolders.Count < previousHolderCount || PhoneTouchCards.PressedHolder != null ||
-             PhoneTouchCards.CardIsBeingDragged || refl.HandInCardSelectionProp?.GetValue(hand) is true))
-            ReleaseHandLock();
-
-        // A turn draw with a known size keeps its layout until that many cards have arrived: the quiet window is measured in
-        // process time and on a slow device it elapses between two arrivals of the same draw, which would re-centre the hand
-        // mid-draw. Only the long timeout (the draw coming up short, e.g. the pile ran out) ends it early; draws without a
-        // known size keep the adaptive quiet window.
-        bool reachedLock = _handCountLock > 0 && activeHolders.Count >= _handCountLock;
-        bool release = _handLockStrict
-            ? reachedLock || _handLockMsec > HandDrawLockTimeoutMsec
-            : reachedLock || _handBatchMsec > QuietWindowMsec();
-        if (_handDrawBatch && release)
+        if (_handDrawBatch && (_handCountLock > 0 && activeHolders.Count >= _handCountLock
+                || _handBatchMsec > QuietWindowMsec()))
         {
             // The hand reached the draw size, or the draw stopped arriving. A hand that ended up smaller than the draw size
             // is centred now, from the left, which is the only direction it can move: nothing is ever sent right of where
             // it rests.
             _handDrawBatch = false;
             _handCountLock = 0;
-            _handLockStrict = false;
-            _handLockMsec = 0.0;
             _handAddIntervalMsec = 0.0;
         }
 
@@ -1216,36 +1180,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     _dimmedCardChildren.Remove(cardId);
             }
         }
-    }
-
-    /// <summary>
-    /// Counts a locked turn draw's patience down on every frame, whether the hand pass runs or not, on the same process
-    /// clock the draw uses: a draw that stops arriving short of its size (a replaced hand, a pile that ran out, a device
-    /// that stalls) gives the lock up after <see cref="HandDrawLockTimeoutMsec"/> and the hand lays out for what it holds.
-    /// </summary>
-    private void TickHandLock(Control hand)
-    {
-        if (!_handLockStrict)
-            return;
-        _handLockMsec += Math.Min(hand.GetProcessDeltaTime() * 1000.0, HandDrawMaxFrameMsec);
-        if (_handLockMsec > HandDrawLockTimeoutMsec)
-            ReleaseHandLock();
-    }
-
-    /// <summary>
-    /// Gives up a turn draw's locked size: the batch that goes with it ends too, so the hand follows its live count from this
-    /// frame on. Used when the hand changes by any means other than that draw (cards leaving, a press, a drag, a selection,
-    /// the turn ending) and when the lock times out.
-    /// </summary>
-    private void ReleaseHandLock()
-    {
-        _handDrawBatch = false;
-        // The next frame must lay the hand out again for the live count, whatever the pass gate would otherwise decide.
-        _handDirty = true;
-        _handCountLock = 0;
-        _handLockStrict = false;
-        _handLockMsec = 0.0;
-        _handAddIntervalMsec = 0.0;
     }
 
     /// <summary>
@@ -1312,57 +1246,31 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     }
 
     /// <summary>
-    /// While a turn draw's batch is open, a card may only move along its own line to the slot: the frame's displacement
-    /// is projected on <c>slot − previous</c> and clamped to the game's own lerp share for the frame. A native layout step
-    /// in another direction (the desktop slot on an add, up to ~(+50,+160) on a long frame) is therefore never drawn, while
-    /// a card that is gliding normally keeps exactly its motion; one that carries several native steps in a frame (measured:
-    /// up to 3-4 on uneven frames) is held to the game's own <c>dt * 7</c> share. A card already at its slot (within 2 u)
-    /// does not move at all during a draw, and the angle may only turn toward the slot's. Scale never exceeds the resting
-    /// scale. Outside a draw nothing is touched, and a card the player owns (pressed, focused, dragged) is never touched.
+    /// A card in flight, and its size. The game's animation lerps by <c>dt * 7</c> per frame, but a single drawn frame can
+    /// carry more than one of those steps: its layout pass moves the holder toward its desktop slot as well, and on uneven
+    /// frames the async loop resumes more than once before the next frame is drawn (measured: up to 3-4 native steps in one
+    /// 6-17 ms frame on the arrivals). So every frame a card is moving is capped at one native step — <c>dt * 7</c> of the
+    /// distance left to its slot — which is exactly the speed the game's own animation has for that frame, at any frame
+    /// rate; a card that is gliding normally is never touched. A card also never draws larger than its resting scale (the
+    /// scale lerp overshoots on a long frame).
     /// </summary>
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
-        CombatReflection refl, bool interactive)
+        CombatReflection refl)
     {
-        if (interactive || !_handLockStrict) // BISECT EXPERIMENT: turn draws only (was !_handDrawBatch)
-            return;
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
             holder.Scale = new Vector2(slot.Scale, slot.Scale);
             refl.HolderTargetScaleField?.SetValue(holder, new Vector2(slot.Scale, slot.Scale));
         }
         Vector2 previous = _stillness.PreviousPosition(holder, holder.Position);
+        float step = holder.Position.DistanceTo(previous);
         float weight = Mathf.Clamp((float)hand.GetProcessDeltaTime() * 7f, 0f, 1f);
-        Vector2 toSlot = slotPosition - previous;
-        float length = toSlot.Length();
-        _diagnoseStep = holder.Position.DistanceTo(previous);
+        float allowed = previous.DistanceTo(slotPosition) * weight + 1f;
+        _diagnoseStep = step;
+        _diagnoseAllowed = allowed;
         _diagnoseWeight = weight;
-        _diagnoseAllowed = length * weight + 1f;
-        if (length <= 2f)
-        {
-            // Settled: the card stays exactly where it was, whatever the native animation did this frame.
-            holder.Position = previous;
-        }
-        else
-        {
-            Vector2 direction = toSlot / length;
-            float along = (holder.Position - previous).Dot(direction);
-            float most = length * weight + 1f;
-            holder.Position = previous + direction * Mathf.Clamp(along, 0f, most);
-        }
-
-        float seenAngle = _stillness.PreviousRotation(holder, holder.RotationDegrees);
-        float turnToSlot = slot.AngleDegrees - seenAngle;
-        if (Mathf.Abs(turnToSlot) <= 0.1f)
-        {
-            holder.RotationDegrees = seenAngle;
-        }
-        else
-        {
-            float sign = MathF.Sign(turnToSlot);
-            float along = (holder.RotationDegrees - seenAngle) * sign;
-            float most = Mathf.Abs(turnToSlot) * weight + 0.1f;
-            holder.RotationDegrees = seenAngle + sign * Mathf.Clamp(along, 0f, most);
-        }
+        if (step > allowed)
+            holder.Position = previous + (holder.Position - previous) * (allowed / step);
     }
 
     /// <summary>
