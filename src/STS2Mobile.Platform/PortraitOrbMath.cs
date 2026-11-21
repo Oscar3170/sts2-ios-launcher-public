@@ -35,6 +35,13 @@ public readonly record struct PortraitOrbArcPlan(
     public float HalfWidth => Pitch * Math.Max(0, Count - 1) * 0.5f;
 
     /// <summary>
+    /// Half the square an orb occupies on the canvas: the larger of its art and its invisible touch region (the scene's
+    /// <c>Bounds</c>), which is what the harness measures and the finger presses. The layout keeps this whole square off
+    /// the canvas edges, the orbit line and the rail, not just the smaller art inside it.
+    /// </summary>
+    public float BoxHalf => PortraitOrbMath.BoxHalfFor(IconWorld, TouchWorld);
+
+    /// <summary>
     /// The centre of orb <paramref name="index"/> on the canvas. The native arc runs from −150° to −25° about the anchor,
     /// so its ends hang below its middle; the single arc keeps its ends on the anchor line and lifts the middle by
     /// <see cref="Depth"/>.
@@ -56,12 +63,12 @@ public readonly record struct PortraitOrbArcPlan(
 
     /// <summary>
     /// The orb's drawn square on the canvas, as the harness measures it: its centre is the orb node's own place and its
-    /// side is the orb art's world size (the scene's 60-unit bounds at the orb's and the manager's scale).
+    /// side is <see cref="BoxHalf"/> — the touch region the player's finger hits (the art sits inside it).
     /// </summary>
     public (float Left, float Top, float Right, float Bottom) IconBox(int index)
     {
         (float x, float y) = Position(index);
-        float half = IconWorld * 0.5f;
+        float half = BoxHalf;
         return (x - half, y - half, x + half, y + half);
     }
 }
@@ -141,8 +148,11 @@ public static class PortraitOrbMath
     /// <summary>How far below the orbit top the native arc's centre sits at least (a radius plus this).</summary>
     public const float NativeOrbitGap = 80f;
 
-    /// <summary>The gap every icon keeps from the canvas edges.</summary>
-    public const float CanvasEdgeMargin = 8f;
+    /// <summary>
+    /// The gap every orb box keeps from the canvas edges: the 8 units the harness measures plus a half-unit cushion,
+    /// because the box is placed from the manager's transform and re-measured through the canvas a frame later.
+    /// </summary>
+    public const float CanvasEdgeMargin = 8.5f;
 
     /// <summary>The value labels' drawn height: the 10-point floor the dense queue must never go under.</summary>
     public const float ValueWorldHeight = 29f;
@@ -162,6 +172,14 @@ public static class PortraitOrbMath
     /// <summary>The drawn icon's world size for a manager drawn at <paramref name="orbWorldScale"/>.</summary>
     public static float IconWorldFor(float orbWorldScale) =>
         OrbBoundsUnits * MathF.Max(0.01f, orbWorldScale) * OrbLocalScale;
+
+    /// <summary>
+    /// Half the square an orb is drawn and pressed in: the larger of its art and its touch region (the scene's
+    /// <c>Bounds</c> at the orb's own scale). Everything the layout keeps inside the canvas is this square, not the
+    /// smaller art inside it.
+    /// </summary>
+    public static float BoxHalfFor(float iconWorld, float touchWorld) =>
+        MathF.Max(iconWorld, touchWorld * OrbLocalScale) * 0.5f;
 
     /// <summary>
     /// The arc for one player's queue. <paramref name="ownerCenterX"/> and <paramref name="ownerTopY"/> are the owner's
@@ -188,13 +206,16 @@ public static class PortraitOrbMath
         int orbs = Math.Max(1, count);
         float world = MathF.Max(0.01f, orbWorldScale);
         float iconWorld = IconWorldFor(world);
-        float iconHalf = iconWorld * 0.5f;
         bool single = singleArc || orbs >= 4;
         float touch = orbs >= 5 ? DenseTouchWorld : single ? SingleTouchWorld : NativeTouchWorld;
+        // The square the layout has to fit is the touch region (never smaller than the art); the fan of the native arc is
+        // measured with it too, so a finger's target is what stays on the canvas.
+        float boxHalf = BoxHalfFor(iconWorld, touch);
         if (!single)
-            return NativeArc(orbs, ownerCenterX, ownerTopY, canvasWidth, orbitTopY, railTopY, world, iconWorld, touch);
+            return NativeArc(orbs, ownerCenterX, ownerTopY, canvasWidth, orbitTopY, railTopY, world, iconWorld, boxHalf,
+                touch);
         return SingleArc(orbs, ownerCenterX, ownerTopY, canvasWidth, orbitTopY, railTopY,
-            MathF.Max(0f, labelWorldWidth), laneLeft, laneRight, world, iconWorld, iconHalf, touch);
+            MathF.Max(0f, labelWorldWidth), laneLeft, laneRight, world, iconWorld, boxHalf, touch);
     }
 
     private static PortraitOrbArcPlan NativeArc(
@@ -206,23 +227,24 @@ public static class PortraitOrbMath
         float railTopY,
         float world,
         float iconWorld,
+        float boxHalf,
         float touch)
     {
         float radius = NativeRadius;
-        float iconHalf = iconWorld * 0.5f;
         // The arc's own reach, measured from its anchor: −cos(−150°)r right of it, −cos(−25°)r left of it and sin(−25°)r
         // below it (its middle is a full radius above).
         float rightReach = 0.8660254f * radius;
         float leftReach = 0.9063078f * radius;
         float belowReach = 0.4226183f * radius;
-        float left = leftReach + iconHalf + CanvasEdgeMargin;
-        float right = canvasWidth - rightReach - iconHalf - CanvasEdgeMargin;
+        float left = leftReach + boxHalf + CanvasEdgeMargin;
+        float right = canvasWidth - rightReach - boxHalf - CanvasEdgeMargin;
         float desiredX = MathF.Max(ownerCenterX, radius + 103f);
         float centerX = Math.Clamp(desiredX, left, MathF.Max(left, right));
-        // The arc's top keeps its 8-unit clearance under the orbit line and its lowest orb its 8 above the rail: the centre
-        // is the one line both bounds can agree on. A room too short for the arc keeps the top bound (readability wins).
+        // The arc's top keeps its edge clearance under the orbit line and its lowest box its clearance above the rail: the
+        // centre is the one line both bounds can agree on. A room too short for the arc keeps the top bound (readability
+        // wins).
         float lowestY = orbitTopY + radius + NativeOrbitGap;
-        float highestY = railTopY - CanvasEdgeMargin - iconHalf - belowReach;
+        float highestY = railTopY - CanvasEdgeMargin - boxHalf - belowReach;
         float desiredY = MathF.Max(ownerTopY - NativeBodyRise, lowestY);
         float centerY = MathF.Min(desiredY, MathF.Max(lowestY, highestY));
         return new PortraitOrbArcPlan(PortraitOrbArcKind.Native, orbs, radius, 0f, 0f, centerX, centerY, world,
@@ -241,7 +263,7 @@ public static class PortraitOrbMath
         float laneRight,
         float world,
         float iconWorld,
-        float iconHalf,
+        float boxHalf,
         float touch)
     {
         // The pitch: the labels never collide, a four-orb row leaves no art touching, and a five-to-ten queue overlaps on
@@ -269,11 +291,11 @@ public static class PortraitOrbMath
         }
         float half = pitch * (orbs - 1) * 0.5f;
         float centerX = orbs <= 1
-            ? Math.Clamp(ownerCenterX, CanvasEdgeMargin + iconHalf, canvasWidth - CanvasEdgeMargin - iconHalf)
+            ? Math.Clamp(ownerCenterX, CanvasEdgeMargin + boxHalf, canvasWidth - CanvasEdgeMargin - boxHalf)
             : Math.Clamp(ownerCenterX, left + half, MathF.Max(left + half, right - half));
         // The queue floats above the owner's head; its ends rest on the anchor line and its middle rises by the depth.
-        float lowestY = orbitTopY + SingleArcDepth + iconHalf + CanvasEdgeMargin;
-        float highestY = railTopY - CanvasEdgeMargin - iconHalf;
+        float lowestY = orbitTopY + SingleArcDepth + boxHalf + CanvasEdgeMargin;
+        float highestY = railTopY - CanvasEdgeMargin - boxHalf;
         float desiredY = MathF.Max(ownerTopY - SingleArcBodyRise, orbitTopY + SingleArcOrbitGap);
         float centerY = MathF.Min(desiredY, MathF.Max(lowestY, highestY));
         return new PortraitOrbArcPlan(PortraitOrbArcKind.Single, orbs, 0f, pitch, SingleArcDepth, centerX, centerY,

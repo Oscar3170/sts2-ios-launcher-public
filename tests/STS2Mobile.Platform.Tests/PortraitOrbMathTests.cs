@@ -174,7 +174,18 @@ public class PortraitOrbMathTests
         Assert.True(plan.Pitch < 44f);
         Assert.Equal(48f, plan.Position(9).X, 0.01f);
         Assert.Equal(400f, plan.Position(0).X, 0.01f);
-        Assert.True(plan.IconBox(0).Right < 400f + plan.IconWorld);
+        Assert.True(plan.IconBox(0).Right < 400f + plan.BoxHalf + 0.01f);
+    }
+
+    [Fact]
+    public void TheDrawnBoxNotTheArtKeepsTheCanvasMargin()
+    {
+        // The 9:19.5 ten-orb failure: the lane was padded by the art's half (37.5) while the touch box is 39.5 wide, so the
+        // leftmost box measured 7.97. The lane padding now covers the box, leaving the harness's 8 units and its cushion.
+        float boxHalf = TallPlan(10).BoxHalf;
+        PortraitOrbArcPlan plan = TallPlan(10, laneLeft: boxHalf + 10f, laneRight: 700f);
+        Assert.True(plan.IconBox(9).Left >= PortraitOrbMath.CanvasEdgeMargin, $"left {plan.IconBox(9).Left}");
+        Assert.True(plan.IconBox(9).Left >= 8.5f);
     }
 
     [Fact]
@@ -214,15 +225,19 @@ public class PortraitOrbMathTests
     }
 
     [Fact]
-    public void OrbIconIsTheBoundsSceneSizeAtTheOrbAndManagerScales()
+    public void TheDrawnSquareIsWhicheverIsLargerOfTheArtAndTheTouchRegion()
     {
         Assert.Equal(60f * 1.48f * 0.85f, PortraitOrbMath.IconWorldFor(1.48f), 0.001f);
-        PortraitOrbArcPlan plan = TallPlan(3);
-        Assert.Equal(PortraitOrbMath.IconWorldFor(1.48f), plan.IconWorld, 0.001f);
-        (float left, float top, float right, float bottom) = plan.IconBox(1);
-        Assert.Equal(plan.IconWorld, right - left, 0.001f);
-        Assert.Equal(plan.IconWorld, bottom - top, 0.001f);
-        Assert.Equal(plan.Position(1).X, (left + right) * 0.5f, 0.001f);
+        // The harness measures the orb's Bounds, which is the touch target: 93 units on the dense queue, 148 on the native
+        // arc, each at the orb's own 0.85 — always at least the art it surrounds.
+        PortraitOrbArcPlan sparse = TallPlan(3);
+        Assert.Equal(148f * 0.85f * 0.5f, sparse.BoxHalf, 0.001f);
+        PortraitOrbArcPlan dense = TallPlan(10);
+        Assert.Equal(93f * 0.85f * 0.5f, dense.BoxHalf, 0.001f);
+        (float left, float top, float right, float bottom) = sparse.IconBox(1);
+        Assert.Equal(sparse.BoxHalf * 2f, right - left, 0.001f);
+        Assert.Equal(sparse.BoxHalf * 2f, bottom - top, 0.001f);
+        Assert.Equal(sparse.Position(1).X, (left + right) * 0.5f, 0.001f);
     }
 
     [Fact]

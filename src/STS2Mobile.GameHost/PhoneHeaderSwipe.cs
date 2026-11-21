@@ -45,6 +45,26 @@ internal sealed class PhoneHeaderSwipe
     private Vector2 _start;
     private int _initial;
 
+    /// <summary>
+    /// When the header last scrolled, in engine milliseconds. A tip the game creates under the moving pointer (touch is
+    /// emulated as a mouse, so the pointer hovers every relic it passes) is not a hover the player asked for; the tip fitter
+    /// takes those down for <see cref="TipSuppressMilliseconds"/> after the gesture.
+    /// </summary>
+    public static ulong LastSwipeMsec { get; private set; }
+
+    /// <summary>How long after a swipe a relic or potion tip is still treated as the finger's, not the player's.</summary>
+    public const ulong TipSuppressMilliseconds = 500;
+
+    /// <summary>Whether a header swipe happened within <see cref="TipSuppressMilliseconds"/>.</summary>
+    public static bool RecentlySwiped
+    {
+        get
+        {
+            ulong now = Time.GetTicksMsec();
+            return LastSwipeMsec != 0 && now >= LastSwipeMsec && now - LastSwipeMsec < TipSuppressMilliseconds;
+        }
+    }
+
     public PhoneHeaderSwipe()
     {
         try
@@ -142,6 +162,9 @@ internal sealed class PhoneHeaderSwipe
         Vector2 canvas = ToCanvas(point);
         Control? row = RowAt(canvas);
         if (row == null) return;
+        // A finger put on the row again is a new gesture: a tip it asks for (a stationary hold) is the player's, not the
+        // previous swipe's.
+        LastSwipeMsec = 0;
         _down = true;
         _row = row.GetInstanceId();
         _horizontal = Horizontal(row);
@@ -165,9 +188,12 @@ internal sealed class PhoneHeaderSwipe
                 if (MathF.Abs(along) < StartDistance || MathF.Abs(along) < MathF.Abs(Horizontal(row) ? moved.Y : moved.X) * 1.2f)
                     return;
                 _swiping = true;
-                ClearTips();
                 ReleasePresses(row);
             }
+            // Every frame, not only the first: the game creates a hover tip for whatever relic or potion the emulated pointer
+            // moves onto after the gesture has started.
+            LastSwipeMsec = Time.GetTicksMsec();
+            ClearTips();
             Scroll(row, Horizontal(row) ? -moved.X : -moved.Y);
         }
     }
@@ -175,7 +201,10 @@ internal sealed class PhoneHeaderSwipe
     private void End()
     {
         if (_swiping && _row != 0 && GodotObject.InstanceFromId(_row) is Control row && Valid(row))
+        {
             ReleasePresses(row);
+            LastSwipeMsec = Time.GetTicksMsec();
+        }
         _down = false;
         _swiping = false;
         _row = 0;

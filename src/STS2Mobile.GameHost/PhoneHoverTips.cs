@@ -31,6 +31,8 @@ internal sealed class PhoneHoverTips
     private const string HandHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder";
     private const string PlayerHandTypeName = "MegaCrit.Sts2.Core.Nodes.Combat.NPlayerHand";
     private const string PotionPopupTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionPopup";
+    private const string RelicHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Relics.NRelicInventoryHolder";
+    private const string PotionHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionHolder";
     private const float Margin = 10f;
     private const float Gap = 8f;
 
@@ -100,6 +102,10 @@ internal sealed class PhoneHoverTips
     private static bool ShouldRemove(Control owner)
     {
         if (PhoneTouchCards.CardIsBeingDragged && owner.GetType().FullName == HandHolderTypeName) return true;
+        // A finger dragging the header rows is not hovering: touch is emulated as a mouse, so the pointer passes over every
+        // relic and potion on the way and the game would show each one's tip. Take those down until the gesture is over.
+        if (PhoneHeaderSwipe.RecentlySwiped &&
+            owner.GetType().FullName is RelicHolderTypeName or PotionHolderTypeName) return true;
         if (_parkedEndTurn == null) return false;
         if (!GodotObject.IsInstanceValid(_parkedEndTurn) || !_parkedEndTurn.IsInsideTree() || !_parkedEndTurn.IsVisibleInTree())
         {

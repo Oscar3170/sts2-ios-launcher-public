@@ -23,6 +23,7 @@ internal sealed class PortraitLayout
     private const string TopBarTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar";
     private const string RelicInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Relics.NRelicInventory";
     private const string PotionTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotion";
+    private const string PotionPopupTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionPopup";
     private const string EarlyAccessDisclaimerTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NEarlyAccessDisclaimer";
     private const float DefaultCapHeight = 162f;
     private const float MinCapHeight = 136f;
@@ -121,6 +122,7 @@ internal sealed class PortraitLayout
         public FieldInfo? TweenField;
         public Tween? Fade;
         public bool FadedOut;
+        public int LastCount = -1;
     }
 
     // True from the first portrait layout until landscape has been put back after Portrait Mode is turned off. While it is
@@ -779,6 +781,13 @@ internal sealed class PortraitLayout
     {
         foreach (Node child in node.GetChildren())
         {
+            // A potion's popup is a child of its holder but is drawn and placed below the relic band: its Use and Discard
+            // are the screen's buttons, not the scrolling row's, and keep every touch.
+            if (child.GetType().FullName == PotionPopupTypeName)
+            {
+                ResetHolderInput(child);
+                continue;
+            }
             if (child is NClickableControl clickable)
             {
                 Control.MouseFilterEnum want = visible.Encloses(clickable.GetGlobalRect())
@@ -1463,14 +1472,21 @@ internal sealed class PortraitLayout
 
         var holders = GetRelicHolders(inventory);
         float content = PortraitHeaderMath.RelicContentHeight(holders.Count, clip.Width, PortraitRelicSize, RelicSeparation);
-        float height = MathF.Max(content, inventory.GetCombinedMinimumSize().Y);
         inventory.CustomMinimumSize = new Vector2(clip.Width, 0f);
-        inventory.Size = new Vector2(clip.Width, height);
+        inventory.Size = new Vector2(clip.Width, content);
         inventory.OffsetRight = clip.Width;
         inventory.OffsetBottom = inventory.Size.Y;
         // The scroll container measures the content control: it must advertise the wrapped flow's height, which its own
-        // minimum size does not (it is measured before the wrap).
-        state.Extent.CustomMinimumSize = new Vector2(clip.Width, MathF.Max(inventory.Size.Y, clip.Height));
+        // minimum size does not (it is measured before the wrap, and can be larger than the wrapped lines). Advertising
+        // the larger number let the row scroll past its content, hiding the first line with a blank tail below the last.
+        state.Extent.CustomMinimumSize = new Vector2(clip.Width, MathF.Max(content, clip.Height));
+        // A new relic set starts at its first line: an offset kept from a smaller inventory would hide it (and swiping
+        // back up could not recover it when the old offset exceeded the new content).
+        if (holders.Count != state.LastCount)
+        {
+            state.LastCount = holders.Count;
+            state.Clip.ScrollVertical = 0;
+        }
         SetRelicOriginalPos(inventory, Vector2.Zero);
         inventory.Position = Vector2.Zero;
     }

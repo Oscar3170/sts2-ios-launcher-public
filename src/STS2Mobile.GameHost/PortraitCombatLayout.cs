@@ -3870,7 +3870,7 @@ internal sealed class PortraitCombatLayout
         // The orbit line: below the relic band on a tall phone, the stone header's bottom at 9:16 (decision 10, which lets
         // the short canvas's arc rise over the relic strip rather than over the hero).
         float capHeight = MathF.Max(0f, bands.StageTopY - PortraitBands.RunContentTop);
-        float orbitTop = bands.Compact ? capHeight + PortraitBands.TopBarHeight : bands.StageTopY;
+        float orbitTop = bands.Compact ? PortraitBands.HeaderBottom(capHeight) : PortraitBands.RelicBandBottom(capHeight);
 
         // The label walk is not per frame, but it is also not only on a slot count change: an evoke replaces one orb with
         // another at the same slot, and the new orb's own labels have to be raised and measured too. An orb that is here
@@ -3887,12 +3887,11 @@ internal sealed class PortraitCombatLayout
             orbMgr.SetMeta(OrbLabelWidthMeta, labelWidth);
         }
 
-        float iconHalf = PortraitOrbMath.IconWorldFor(orbWorld) * 0.5f;
         PortraitOrbArcPlan plan = PlanOrbArc(count, body, bands, orbitTop, labelWidth, orbWorld);
-        if (!plan.IsSingle && OrbArcMeetsEnemy(plan, iconHalf))
+        if (!plan.IsSingle && OrbArcMeetsEnemy(plan))
             plan = PlanOrbArc(count, body, bands, orbitTop, labelWidth, orbWorld, single: true);
-        else if (plan.IsSingle && count > 5 && OrbArcEnemyLane(plan, body.GetCenter().X, iconHalf, out float laneLeft,
-                     out float laneRight))
+        else if (plan.IsSingle && count > 5 &&
+                 OrbArcEnemyLane(plan, body.GetCenter().X, out float laneLeft, out float laneRight))
             plan = PlanOrbArc(count, body, bands, orbitTop, labelWidth, orbWorld, single: true, laneLeft, laneRight);
 
         // The container is pinned on the canvas, joined to the body only through the owner's own line: the game rewrites the
@@ -3966,11 +3965,12 @@ internal sealed class PortraitCombatLayout
     /// phone's arc must not draw through a body, its health bar or its intents. The probe keeps a margin past the icon and
     /// covers the bar above the body; it is measured against the stage pass's enemies, which stand where they are drawn.
     /// </summary>
-    private bool OrbArcMeetsEnemy(in PortraitOrbArcPlan plan, float iconHalf)
+    private bool OrbArcMeetsEnemy(in PortraitOrbArcPlan plan)
     {
         if (_stageEnemies.Count == 0)
             return false;
-        float reach = iconHalf + PortraitOrbMath.CanvasEdgeMargin;
+        // The probe measures the whole square the finger hits (the touch region, never the smaller art inside it).
+        float reach = plan.BoxHalf + PortraitOrbMath.CanvasEdgeMargin;
         for (int i = 0; i < plan.Count; i++)
         {
             (float x, float y) = plan.Position(i);
@@ -3996,14 +3996,14 @@ internal sealed class PortraitCombatLayout
     /// next to a boss is squeezed into the wall beside it instead of drawn over its body and bar (the phone's answer to a
     /// boss occupying the stage's middle). False when no enemy stands to the right or the lane cannot hold the queue.
     /// </summary>
-    private bool OrbArcEnemyLane(in PortraitOrbArcPlan plan, float ownerCenterX, float iconHalf, out float laneLeft,
-        out float laneRight)
+    private bool OrbArcEnemyLane(in PortraitOrbArcPlan plan, float ownerCenterX, out float laneLeft, out float laneRight)
     {
         laneLeft = 0f;
         laneRight = 0f;
         if (_stageEnemies.Count == 0)
             return false;
-        float extent = iconHalf + 10f;
+        // The lane's own clearance covers the whole touch square plus 10 units, so no part of an orb reaches the body.
+        float extent = plan.BoxHalf + 10f;
         laneLeft = extent;
         laneRight = SafeAreaCanvas.PortraitWidth - extent;
         bool found = false;
