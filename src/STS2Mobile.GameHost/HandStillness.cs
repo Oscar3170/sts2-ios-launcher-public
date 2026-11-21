@@ -103,22 +103,6 @@ internal sealed class HandStillness
         return (holder.GlobalPosition - record.Global).LengthSquared() > 0.25f;
     }
 
-    /// <summary>Diagnostic (temporary, Reduce Effects restore): which component still differs from the last record.</summary>
-    internal string MovedDetail(Control holder)
-    {
-        if (!_records.TryGetValue(holder.GetInstanceId(), out Place record)) return "new";
-        var parts = new List<string>(4);
-        Vector2 position = holder.Position - record.Position;
-        if (position.LengthSquared() > 0.25f) parts.Add("pos=" + position + "@" + holder.Position + "/" + record.Position);
-        Vector2 global = holder.GlobalPosition - record.Global;
-        if (global.LengthSquared() > 0.25f) parts.Add("global=" + global);
-        Vector2 scale = holder.Scale - record.Scale;
-        if (scale.LengthSquared() > 0.000004f) parts.Add("scale=" + holder.Scale + "/" + record.Scale);
-        float angle = holder.RotationDegrees - record.Rotation;
-        if (Mathf.Abs(angle) > 0.05f) parts.Add("angle=" + angle.ToString("F2") + "@" + holder.RotationDegrees + "/" + record.Rotation);
-        return parts.Count == 0 ? "none" : string.Join(" ", parts);
-    }
-
     /// <summary>
     /// Whether the holder is short of <paramref name="target"/> and has not moved at all since the previous pass: its
     /// native position animation has ended (the game cancels it when a layout pass sets a new target, and the restore above

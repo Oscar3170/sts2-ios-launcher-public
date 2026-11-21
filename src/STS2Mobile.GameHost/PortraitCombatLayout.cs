@@ -429,11 +429,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     // refilled per pass for the cards that left the hand.
     private readonly Dictionary<ulong, ReducedCardEffects> _reducedCardEffects = new();
     private readonly List<ulong> _reduceRestoreIds = new();
+    private readonly HashSet<ulong> _liveReducedCardIds = new();
     private bool _lastReduceEffects;
     // The last frame any holder moved; the backstop bound that restores reduced cards (see ReducedHandQuietFrames).
     private long _handLastMotionFrame = long.MinValue / 4;
-    private int _reduceDiagLines;
-    private long _reduceDiagFrame;
     private readonly HashSet<ulong> _wiredHolders = new();
     private readonly HashSet<ulong> _wiredSelectionHands = new();
     private readonly HashSet<ulong> _wiredSelectionContainers = new();
@@ -1269,6 +1268,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         HashSet<ulong> activeDimmedCardIds = _activeDimmedCardIds;
         activeDimmedCardIds.Clear();
         bool anyShiftedThisFrame = false;
+        // The card nodes this pass laid out: a reduced entry whose card is not here (the node was replaced, pooled, its
+        // holder was skipped, or it left the hand) belongs to no card on screen and is put back in the sweep below.
+        HashSet<ulong> liveCards = _liveReducedCardIds;
+        liveCards.Clear();
 
         // The two state inputs a card's playability depends on, read once for the whole hand.
         (int energy, int stars) = refl.PlayerResources(hand);
@@ -1353,6 +1356,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
             if (cardNode != null)
             {
+                liveCards.Add(cardNode.GetInstanceId());
                 ApplyCardPlayabilityVisuals(holder, cardNode, refl, combatInProgress, playable, activeDimmedCardIds, resting,
                     holderShifted, frame);
             }
@@ -1363,12 +1367,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // is the backstop that puts a card's effects back even if one holder's own signal never settles.
         if (anyShiftedThisFrame) _handLastMotionFrame = frame;
         _handMoving = _handDrawBatch || anyShiftedThisFrame;
-        // Temporary: why a reduced card is not being restored yet (bounded to 40 lines for the harness run).
-        if (_reducedCardEffects.Count > 0 && !_handMoving && _reduceDiagLines < 40 && frame - _reduceDiagFrame >= 10)
-        {
-            _reduceDiagFrame = frame;
-            LogReducedHeld(activeHolders, frame);
-        }
         _handMovingFrame = (ulong)frame;
         // A draw's first frame is already past the process step, where the frame cap was last decided and could not yet
         // see the hand move; decide again now, with it moving, so not even that frame is held at the idle rate.
@@ -1418,7 +1416,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
 
         // A reduced card that left the hand mid-draw gets its glow and shadow back before it is drawn anywhere else.
-        RestoreReducedEffectsOfLeavingCards(container);
+        RestoreReducedEffectsOfLostCards();
     }
 
     /// <summary>
@@ -2411,8 +2409,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 if (!ReduceEffects || still > ReducedSettleFrames || handQuiet || capped)
                 {
                     RestoreReducedCardEffects(cardId);
-                    if (handQuiet || capped)
-                        LogReducedRestore(holder, cardId, still, handQuiet ? "hand-quiet" : "cap");
                     return;
                 }
                 // The game may start a new glow tween while the card is still moving (a cost change, a model update), and
@@ -2460,32 +2456,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _reducedCardEffects[cardId] = state;
     }
 
-    /// <summary>
-    /// Temporary diagnostic for the bounded restore: prints why a card that was still being reported as moving had to be
-    /// put back, with the component that kept its holder "moving". Remove together with HandStillness.MovedDetail.
-    /// </summary>
-    private void LogReducedHeld(List<Control> holders, long frame)
-    {
-        _reduceDiagLines++;
-        var text = new System.Text.StringBuilder("[Reduce diag] held");
-        text.Append(" frame=").Append(frame).Append(" cards=").Append(holders.Count)
-            .Append(" reduced=").Append(_reducedCardEffects.Count)
-            .Append(" handQuietFor=").Append(frame - _handLastMotionFrame);
-        foreach (Control holder in holders)
-            text.Append(" [").Append(holder.GetIndex()).Append(' ').Append(_stillness.MovedDetail(holder)).Append(']');
-        GD.Print(text.ToString());
-    }
-
-    private void LogReducedRestore(Control holder, ulong cardId, long still, string why)
-    {
-        if (_reduceDiagLines >= 40)
-            return;
-        _reduceDiagLines++;
-        GD.Print($"[Reduce diag] {why} card={cardId} frame={Engine.GetProcessFrames()} still={still}f " +
-            $"hand_quiet_for={Engine.GetProcessFrames() - (ulong)_handLastMotionFrame}f moved={_stillness.MovedDetail(holder)} " +
-            $"pos={holder.Position} scale={holder.Scale} angle={holder.RotationDegrees:F2}");
-    }
-
     /// <summary>Puts a card's glow and shadow back, writing the glow width once instead of running its tween.</summary>
     private void RestoreReducedCardEffects(ulong cardId)
     {
@@ -2504,30 +2474,24 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     }
 
     /// <summary>
-    /// A card that left the hand while its effects were reduced (an effect played it straight out of a draw, or the hand
-    /// went away mid-draw) gets them back before it is shown anywhere else and before its node goes back to the pool,
-    /// whose reset does not touch the highlight's visibility.
+    /// A reduced entry whose card is not one of the nodes this pass laid out belongs to no card on screen any more: the
+    /// card left the hand, its node was pooled (the pool reset does not touch the highlight's visibility), or its holder
+    /// was replaced while the entry stayed keyed to the old node. It gets its effects back here, before it is shown
+    /// anywhere else. This is also what makes a held glow impossible: an entry the pass never sees is always restored on
+    /// the next pass, whatever its motion bookkeeping says.
     /// </summary>
-    private void RestoreReducedEffectsOfLeavingCards(Control container)
+    private void RestoreReducedEffectsOfLostCards()
     {
         if (_reducedCardEffects.Count == 0)
             return;
-        List<ulong> leaving = _reduceRestoreIds;
-        leaving.Clear();
-        foreach ((ulong cardId, ReducedCardEffects state) in _reducedCardEffects)
+        List<ulong> lost = _reduceRestoreIds;
+        lost.Clear();
+        foreach (ulong cardId in _reducedCardEffects.Keys)
         {
-            bool stillInTheHand =
-                GodotObject.InstanceFromId(state.HolderId) is Control holder &&
-                GodotObject.IsInstanceValid(holder) &&
-                holder.GetParent() == container &&
-                GodotObject.InstanceFromId(cardId) is Control card &&
-                GodotObject.IsInstanceValid(card) &&
-                card.IsInsideTree() &&
-                card.IsVisibleInTree();
-            if (!stillInTheHand)
-                leaving.Add(cardId);
+            if (!_liveReducedCardIds.Contains(cardId))
+                lost.Add(cardId);
         }
-        foreach (ulong cardId in leaving)
+        foreach (ulong cardId in lost)
             RestoreReducedCardEffects(cardId);
     }
 
