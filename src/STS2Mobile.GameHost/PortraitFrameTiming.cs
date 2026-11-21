@@ -14,16 +14,22 @@ namespace STS2Mobile.GameHost;
 ///
 /// A pass that only runs on frames whose inputs changed (the hand and rail passes) is reported as the mean and worst of
 /// the frames it ran in, with that count: <c>hand=0.31/1.90@7</c> is 0.31 ms over 7 frames, 1.90 ms worst.
+///
+/// Four buckets nest inside another pass and are reported on their own as well: <c>stage</c> and <c>selection</c> inside
+/// <c>combat</c> (the room pass), <c>orbs</c> inside <c>preDraw</c>, and <c>hpText</c> inside <c>labels</c>.
 /// </summary>
 internal static class PortraitFrameTiming
 {
-    internal const int PassCount = 12;
+    internal const int PassCount = 14;
     internal const int Combat = 0, Ftue = 1, Stage = 2, Labels = 3, Status = 4, Vfx = 5,
-        Hand = 6, Rail = 7, Selection = 8, PreDraw = 9, Hover = 10, Touch = 11;
+        Hand = 6, Rail = 7, Selection = 8, PreDraw = 9, Hover = 10, Touch = 11, Orbs = 12, HpText = 13;
 
     /// <summary>The field names of the printed line, indexed by the pass constants above.</summary>
     internal static readonly string[] Names =
-        ["combat", "ftue", "stage", "labels", "status", "vfx", "hand", "rail", "selection", "preDraw", "hover", "touch"];
+    [
+        "combat", "ftue", "stage", "labels", "status", "vfx", "hand", "rail", "selection", "preDraw", "hover", "touch",
+        "orbs", "hpText",
+    ];
 
     private static readonly double Millisecond = 1000.0 / Stopwatch.Frequency;
     // The frame being measured: a pass that runs twice in one frame (the hand pass in the process and pre-draw passes)

@@ -59,7 +59,8 @@ private void OnFramePreDraw()
                 // The game writes its orb manager's own place and scale from the creature's bounds whenever it lays the
                 // creature out (NCreature.SetOrbManagerPosition), and that write lands after this frame's stage pass: the
                 // arc's fit is re-applied here, after every native process/tween step and before the draw, like the rail.
-                RefitOrbArcs(room, refl);
+                using (PortraitFrameTiming.Begin(PortraitFrameTiming.Orbs))
+                    RefitOrbArcs(room, refl);
             }
         }
         catch (Exception error)
@@ -80,7 +81,7 @@ private void OnFramePreDraw()
 /// </summary>
 private void RefitOrbArcs(Control room, CombatReflection refl)
 {
-    if (_lastBands is not { } bands || refl.RoomCreatureNodesField?.GetValue(room) is not IEnumerable creatures)
+    if (!_orbsOnStage || _lastBands is not { } bands || refl.RoomCreatureNodesField?.GetValue(room) is not IEnumerable creatures)
         return;
     foreach (object? item in creatures)
     {
@@ -287,7 +288,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         PortraitCombatMath.UnaffordableCostRgba.B,
         PortraitCombatMath.UnaffordableCostRgba.A);
 
-    private static readonly HashSet<string> SkippedCardBodyChildren = new(StringComparer.Ordinal)
+    private static readonly HashSet<StringName> SkippedCardBodyChildren = new()
     {
         "Shadow",
         "Highlight",
@@ -414,9 +415,35 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     // emptied hand) follow the native animation and the adaptive quiet window.
     private bool _turnDrawBatch;
     private PortraitCombatBands? _lastBands;
+    // Whether any player on the stage has an orb queue at all: the pre-draw orb refit has nothing to do otherwise.
+    private bool _orbsOnStage;
     private List<LabelRequest>? _pendingLabels;
     // The frame's label requests, refilled rather than allocated every frame (the batch only reads the list).
     private readonly List<LabelRequest> _labelRequests = new();
+    // The hand pass's per-pass collections are refilled rather than allocated: the pass runs every drawn frame of a draw.
+    private readonly List<Control> _activeHolders = new();
+    private readonly List<Control> _allHoldersInHand = new();
+    private readonly HashSet<ulong> _activeDimmedCardIds = new();
+    // The cards leaving the dimmed set, refilled per pass (the pass runs on every drawn frame of a draw).
+    private readonly List<ulong> _restoreCardIds = new();
+    // One argument array for every reflective setter call (the boxed value still allocates; the array does not).
+    private readonly object[] _oneArg = new object[1];
+    // The few node lookups the hand and selection passes make on every pass: a holder's hand-index label, and the hand's
+    // selected-card container (both remembered while they stay in the tree).
+    private readonly Dictionary<ulong, Label> _handIndexLabels = new();
+    private readonly Dictionary<ulong, Control> _selectionContainerCache = new();
+    // The status batch's planning collections, refilled per frame instead of allocated (see the batch).
+    private readonly List<(LabelRequest Request, StatusIconLayout? Layout, int Rank, float RowY)> _plannedLabels = new();
+    private readonly Dictionary<(int Rank, float RowY), List<int>> _statusRows = new();
+    private readonly List<List<int>> _statusRowIndexLists = new();
+    private int _statusRowListsUsed;
+    private readonly Dictionary<ulong, StatusIconLayout> _limitedStatus = new();
+    private readonly List<StatusRowEntry> _statusRowEntries = new();
+    private readonly List<(StatusRowEntry Entry, StatusIconLayout Layout)> _statusRowPlan = new();
+    // The hit-box rects one status-planning pass reads (see StatusBodyRect): cleared when a new pass begins.
+    private readonly Dictionary<ulong, Rect2> _statusBodyRects = new();
+    private int _statusBodyEpoch;
+    private int _statusBodyRectsEpoch = -1;
     private CombatRoomState? _pendingRoomState;
     private readonly Dictionary<ulong, (Control Container, Callable Handler)> _wiredPowerContainers = new();
     private float _lastCanvasHeight;
@@ -668,6 +695,21 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         foreach (ulong id in _playability.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _playability.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _handIndexLabels.Keys)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _handIndexLabels.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _selectionContainerCache.Keys)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _selectionContainerCache.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _statusBodyRects.Keys)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _statusBodyRects.Remove(id);
     }
 
     /// <summary>
@@ -681,6 +723,22 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         if (current >= fontSize) return;
         _enlargedFonts.TryAdd(label.GetInstanceId(), current);
         label.AddThemeFontSizeOverride("font_size", fontSize);
+    }
+
+    /// <summary>
+    /// A holder's hand-index label, remembered while it stays valid: the hand pass asks for it every time it runs (every
+    /// drawn frame of a draw) and each <c>%</c> path resolves through the unique-name map.
+    /// </summary>
+    private Label? HandIndexLabel(Control holder)
+    {
+        ulong id = holder.GetInstanceId();
+        if (_handIndexLabels.TryGetValue(id, out Label? known) && GodotObject.IsInstanceValid(known))
+            return known;
+        Label? found = holder.GetNodeOrNull<Label>("%HandIndex") ?? holder.GetNodeOrNull<Label>("HandIndex");
+        if (found == null)
+            return null;
+        _handIndexLabels[id] = found;
+        return found;
     }
 
     private void FitCombatFtueModal(Node root, bool portrait)
@@ -788,11 +846,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             KeepEndTurnUnlitWhileHolding(ui, hand, refl);
         }
         if (hand != null)
-            LayoutHandSelectionPortrait(hand, refl, bands, canvasHeight);
+            using (PortraitFrameTiming.Begin(PortraitFrameTiming.Selection))
+                LayoutHandSelectionPortrait(hand, refl, bands, canvasHeight);
 
         _labelRequests.Clear();
         _pendingLabels = _labelRequests;
-        LayoutCombatStagePortrait(room, refl, state, bands, capHeight, canvasHeight);
+        using (PortraitFrameTiming.Begin(PortraitFrameTiming.Stage))
+            LayoutCombatStagePortrait(room, refl, state, bands, capHeight, canvasHeight);
         List<LabelRequest> pending = _pendingLabels;
         _pendingLabels = null;
         _pendingRoomState = null;
@@ -937,8 +997,11 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         bool inCardPlay = (bool)(refl.HandInCardPlayProp?.GetValue(hand) ?? false);
         object? focusedObj = refl.HandFocusedHolderProp?.GetValue(hand);
 
-        var activeHolders = new List<Control>();
-        var allHoldersInHand = new List<Control>();
+        // The pass's lists are refilled rather than allocated: the pass runs on every drawn frame of a draw.
+        List<Control> activeHolders = _activeHolders;
+        List<Control> allHoldersInHand = _allHoldersInHand;
+        activeHolders.Clear();
+        allHoldersInHand.Clear();
         foreach (Node child in container.GetChildren())
         {
             if (child is Control holder && !holder.IsQueuedForDeletion() &&
@@ -1097,7 +1160,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _lastHandBands = bands;
         _lastHandFlat = FlatHand;
 
-        var activeDimmedCardIds = new HashSet<ulong>();
+        HashSet<ulong> activeDimmedCardIds = _activeDimmedCardIds;
+        activeDimmedCardIds.Clear();
 
         // The two state inputs a card's playability depends on, read once for the whole hand.
         (int energy, int stars) = refl.PlayerResources(hand);
@@ -1110,7 +1174,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             WireHolderFocus(holder, hand);
             WireHolderRemoval(holder, hand.GetInstanceId());
             // The card's number in the hand: 32 units are 11 points at the smallest tall hand scale, so the label is 44.
-            EnlargeLabelFont(holder.GetNodeOrNull<Label>("%HandIndex") ?? holder.GetNodeOrNull<Label>("HandIndex"), HandIndexFontSize);
+            EnlargeLabelFont(HandIndexLabel(holder), HandIndexFontSize);
         }
 
         for (int i = 0; i < activeHolders.Count; i++)
@@ -1149,15 +1213,20 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             Vector2 currentTargetScale = (Vector2)(refl.HolderTargetScaleField?.GetValue(holder) ?? holder.Scale);
             float currentTargetAngle = (float)(refl.HolderTargetAngleField?.GetValue(holder) ?? holder.RotationDegrees);
             _stillness.RestoreIfRetargeted(holder, slotPosition, currentTargetPos, currentTargetScale, currentTargetAngle);
-            ApplyHolderTargets(holder, refl, slot, isFocused);
+            ApplyHolderTargets(holder, refl, slot, isFocused, currentTargetPos, currentTargetScale, currentTargetAngle);
             // A holder the game stopped short of its slot (a native target cancelled by a layout pass leaves it where it
             // was) has no animation left to carry it; restart the one step it needs. A card that is simply travelling is
             // never touched: it moved since the last pass.
-            if (_stillness.IsStalled(holder, slotPosition))
-                refl.HolderSetTargetPosMethod?.Invoke(holder, [slotPosition]);
-            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive);
-            _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale),
-                isFocused ? 0f : slot.AngleDegrees);
+            if (_stillness.IsStalled(holder, slotPosition) && refl.HolderSetTargetPosMethod is { } setTargetPos)
+            {
+                _oneArg[0] = slotPosition;
+                setTargetPos.Invoke(holder, _oneArg);
+            }
+            // The transform a card rests at in this slot: the focused card grows straight (0°), every other card takes the
+            // slot's tilt. The settled pin below holds exactly this, and the record stores it.
+            float restingAngle = isFocused ? 0f : slot.AngleDegrees;
+            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive, restingAngle);
+            _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale), restingAngle);
 
             if (cardNode != null)
             {
@@ -1192,7 +1261,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // Undim any previously dimmed card that left the active unplayable hand set (played, discarded, pooled, or now affordable).
         if (_dimmedCardChildren.Count > 0)
         {
-            var restoreIds = new List<ulong>();
+            var restoreIds = _restoreCardIds;
+            restoreIds.Clear();
             foreach (ulong cardId in _dimmedCardChildren.Keys)
             {
                 if (!activeDimmedCardIds.Contains(cardId))
@@ -1280,11 +1350,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// that is gliding normally is never touched.</para>
     /// <para>While a turn draw's batch is open, for a card the player is not holding: the step may only go along the line
     /// to the slot (the frame's displacement is projected on <c>slot − previous</c> and clamped to the same one-step share),
-    /// so a native step in another direction is never drawn; a card already within 2 u of its slot does not move at all; and
-    /// the angle may only turn toward the slot's.</para>
+    /// so a native step in another direction is never drawn; a card within 2 u of its slot is settled exactly onto it (the
+    /// last native step is under a unit, so a card could otherwise stay a fraction short of its slot for ever); and the
+    /// angle may only turn toward the slot's.</para>
     /// </summary>
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
-        CombatReflection refl, bool interactive)
+        CombatReflection refl, bool interactive, float restingAngle)
     {
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
@@ -1300,13 +1371,21 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _diagnoseAllowed = length * weight + 1f;
         if (length <= 2f)
         {
-            // The card was drawn at its slot: nothing the game wrote this frame may move it, whatever the frame was — its
-            // place, its tilt and its size all stay where the last pass left them. This is the settled card a release, an add
-            // or a focus nudges with the first step of a native retarget, and it was the only motion a still hand showed on
-            // the phone.
-            holder.Position = previous;
-            holder.RotationDegrees = _stillness.PreviousRotation(holder, holder.RotationDegrees);
-            holder.Scale = new Vector2(slot.Scale, slot.Scale);
+            // The card has arrived: settle it exactly onto its slot and hold it there, whatever the game wrote this frame.
+            // The native position loop stops within a unit of its target, so a card that arrived a fraction short and was
+            // only held at its previous place could stay short for ever — and the stall detector kept restarting the
+            // loop for it, one CancellationTokenSource and Task per pass. A 2 u move is invisible. This is also the
+            // settled card a release, an add or a focus nudges with the first step of a native retarget, and it was the
+            // only motion a still hand showed on the phone. A value the game did not change is not written back: a set on
+            // the same float still dirties the control's transform and its render item, and a draw re-pins every landed
+            // card on every frame of its batch.
+            if (holder.Position != slotPosition)
+                holder.Position = slotPosition;
+            if (holder.RotationDegrees != restingAngle)
+                holder.RotationDegrees = restingAngle;
+            var restScale = new Vector2(slot.Scale, slot.Scale);
+            if (holder.Scale != restScale)
+                holder.Scale = restScale;
             return;
         }
         if (interactive || !_turnDrawBatch)
@@ -1314,26 +1393,35 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // The always-on rule: a step longer than one native step is shortened, in whatever direction it took.
             float step = _diagnoseStep;
             if (step > _diagnoseAllowed)
-                holder.Position = previous + (holder.Position - previous) * (_diagnoseAllowed / step);
+            {
+                Vector2 capped = previous + (holder.Position - previous) * (_diagnoseAllowed / step);
+                if (capped != holder.Position)
+                    holder.Position = capped;
+            }
             return;
         }
         Vector2 direction = toSlot / length;
         float travelled = (holder.Position - previous).Dot(direction);
-        holder.Position = previous + direction * Mathf.Clamp(travelled, 0f, length * weight + 1f);
+        Vector2 pinned = previous + direction * Mathf.Clamp(travelled, 0f, length * weight + 1f);
+        if (pinned != holder.Position)
+            holder.Position = pinned;
 
         float seenAngle = _stillness.PreviousRotation(holder, holder.RotationDegrees);
         float turnToSlot = slot.AngleDegrees - seenAngle;
+        float turned;
         if (Mathf.Abs(turnToSlot) <= 0.1f)
         {
-            holder.RotationDegrees = seenAngle;
+            turned = seenAngle;
         }
         else
         {
             float sign = MathF.Sign(turnToSlot);
             float along = (holder.RotationDegrees - seenAngle) * sign;
             float most = Mathf.Abs(turnToSlot) * weight + 0.1f;
-            holder.RotationDegrees = seenAngle + sign * Mathf.Clamp(along, 0f, most);
+            turned = seenAngle + sign * Mathf.Clamp(along, 0f, most);
         }
+        if (turned != holder.RotationDegrees)
+            holder.RotationDegrees = turned;
     }
 
     /// <summary>
@@ -1884,9 +1972,17 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         if (_wiredSelectionHands.Add(handId) && hand.HasSignal("ModeChanged"))
             hand.Connect("ModeChanged", Callable.From(() => RelayoutSelectionNow(handId)));
 
+        // Remembered while it stays in the tree: this runs on every hand pass, and a % path resolves through the
+        // unique-name map (a string to StringName conversion and a tree lookup) on each call.
+        if (_selectionContainerCache.TryGetValue(handId, out Control? remembered) &&
+            GodotObject.IsInstanceValid(remembered) && remembered.IsInsideTree())
+            return;
         Control? selected = hand.GetNodeOrNull<Control>("%SelectedHandCardContainer") ??
                             hand.GetNodeOrNull<Control>("SelectedHandCardContainer");
-        if (selected == null || !_wiredSelectionContainers.Add(selected.GetInstanceId()))
+        if (selected == null)
+            return;
+        _selectionContainerCache[handId] = selected;
+        if (!_wiredSelectionContainers.Add(selected.GetInstanceId()))
             return;
         if (selected.HasSignal("child_entered_tree"))
             selected.Connect("child_entered_tree", Callable.From((Node child) => OnSelectedCardEntered(handId, child)));
@@ -1931,14 +2027,11 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
     }
 
-    private static void ApplyHolderTargets(Control holder, CombatReflection refl, PortraitCardSlot slot, bool isFocused)
+    private void ApplyHolderTargets(Control holder, CombatReflection refl, PortraitCardSlot slot, bool isFocused,
+        Vector2 currentTargetPos, Vector2 currentTargetScale, float currentTargetAngle)
     {
         var targetPos = new Vector2(slot.LocalX, slot.LocalY);
         var targetScale = new Vector2(slot.Scale, slot.Scale);
-
-        Vector2 currentTargetPos = (Vector2)(refl.HolderTargetPosField?.GetValue(holder) ?? holder.Position);
-        Vector2 currentTargetScale = (Vector2)(refl.HolderTargetScaleField?.GetValue(holder) ?? holder.Scale);
-        float currentTargetAngle = (float)(refl.HolderTargetAngleField?.GetValue(holder) ?? holder.RotationDegrees);
 
         // Positions and angles are only ever set as targets, so the game's animation moves the card from where it is and
         // the press never shows a discontinuity. The card under the finger grows at once, as the game's own hover does;
@@ -1957,23 +2050,31 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         {
             if (movingPosition)
                 refl.HolderTargetPosField?.SetValue(holder, targetPos);
-            else
-                refl.HolderSetTargetPosMethod?.Invoke(holder, [targetPos]);
+            else if (refl.HolderSetTargetPosMethod is { } setPosition)
+            {
+                _oneArg[0] = targetPos;
+                setPosition.Invoke(holder, _oneArg);
+            }
         }
         if (MathF.Abs(currentTargetScale.X - targetScale.X) > 0.002f)
         {
             if (isFocused)
             {
                 refl.HolderTargetScaleField?.SetValue(holder, targetScale);
-                refl.HolderSetScaleInstantlyMethod?.Invoke(holder, [targetScale]);
+                if (refl.HolderSetScaleInstantlyMethod is { } setScaleInstantly)
+                {
+                    _oneArg[0] = targetScale;
+                    setScaleInstantly.Invoke(holder, _oneArg);
+                }
             }
             else if (movingScale)
             {
                 refl.HolderTargetScaleField?.SetValue(holder, targetScale);
             }
-            else
+            else if (refl.HolderSetTargetScaleMethod is { } setScale)
             {
-                refl.HolderSetTargetScaleMethod?.Invoke(holder, [targetScale]);
+                _oneArg[0] = targetScale;
+                setScale.Invoke(holder, _oneArg);
             }
         }
         if (isFocused)
@@ -1981,14 +2082,21 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // Straight at once, as the game's own hover does: rotation is about the holder's origin, but a rotated card's
             // axis-aligned rect centre is offset, and rotating while it grows made that measured centre drift.
             refl.HolderTargetAngleField?.SetValue(holder, 0f);
-            refl.HolderSetAngleInstantlyMethod?.Invoke(holder, [0f]);
+            if (refl.HolderSetAngleInstantlyMethod is { } setAngleInstantly)
+            {
+                _oneArg[0] = 0f;
+                setAngleInstantly.Invoke(holder, _oneArg);
+            }
         }
         else if (MathF.Abs(currentTargetAngle - slot.AngleDegrees) > 0.05f)
         {
             if (movingAngle)
                 refl.HolderTargetAngleField?.SetValue(holder, slot.AngleDegrees);
-            else
-                refl.HolderSetTargetAngleMethod?.Invoke(holder, [slot.AngleDegrees]);
+            else if (refl.HolderSetTargetAngleMethod is { } setAngle)
+            {
+                _oneArg[0] = slot.AngleDegrees;
+                setAngle.Invoke(holder, _oneArg);
+            }
         }
 
         if (isFocused)
@@ -2011,22 +2119,25 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         if (!combatInProgress || playable)
         {
-            RestoreSingleCardVisuals(cardNode, refl);
+            // A card that stays playable keeps the highlight boost it already has: restoring it here and re-setting it
+            // below wrote the shader width twice on every pass of a drawn hand for a value that never changed.
+            RestoreSingleCardVisuals(cardNode, refl, keepHighlightBoost: combatInProgress);
             if (combatInProgress && highlight != null)
             {
                 bool glowGold = (bool)(refl.HolderGlowGoldProp?.GetValue(holder) ?? false);
                 bool glowRed = (bool)(refl.HolderGlowRedProp?.GetValue(holder) ?? false);
-                if (!glowGold && !glowRed)
+                if (!glowGold && !glowRed && highlight.Modulate != PlayableHighlightColor)
                     highlight.Modulate = PlayableHighlightColor;
 
                 if (highlight.Material is ShaderMaterial mat)
                 {
                     Tween? tween = refl.HighlightTweenField?.GetValue(highlight) as Tween;
-                    if (tween == null || !tween.IsRunning())
-                    {
+                    // While the native hover tween is running it is fighting this width and the write has to stay; once
+                    // it has stopped the width the last pass set is still there, and setting the same value again only
+                    // re-notifies the shader. The id is recorded either way, so the restore still knows it boosted this.
+                    bool boosted = _boostedHighlights.Add(highlight.GetInstanceId());
+                    if (boosted || (tween != null && tween.IsRunning()))
                         mat.SetShaderParameter("width", 0.095f);
-                        _boostedHighlights.Add(highlight.GetInstanceId());
-                    }
                 }
             }
             return;
@@ -2044,7 +2155,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             float dim = PortraitCombatMath.UnplayableBodyBrightness;
             foreach (Node child in body.GetChildren())
             {
-                if (child is not CanvasItem item || SkippedCardBodyChildren.Contains(item.Name.ToString()))
+                if (child is not CanvasItem item || SkippedCardBodyChildren.Contains(item.Name))
                     continue;
                 ulong childId = item.GetInstanceId();
                 if (!saved.TryGetValue(childId, out Color orig))
@@ -2052,14 +2163,17 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     orig = item.Modulate;
                     saved[childId] = orig;
                 }
-                item.Modulate = new Color(orig.R * dim, orig.G * dim, orig.B * dim, orig.A);
+                // The dim is the same value every pass; a control the game did not touch keeps the one already set.
+                var dimmed = new Color(orig.R * dim, orig.G * dim, orig.B * dim, orig.A);
+                if (item.Modulate != dimmed)
+                    item.Modulate = dimmed;
             }
         }
 
         // Keep energy and star icons at 100% brightness and sharpen unaffordable red cost digits (#FF5252).
-        if (body?.GetNodeOrNull<CanvasItem>("EnergyIcon") is { } energyIcon)
+        if (body?.GetNodeOrNull<CanvasItem>("EnergyIcon") is { } energyIcon && energyIcon.Modulate != Colors.White)
             energyIcon.Modulate = Colors.White;
-        if (body?.GetNodeOrNull<CanvasItem>("StarIcon") is { } starIcon)
+        if (body?.GetNodeOrNull<CanvasItem>("StarIcon") is { } starIcon && starIcon.Modulate != Colors.White)
             starIcon.Modulate = Colors.White;
 
         if (refl.CardEnergyLabelField?.GetValue(cardNode) is Control energyLabel)
@@ -2075,7 +2189,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
     }
 
-    private void RestoreSingleCardVisuals(Control cardNode, CombatReflection refl)
+    private void RestoreSingleCardVisuals(Control cardNode, CombatReflection refl, bool keepHighlightBoost = false)
     {
         ulong cardId = cardNode.GetInstanceId();
         if (_dimmedCardChildren.TryGetValue(cardId, out Dictionary<ulong, Color>? saved))
@@ -2088,6 +2202,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             _dimmedCardChildren.Remove(cardId);
         }
 
+        if (keepHighlightBoost)
+            return;
         if ((refl.CardHighlightProp?.GetValue(cardNode) as Control) is { } highlight &&
             _boostedHighlights.Remove(highlight.GetInstanceId()) &&
             highlight.Material is ShaderMaterial mat)
@@ -2356,6 +2472,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
         }
 
+        // The pre-draw orb refit runs after this pass, so it reads the presence from here instead of re-walking every
+        // player's orb queue chain again a frame later.
+        _orbsOnStage = hasOrbs;
         CombatStagePlan plan = EnsureStagePlan(room, state, refl, bands, canvasHeight, players, pets, currentEnemies, hasOrbs);
         // The room's body scale is frozen with the roster it opened with: a summon appearing later must fit into that
         // scale (and its own cell), never rescale the hero and the units already on screen.
@@ -2468,10 +2587,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         if (surrounded)
         {
-            foreach (Control playerNode in players)
+            if (hasOrbs)
             {
-                if (refl.CreatureOrbManagerProp?.GetValue(playerNode) is Control orbMgr && OrbCount(orbMgr) > 0)
-                    KeepOrbArcOnCanvas(orbMgr, bands, SafeAreaCanvas.PortraitWidth);
+                foreach (Control playerNode in players)
+                {
+                    if (refl.CreatureOrbManagerProp?.GetValue(playerNode) is Control orbMgr && OrbCount(orbMgr) > 0)
+                        KeepOrbArcOnCanvas(orbMgr, bands, SafeAreaCanvas.PortraitWidth);
+                }
             }
             LayoutSurroundingEnemies(refl, sceneContainer, leftEnemies, currentEnemies, centerOrigin, plan, bands);
             AlignNativeVfx(room, refl, orderedAllies, currentEnemies);
@@ -2491,11 +2613,15 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         float gap = plan.Capacity <= 2 ? 110f : PortraitCombatMath.PlayerEnemyGap;
         float enemyLeft = PortraitCombatMath.EnemyStageLeft(playersRight, alliesRight, LoneEnemyLeft, gap);
         // Keep the hero's orbits between the canvas edge and the enemies: they may be above the hero, never over a body.
-        foreach (Control playerNode in players)
+        // Without an orb queue in the fight (most of them) the loop cannot place anything: skip its reflection and walk.
+        if (hasOrbs)
         {
-            // Legibility floors win over enemy clearance this batch: the only hard bounds are the canvas edge and the bars.
-            if (refl.CreatureOrbManagerProp?.GetValue(playerNode) is Control orbMgr && OrbCount(orbMgr) > 0)
-                KeepOrbArcOnCanvas(orbMgr, bands, SafeAreaCanvas.PortraitWidth);
+            foreach (Control playerNode in players)
+            {
+                // Legibility floors win over enemy clearance this batch: the only hard bounds are the canvas edge and the bars.
+                if (refl.CreatureOrbManagerProp?.GetValue(playerNode) is Control orbMgr && OrbCount(orbMgr) > 0)
+                    KeepOrbArcOnCanvas(orbMgr, bands, SafeAreaCanvas.PortraitWidth);
+            }
         }
 
         if (!bands.Compact && plan.Capacity == 6 && plan.TallFormation.Length == 0 && !plan.OviFight &&
@@ -3510,9 +3636,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private static Rect2? OrbArcRect(Control orbMgr)
     {
         Rect2? union = null;
-        var orbs = new List<Control>();
-        CollectOrbs(orbMgr, orbs);
-        foreach (Control orb in orbs)
+        OrbScratch.Clear();
+        CollectOrbs(orbMgr, OrbScratch);
+        foreach (Control orb in OrbScratch)
         {
             if (!orb.IsVisibleInTree())
                 continue;
@@ -3552,6 +3678,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         return new Rect2(origin - new Vector2(fallback * 0.5f, fallback * 0.5f), new Vector2(fallback, fallback));
     }
 
+    // One list for every orb walk: the stage pass and the pre-draw refit both measure the arc on every frame of an orb
+    // fight, and each walk used to allocate its own.
+    private static readonly List<Control> OrbScratch = new();
+
     private static void CollectOrbs(Node node, List<Control> orbs)
     {
         foreach (Node child in node.GetChildren())
@@ -3565,9 +3695,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
     private static int OrbCount(Control orbMgr)
     {
-        var orbs = new List<Control>();
-        CollectOrbs(orbMgr, orbs);
-        return orbs.Count;
+        OrbScratch.Clear();
+        CollectOrbs(orbMgr, OrbScratch);
+        return OrbScratch.Count;
     }
 
     /// <summary>
@@ -3626,12 +3756,21 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         if (powerContainer != null)
         {
             // Each icon's amount label is enlarged once, when the icon first appears; a power's icon keeps its node and its
-            // font override, so looking the label up again every frame was two Godot calls per power per creature.
-            foreach (Node power in powerContainer.GetChildren())
+            // font override, so looking the label up again every frame was two Godot calls per power per creature. The
+            // walk itself is a Godot array per creature per frame, and an icon can only appear with a child-count change
+            // or the container's own add signal, so it is only taken then.
+            int powerChildren = powerContainer.GetChildCount();
+            if (powerChildren != cState.LastPowerChildCount || cState.PowerChildrenDirty)
             {
-                if (!_enlargedPowerAmounts.Add(power.GetInstanceId()))
-                    continue;
-                EnlargeLabelFont(power.GetNodeOrNull<Label>("%AmountLabel") ?? power.GetNodeOrNull<Label>("AmountLabel"), PowerAmountFontSize);
+                cState.LastPowerChildCount = powerChildren;
+                cState.PowerChildrenDirty = false;
+                foreach (Node power in powerContainer.GetChildren())
+                {
+                    if (!_enlargedPowerAmounts.Add(power.GetInstanceId()))
+                        continue;
+                    EnlargeLabelFont(power.GetNodeOrNull<Label>("%AmountLabel") ?? power.GetNodeOrNull<Label>("AmountLabel"),
+                        PowerAmountFontSize);
+                }
             }
         }
 
@@ -3716,7 +3855,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // text (a 7 shield over "12/29" shows "2/29"). The native bar never moves the label, so the digit is moved clear
         // here — only while a block is shown, only as far as it must, and never past the bar's right end.
         if (bandNode is Label hpLabel)
-            KeepHpTextClearOfBlockBand(creature, hpBar, hpLabel);
+            using (PortraitFrameTiming.Begin(PortraitFrameTiming.HpText))
+                KeepHpTextClearOfBlockBand(creature, cState, hpBar, hpLabel);
 
         if (nameSynced)
             return;
@@ -3737,18 +3877,47 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// is moved right by the overlap the shield has with the centred text, capped inside the bar's right end, and it goes
     /// back to its native X as soon as the shield is hidden again. Everything is measured in canvas units and the write
     /// is converted through the label's parent scale, so a nested or scaled bar behaves the same.
+    /// <para>The expensive part is the glyph metrics — a text shape plus the font lookups for the digits and for the
+    /// block number — and they only change with the text, the label's rect or its theme font size, so they are cached on
+    /// the creature's state. The bar, the shield and the label are still measured live on every frame, so the native block
+    /// slide is followed exactly; and a bar with no shield shown is put back and left alone before any of it is touched.</para>
     /// </summary>
-    private static void KeepHpTextClearOfBlockBand(Control creature, Control hpBar, Label hpLabel)
+    private static void KeepHpTextClearOfBlockBand(Control creature, CreatureDesktopState state, Control hpBar,
+        Label hpLabel)
     {
         if (hpLabel == hpBar)
             return;   // no HP label in this bar's scene: the bar itself is never moved sideways
-        if (!hpLabel.HasMeta("portrait_hp_x"))
-            hpLabel.SetMeta("portrait_hp_x", hpLabel.Position.X);
-        if (!hpLabel.HasMeta("portrait_hp_scale"))
-            hpLabel.SetMeta("portrait_hp_scale", hpLabel.Scale.X);
-        float nativeX = hpLabel.GetMeta("portrait_hp_x").AsSingle();
-        float nativeScale = hpLabel.GetMeta("portrait_hp_scale").AsSingle();
-        Control? shield = hpBar.GetNodeOrNull<Control>("%BlockContainer");
+        if (state.HpRuleLabel != hpLabel)
+        {
+            // The first pass on this label (or a new one): its native place is captured once, and the metas keep it for
+            // the landscape restore. The measured inks belong to this label, so they are dropped with it.
+            state.HpRuleLabel = hpLabel;
+            if (!hpLabel.HasMeta("portrait_hp_x"))
+                hpLabel.SetMeta("portrait_hp_x", hpLabel.Position.X);
+            if (!hpLabel.HasMeta("portrait_hp_scale"))
+                hpLabel.SetMeta("portrait_hp_scale", hpLabel.Scale.X);
+            state.HpNativeX = hpLabel.GetMeta("portrait_hp_x").AsSingle();
+            state.HpNativeScale = hpLabel.GetMeta("portrait_hp_scale").AsSingle();
+            state.HpInk = default;
+            state.HpBlockInk = default;
+            // Whatever the creature already carries (a report written before a portrait toggle) is taken as the known
+            // state: the first frame that computes the same report writes nothing, and the first frame without a block
+            // removes it.
+            state.HpCapped = creature.HasMeta("portrait_hp_shift_capped")
+                ? creature.GetMeta("portrait_hp_shift_capped").ToString()
+                : null;
+        }
+        float nativeX = state.HpNativeX;
+        float nativeScale = state.HpNativeScale;
+
+        Control? shield = state.HpBlockShield;
+        if (shield == null || !GodotObject.IsInstanceValid(shield))
+        {
+            shield = hpBar.GetNodeOrNull<Control>("%BlockContainer");
+            state.HpBlockShield = shield;
+            state.HpBlockIcon = null;
+            state.HpBlockLabel = null;
+        }
         if (shield == null || !shield.IsVisibleInTree())
         {
             // No block: the digits go back to the native place and size, so a bar the game draws cleanly is untouched.
@@ -3756,22 +3925,25 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 hpLabel.Scale = new Vector2(nativeScale, nativeScale);
             if (MathF.Abs(hpLabel.Position.X - nativeX) > 0.01f)
                 hpLabel.Position = new Vector2(nativeX, hpLabel.Position.Y);
-            if (creature.HasMeta("portrait_hp_shift_capped"))
-                creature.RemoveMeta("portrait_hp_shift_capped");
+            if (state.HpCapped is not null)
+            {
+                if (creature.HasMeta("portrait_hp_shift_capped"))
+                    creature.RemoveMeta("portrait_hp_shift_capped");
+                state.HpCapped = null;
+            }
             return;
         }
         if (hpLabel.GetParent() is not Control parent)
             return;
-        float parentTransformScale = parent.GetGlobalTransform().Scale.X;
-        float parentScale = MathF.Max(0.0001f, parentTransformScale);
-        // The ink as the native bar lays it out (the label's own scale is 1 there), mapped onto the canvas.
         Transform2D parentTransform = parent.GetGlobalTransform();
+        float parentScale = MathF.Max(0.0001f, parentTransform.Scale.X);
+        // The ink as the native bar lays it out (the label's own scale is 1 there), mapped onto the canvas.
         Vector2 nativeOrigin = new(nativeX, hpLabel.Position.Y);
-        Rect2 localInk = LabelInkLocal(hpLabel);
+        Rect2 localInk = LabelInkLocal(hpLabel, hpLabel.Text, ref state.HpInk);
         Rect2 nativeInk = parentTransform * new Rect2(localInk.Position + nativeOrigin, localInk.Size);
         float pivotX = (parentTransform * (nativeOrigin + hpLabel.PivotOffset)).X;
         Rect2 barRect = hpBar.GetGlobalRect();
-        Rect2 shieldInk = ShieldInk(shield);
+        Rect2 shieldInk = ShieldInk(shield, state);
         PortraitCombatMath.HpTextBlockFit fit = PortraitCombatMath.FitHpTextBesideBlock(
             nativeInk.Position.X, nativeInk.Size.X, pivotX, shieldInk.End.X, barRect.End.X, HpTextClearance,
             HpTextMinScale);
@@ -3782,13 +3954,20 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         if (MathF.Abs(hpLabel.Position.X - targetX) > 0.01f)
             hpLabel.Position = new Vector2(targetX, hpLabel.Position.Y);
         // The floor: a bar too narrow for the shield and the smallest allowed digits still overflows its right end; keep
-        // the legibility floor, say so on the creature, and let the stage report take it to the user.
+        // the legibility floor, say so on the creature, and let the stage report take it to the user. The string is only
+        // written when it changes (the report reads it, and the fixture's 4-digit hero HP is capped for whole fights).
+        string? capped = null;
         float inkRight = nativeInk.Position.X + fit.Shift + nativeInk.Size.X * fit.Scale;
         if (fit.Scale <= HpTextMinScale + 0.001f && inkRight > barRect.End.X - HpTextClearance + 0.5f)
-            creature.SetMeta("portrait_hp_shift_capped",
-                $"need={fit.Shift:F1} scale={fit.Scale:F3} inkRight={inkRight:F1} barRight={barRect.End.X:F1}");
-        else if (creature.HasMeta("portrait_hp_shift_capped"))
-            creature.RemoveMeta("portrait_hp_shift_capped");
+            capped = $"need={fit.Shift:F1} scale={fit.Scale:F3} inkRight={inkRight:F1} barRight={barRect.End.X:F1}";
+        if (!string.Equals(capped, state.HpCapped, StringComparison.Ordinal))
+        {
+            if (capped is null)
+                creature.RemoveMeta("portrait_hp_shift_capped");
+            else
+                creature.SetMeta("portrait_hp_shift_capped", capped);
+            state.HpCapped = capped;
+        }
     }
 
     /// <summary>
@@ -3796,19 +3975,36 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// theme font size, its cap height, and the outline grown on every side, placed by the label's alignment inside its
     /// rect. The control's rect is not the ink (the game's HP label is wider and taller than the digits), and the metrics
     /// are scale-free so the caller can place the ink at the native scale itself.
+    /// <para>The measurement is cached per label by its text, rect and theme font size: a text shape and the font
+    /// metrics are the two expensive calls here, and they only change with those three (the game's auto-sized labels
+    /// adjust the size from the rect when the text changes, and again if the rect resizes).</para>
     /// </summary>
-    private static Rect2 LabelInkLocal(Label label)
+    private static Rect2 LabelInkLocal(Label label, string text, ref CreatureDesktopState.GlyphInk cache)
     {
-        string text = label.Text;
+        int fontSize = label.GetThemeFontSize("font_size");
+        Vector2 box = label.Size;
+        if (cache.Known && cache.FontSize == fontSize && box == cache.Box &&
+            string.Equals(text, cache.Text, StringComparison.Ordinal))
+            return cache.Ink;
+        Rect2 ink = MeasureLabelInk(label, text, box, fontSize);
+        cache.Text = text;
+        cache.Box = box;
+        cache.FontSize = fontSize;
+        cache.Ink = ink;
+        cache.Known = true;
+        return ink;
+    }
+
+    /// <summary>The uncached part of <see cref="LabelInkLocal"/>: the font metrics and the text's advance.</summary>
+    private static Rect2 MeasureLabelInk(Label label, string text, Vector2 box, int fontSize)
+    {
         Font? font = label.GetThemeFont("font");
         if (font == null || string.IsNullOrWhiteSpace(text))
-            return new Rect2(Vector2.Zero, label.Size);
-        int fontSize = label.GetThemeFontSize("font_size");
+            return new Rect2(Vector2.Zero, box);
         int outline = Math.Max(0, label.GetThemeConstant("outline_size"));
         Vector2 advance = font.GetStringSize(text, label.HorizontalAlignment, -1f, fontSize);
         float ascent = font.GetAscent(fontSize);
         Vector2 textSize = new(advance.X, ascent > 0f ? ascent : advance.Y);
-        Vector2 box = label.Size;
         float x = label.HorizontalAlignment switch
         {
             HorizontalAlignment.Center => (box.X - textSize.X) * 0.5f,
@@ -3825,17 +4021,37 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             textSize + new Vector2(outline * 2f, outline * 2f));
     }
 
-    /// <summary>The block shield's drawn ink: its icon merged with the block number's glyph ink when it shows one.</summary>
-    private static Rect2 ShieldInk(Control shield)
+    /// <summary>
+    /// The block shield's drawn ink: its icon merged with the block number's glyph ink when it shows one. The two nodes and
+    /// the number's measurement are cached on the creature's state; the number's text is what changes them, and the shield's
+    /// own place (which the native block slide tweens) is still read live.
+    /// </summary>
+    private static Rect2 ShieldInk(Control shield, CreatureDesktopState state)
     {
         Rect2? ink = null;
-        if (shield.GetNodeOrNull<TextureRect>("BlockIcon") is { } icon && icon.IsVisibleInTree())
-            ink = icon.GetGlobalRect();
-        if (shield.GetNodeOrNull<Label>("BlockLabel") is { } blockLabel && blockLabel.IsVisibleInTree() &&
-            !string.IsNullOrWhiteSpace(blockLabel.Text))
+        TextureRect? icon = state.HpBlockIcon;
+        if (icon == null || !GodotObject.IsInstanceValid(icon))
         {
-            Rect2 number = blockLabel.GetGlobalTransform() * LabelInkLocal(blockLabel);
-            ink = ink is { } known ? known.Merge(number) : number;
+            icon = shield.GetNodeOrNull<TextureRect>("BlockIcon");
+            state.HpBlockIcon = icon;
+        }
+        if (icon != null && icon.IsVisibleInTree())
+            ink = icon.GetGlobalRect();
+        Label? blockLabel = state.HpBlockLabel;
+        if (blockLabel == null || !GodotObject.IsInstanceValid(blockLabel))
+        {
+            blockLabel = shield.GetNodeOrNull<Label>("BlockLabel");
+            state.HpBlockLabel = blockLabel;
+        }
+        if (blockLabel != null && blockLabel.IsVisibleInTree())
+        {
+            string blockText = blockLabel.Text;
+            if (!string.IsNullOrWhiteSpace(blockText))
+            {
+                Rect2 number = blockLabel.GetGlobalTransform() *
+                    LabelInkLocal(blockLabel, blockText, ref state.HpBlockInk);
+                ink = ink is { } known ? known.Merge(number) : number;
+            }
         }
         return ink ?? shield.GetGlobalRect();
     }
@@ -3901,8 +4117,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         return 0f;
     }
 
-    /// <summary>A creature's label pass, deferred until every creature of the room is placed so status blocks can see their neighbours.</summary>
-    private sealed record LabelRequest(Control Creature, CreatureDesktopState State, CombatRoomState Room, float MaxBarWidth, bool IsAlly);
+    /// <summary>
+    /// A creature's label pass, deferred until every creature of the room is placed so status blocks can see their
+    /// neighbours. A struct: one is queued per creature on every frame of the fight.
+    /// </summary>
+    private readonly record struct LabelRequest(Control Creature, CreatureDesktopState State, CombatRoomState Room,
+        float MaxBarWidth, bool IsAlly);
 
     /// <summary>
     /// Lays out the health displays and status blocks for every creature of the room. The blocks are planned first from the
@@ -3915,8 +4135,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         if (requests == null || requests.Count == 0)
             return;
 
-        var planned = new List<(LabelRequest Request, StatusIconLayout? Layout, int Rank, float RowY)>();
-        var rows = new Dictionary<(int Rank, float RowY), List<int>>();
+        // The planning collections are refilled, not reallocated: this batch runs on every frame of the fight.
+        _statusBodyEpoch++;
+        List<(LabelRequest Request, StatusIconLayout? Layout, int Rank, float RowY)> planned = _plannedLabels;
+        planned.Clear();
+        Dictionary<(int Rank, float RowY), List<int>> rows = _statusRows;
+        rows.Clear();
+        _statusRowListsUsed = 0;
         foreach (LabelRequest request in requests)
         {
             if (!GodotObject.IsInstanceValid(request.Creature))
@@ -3955,7 +4180,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 var key = (rank, rowY);
                 if (!rows.TryGetValue(key, out List<int>? row))
                 {
-                    row = new List<int>();
+                    row = NextStatusRowIndexList();
                     rows[key] = row;
                 }
                 row.Add(planned.Count - 1);
@@ -3965,15 +4190,18 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // Gaps and body edges are read from every creature's untouched base block before any block is written, so writing
         // one block never becomes the next block's limit (that order-dependence made this pass disagree with the power
         // add's own plan, and the icons already on screen moved for one frame when it caught up).
-        var limited = new Dictionary<ulong, StatusIconLayout>();
+        Dictionary<ulong, StatusIconLayout> limited = _limitedStatus;
+        limited.Clear();
         foreach (List<int> row in rows.Values)
         {
-            var entries = new List<StatusRowEntry>(row.Count);
+            List<StatusRowEntry> entries = _statusRowEntries;
+            entries.Clear();
             foreach (int index in row)
             {
                 (LabelRequest request, StatusIconLayout? layout, _, _) = planned[index];
                 entries.Add(new StatusRowEntry(request.Creature, request.State, layout!.Value));
             }
+            // PlanStatusRow fills _statusRowPlan; it is folded into `limited` before the next row asks for it.
             foreach ((StatusRowEntry entry, StatusIconLayout plannedLayout) in PlanStatusRow(entries))
                 limited[entry.Creature.GetInstanceId()] = plannedLayout;
         }
@@ -3987,6 +4215,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
     }
 
+    /// <summary>One index list per status row, reused across frames (the dictionary that holds them is cleared first).</summary>
+    private List<int> NextStatusRowIndexList()
+    {
+        if (_statusRowListsUsed == _statusRowIndexLists.Count)
+            _statusRowIndexLists.Add(new List<int>());
+        List<int> list = _statusRowIndexLists[_statusRowListsUsed++];
+        list.Clear();
+        return list;
+    }
+
     /// <summary>One creature on a status row: its node and state, and the untouched base block the native rule gives it.</summary>
     private readonly record struct StatusRowEntry(Control Creature, CreatureDesktopState State, StatusIconLayout Base);
 
@@ -3997,7 +4235,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// </summary>
     private List<(StatusRowEntry Entry, StatusIconLayout Layout)> PlanStatusRow(List<StatusRowEntry> row)
     {
-        var planned = new List<(StatusRowEntry Entry, StatusIconLayout Layout)>(row.Count);
+        // Refilled per row (see NextStatusRowIndexList): the caller folds it before the next row plans.
+        List<(StatusRowEntry Entry, StatusIconLayout Layout)> planned = _statusRowPlan;
+        planned.Clear();
         if (row.Count == 0)
             return planned;
         row.Sort((a, b) => a.Base.Left.CompareTo(b.Base.Left));
@@ -4053,7 +4293,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 continue;
             if (other.Hitbox is not { } hitbox || !GodotObject.IsInstanceValid(hitbox))
                 continue;
-            Rect2 body = hitbox.GetGlobalRect();
+            Rect2 body = StatusBodyRect(id, hitbox);
             if (body.End.Y <= top || body.Position.Y >= bottom)
                 continue;
             if (body.Position.X + body.Size.X * 0.5f >= centre)
@@ -4062,6 +4302,26 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 bodyRight = MathF.Max(bodyRight, body.End.X);
         }
         return (bodyLeft, float.IsNegativeInfinity(bodyRight) ? float.PositiveInfinity : bodyRight);
+    }
+
+    /// <summary>
+    /// A creature's hit box on the canvas, measured once per status-planning pass. One row entry asks for every other
+    /// creature's rect, and a row with n blocks asks n times each: no game code runs while a pass plans, so the rects
+    /// cannot move between the reads (the pass that writes them runs after the plan). The epoch is bumped where a plan
+    /// begins — the deferred batch and a power add's own replan.
+    /// </summary>
+    private Rect2 StatusBodyRect(ulong id, Control hitbox)
+    {
+        if (_statusBodyRectsEpoch != _statusBodyEpoch)
+        {
+            _statusBodyRects.Clear();
+            _statusBodyRectsEpoch = _statusBodyEpoch;
+        }
+        if (_statusBodyRects.TryGetValue(id, out Rect2 known))
+            return known;
+        Rect2 rect = hitbox.GetGlobalRect();
+        _statusBodyRects[id] = rect;
+        return rect;
     }
 
     /// <summary>Plans and writes one status row: the deferred pass's rows and a power add's own row both come here.</summary>
@@ -4160,6 +4420,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 !GodotObject.IsInstanceValid(liveCreature) ||
                 !_creatures.TryGetValue(creatureId, out CreatureDesktopState? state))
                 return;
+            // An icon just appeared: the next labels pass must walk the row and enlarge its amount label (see
+            // ApplyCreatureLabelsPortrait), even if the container's child count happens to be unchanged.
+            state.PowerChildrenDirty = true;
             if (state.PowerContainer is not { } container || !GodotObject.IsInstanceValid(container))
                 return;
             if (CountVisiblePowers(container) == 0 || state.Hitbox is not { } hitbox ||
@@ -4186,6 +4449,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     {
         if (SafeAreaCanvas.IsPortrait is false)
             return;
+        _statusBodyEpoch++;
         float rowY = MathF.Round(OwnFeetLine(creature, state) / 16f) * 16f;
         var row = new List<StatusRowEntry>();
         foreach ((ulong id, CreatureDesktopState other) in _creatures)
@@ -5529,9 +5793,40 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         public float LastIntentScale = -1f;
         public float LastIntentWidth = -1f;
 
+        /// <summary>The power container's child count as last walked for amount-label enlarging, and whether its add signal
+        /// fired since: the walk is a Godot array per creature per frame, and an icon can only appear with a count change
+        /// or an add.</summary>
+        public int LastPowerChildCount = -1;
+        public bool PowerChildrenDirty;
+
         /// <summary>The status block last written to the power container; <see cref="StatusBlock.Applied"/> is false until
         /// the first write, and a block is only laid out again when the container no longer carries it.</summary>
         public StatusBlock AppliedStatus;
+
+        /// <summary>
+        /// The block-shield rule's cache: the HP label it rules, its native place, the shield and the shield's two nodes,
+        /// the measured glyph ink of the digits and of the block number, and the last capped report. The nodes and the two
+        /// measurements were looked up and shaped again on every frame of the fight; the bar, shield and label geometry is
+        /// still read live, so a sliding shield is followed exactly.
+        /// </summary>
+        public Label? HpRuleLabel;
+        public Control? HpBlockShield;
+        public TextureRect? HpBlockIcon;
+        public Label? HpBlockLabel;
+        public float HpNativeX, HpNativeScale;
+        public GlyphInk HpInk, HpBlockInk;
+        public string? HpCapped;
+
+        /// <summary>A label's glyph ink as last measured, keyed by the text, the label's rect and the theme font size (all
+        /// exact): its advance at that size, its ascent, and the outline, placed by the label's alignment inside the rect.</summary>
+        public struct GlyphInk
+        {
+            public string? Text;
+            public Vector2 Box;
+            public int FontSize;
+            public Rect2 Ink;
+            public bool Known;
+        }
 
         /// <summary>Everything that decides where a creature stands: the slot, its frame and the container origin.</summary>
         public readonly record struct StagePlacement(PortraitCreatureSlot Slot, float MaxW, float MaxH, float MaxBar,
