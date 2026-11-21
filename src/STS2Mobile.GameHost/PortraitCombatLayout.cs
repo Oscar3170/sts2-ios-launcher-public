@@ -1268,8 +1268,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
         CombatReflection refl, bool interactive)
     {
-        if (interactive || !_turnDrawBatch)
-            return;
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
             holder.Scale = new Vector2(slot.Scale, slot.Scale);
@@ -1282,6 +1280,15 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _diagnoseStep = holder.Position.DistanceTo(previous);
         _diagnoseWeight = weight;
         _diagnoseAllowed = length * weight + 1f;
+        if (interactive || !_turnDrawBatch)
+        {
+            // Always on (as committed in 3443cb4): no frame moves a card more than one native step toward OUR slot, which
+            // also undoes the game's own retargets (a press's desktop hover target, a re-layout) before they are drawn.
+            float step = _diagnoseStep;
+            if (step > _diagnoseAllowed)
+                holder.Position = previous + (holder.Position - previous) * (_diagnoseAllowed / step);
+            return;
+        }
         if (length <= 2f)
         {
             holder.Position = previous;
