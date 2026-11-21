@@ -36,6 +36,7 @@ internal sealed partial class PortraitBetweenLayout
     private const float MapShareBottomInset = 48f;
     private const float MapLegendInset = 20f;
     private const float MapToolGap = 6f;
+    private const float MapToastGap = 8f;
     // Native legend is 340 x 454 at scale 1; the phone reference draws it at 2.3 on a 1680-wide canvas, which is
     // 2.3 * 1080 / 1680 at ours (about 1.48: 13-22 point text).
     private static readonly float MapLegendScale = PortraitBetweenMath.MapLegendScale;
@@ -54,8 +55,12 @@ internal sealed partial class PortraitBetweenLayout
         public TextureRect? Backdrop;
         public Control? Share;
         public Control? ShareMount;
+        public Control? Toast;
         public PortraitControlSnapshot? MapSnapshot;
         public PortraitControlSnapshot? ShareSnapshot;
+        public PortraitControlSnapshot? ToastSnapshot;
+        public Vector2 ToastNativeTarget;
+        public bool HasToastTarget;
         public int MapIndex;
         public int ShareIndex;
 
@@ -311,6 +316,33 @@ internal sealed partial class PortraitBetweenLayout
         if (mount.Position != position) mount.Position = position;
     }
 
+    /// <summary>
+    /// Places the Share confirmation toast through the button's own <c>_toastPosition</c>, so the game's show tween drives it
+    /// from there. It sits centred just above the footer tools, inside the safe frame; it is only moved while hidden so the
+    /// native rise-and-fade animation is never fought.
+    /// </summary>
+    private void PlaceMapToast(Control map, MapFrame frame, Vector2 canvas, float clipBottom)
+    {
+        if (frame.Share is not { } share || !GodotObject.IsInstanceValid(share)) return;
+        if (frame.Toast is not { } toast || !GodotObject.IsInstanceValid(toast))
+        {
+            toast = map.GetNodeOrNull<Control>("%ShareToast");
+            if (toast == null) return;
+            frame.Toast = toast;
+            frame.ToastSnapshot ??= Capture(toast, captureVisible: false);
+        }
+        FieldInfo? field = share.GetType().GetField("_toastPosition", BindingFlags.Instance | BindingFlags.NonPublic);
+        if (field == null) return;
+        if (!frame.HasToastTarget && field.GetValue(share) is Vector2 original)
+        {
+            frame.ToastNativeTarget = original;
+            frame.HasToastTarget = true;
+        }
+        Vector2 target = new((canvas.X - toast.Size.X) * 0.5f, clipBottom - MapToastGap - toast.Size.Y);
+        if (field.GetValue(share) is Vector2 current && current != target) field.SetValue(share, target);
+        if (toast.SelfModulate.A < 0.01f && toast.Position != target) toast.Position = target;
+    }
+
     private void UpdateMapPortrait(Control map, Window root, Vector2 canvas)
     {
         float cap = PortraitLayout.ComputeCapHeight(root);
@@ -350,6 +382,7 @@ internal sealed partial class PortraitBetweenLayout
                 share.GetParent() == stack.ShareMount && share.IsVisibleInTree())
                 PlaceMapShare(stack, canvas);
             if (stack.Backdrop is null) EnsureMapBackdrop(map, stack, ActMapTexture());
+            PlaceMapToast(map, stack, canvas, clipBottom);
         }
 
         (float bandTop, _) = VisibleBand(root);
@@ -551,6 +584,13 @@ internal sealed partial class PortraitBetweenLayout
 
     private static void TearDownMapFrame(Control? map, MapFrame frame)
     {
+        if (frame.Toast is { } toast && GodotObject.IsInstanceValid(toast))
+        {
+            frame.ToastSnapshot?.Restore(toast);
+            if (frame.HasToastTarget && frame.Share is { } toastShare && GodotObject.IsInstanceValid(toastShare) &&
+                toastShare.GetType().GetField("_toastPosition", BindingFlags.Instance | BindingFlags.NonPublic) is { } toastField)
+                toastField.SetValue(toastShare, frame.ToastNativeTarget);
+        }
         if (frame.Share is { } share && GodotObject.IsInstanceValid(share))
         {
             if (frame.ShareMount is { } mount && GodotObject.IsInstanceValid(mount) && share.GetParent() == mount)
