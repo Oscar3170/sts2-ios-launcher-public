@@ -71,6 +71,10 @@ internal sealed class HandStillness
     public Vector2 PreviousPosition(Control holder, Vector2 fallback) =>
         _records.TryGetValue(holder.GetInstanceId(), out Place record) ? record.Position : fallback;
 
+    /// <summary>The angle the previous pass drew the holder at, for the draw's direction-locked turn toward its slot.</summary>
+    public float PreviousRotation(Control holder, float fallback) =>
+        _records.TryGetValue(holder.GetInstanceId(), out Place record) ? record.Rotation : fallback;
+
     /// <summary>
     /// Whether the holder's drawn transform differs from what the last pass recorded: a native animation loop is still
     /// running (or the game wrote the transform), so the pass has work to do. Engine reads only, no reflection.

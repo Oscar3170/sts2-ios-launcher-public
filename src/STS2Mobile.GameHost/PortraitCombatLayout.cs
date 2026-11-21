@@ -1016,12 +1016,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     _diagnoseFrames = 6;
                 }
             }
-            else if (startingBatch && _lastHandHolderCount == 0)
-            {
-                // No turn was seen (the query failed or the turn number is unreadable): an empty hand still starts from the
-                // game's base draw size, which is the old fallback and covers the first turn of a fight.
-                _handCountLock = Math.Clamp(refl.HandDrawCount(), 0, HandCardLimit);
-            }
             _handBatchMsec = 0.0;
         }
         _lastPlayerTurnNumber = playerTurn;
@@ -1108,6 +1102,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(handCount, slotIndex, focusedSlotIndex, bands, FlatHand);
 
             bool isFocused = focusedIndex == i;
+            bool interactive = isFocused || PhoneTouchCards.CardIsBeingDragged ||
+                PhoneTouchCards.PressedHolder == holder;
             var slotPosition = new Vector2(slot.LocalX, slot.LocalY);
 
             // A card's first pass is its arrival: the game has just created the holder at the draw pile and stepped it once
@@ -1134,7 +1130,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // never touched: it moved since the last pass.
             if (_stillness.IsStalled(holder, slotPosition))
                 refl.HolderSetTargetPosMethod?.Invoke(holder, [slotPosition]);
-            CapArrivalMotion(holder, slot, slotPosition, hand, refl);
+            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive);
             _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale),
                 isFocused ? 0f : slot.AngleDegrees);
 
@@ -1255,22 +1251,47 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// scale lerp overshoots on a long frame).
     /// </summary>
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
-        CombatReflection refl)
+        CombatReflection refl, bool interactive)
     {
+        if (interactive || !_handDrawBatch)
+            return;
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
             holder.Scale = new Vector2(slot.Scale, slot.Scale);
             refl.HolderTargetScaleField?.SetValue(holder, new Vector2(slot.Scale, slot.Scale));
         }
         Vector2 previous = _stillness.PreviousPosition(holder, holder.Position);
-        float step = holder.Position.DistanceTo(previous);
         float weight = Mathf.Clamp((float)hand.GetProcessDeltaTime() * 7f, 0f, 1f);
-        float allowed = previous.DistanceTo(slotPosition) * weight + 1f;
-        _diagnoseStep = step;
-        _diagnoseAllowed = allowed;
+        Vector2 toSlot = slotPosition - previous;
+        float length = toSlot.Length();
+        _diagnoseStep = holder.Position.DistanceTo(previous);
         _diagnoseWeight = weight;
-        if (step > allowed)
-            holder.Position = previous + (holder.Position - previous) * (allowed / step);
+        _diagnoseAllowed = length * weight + 1f;
+        if (length <= 2f)
+        {
+            holder.Position = previous;
+        }
+        else
+        {
+            Vector2 direction = toSlot / length;
+            float along = (holder.Position - previous).Dot(direction);
+            float most = length * weight + 1f;
+            holder.Position = previous + direction * Mathf.Clamp(along, 0f, most);
+        }
+
+        float seenAngle = _stillness.PreviousRotation(holder, holder.RotationDegrees);
+        float turnToSlot = slot.AngleDegrees - seenAngle;
+        if (Mathf.Abs(turnToSlot) <= 0.1f)
+        {
+            holder.RotationDegrees = seenAngle;
+        }
+        else
+        {
+            float sign = MathF.Sign(turnToSlot);
+            float along = (holder.RotationDegrees - seenAngle) * sign;
+            float most = Mathf.Abs(turnToSlot) * weight + 0.1f;
+            holder.RotationDegrees = seenAngle + sign * Mathf.Clamp(along, 0f, most);
+        }
     }
 
     /// <summary>
