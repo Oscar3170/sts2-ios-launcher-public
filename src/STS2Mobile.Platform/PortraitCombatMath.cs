@@ -109,7 +109,7 @@ public static class PortraitCombatMath
     public const float CardDefaultWidth = 300f;
     public const float CardDefaultHeight = 422f;
 
-    /// <summary>The portrait design is TouchSpireUI's 1680-wide canvas; every converted value is multiplied by this.</summary>
+    /// <summary>The portrait design is a 1680-wide canvas; every converted value is multiplied by this.</summary>
     private const float DesignScale = SafeAreaCanvas.PortraitWidth / 1680f;
 
     /// <summary>
@@ -118,7 +118,7 @@ public static class PortraitCombatMath
     /// </summary>
     public const float CompactHandCardScale = 0.72f;
 
-    /// <summary>The same at TouchSpireUI's PortraitHandCardScale (1.35 on 1680): cards are 24.1% of the canvas width.</summary>
+    /// <summary>The tall hand's resting card scale (1.35 on the 1680 design canvas): cards are 24.1% of the canvas width.</summary>
     public const float TallHandCardScale = 1.35f * DesignScale;
 
     /// <summary>A pressed card grows by this factor of its own resting scale, in place about its centre.</summary>
@@ -133,7 +133,7 @@ public static class PortraitCombatMath
     private const float CompactHandBottomMargin = 100f;
     private const float CompactRailHeight = 170f;
 
-    // TouchSpireUI's portrait hand, converted from its 1680-wide canvas: card 1.35, gap 10, row gap 18,
+    // The portrait hand, converted from the 1680-wide design canvas: card 1.35, gap 10, row gap 18,
     // side margin 72, bottom margin 6 + SafeBottom 90, rail 250 above the hand.
     private const float TallHandGap = 10f * DesignScale;
     private const float TallHandRowGap = 18f * DesignScale;
@@ -147,9 +147,9 @@ public static class PortraitCombatMath
     public static float RailHeightFor(bool compact) => compact ? CompactRailHeight : TallRailHeight;
 
     /// <summary>
-    /// The energy counter's rail X. TouchSpireUI puts the counter at <c>safe.X + 300</c> on its 1680-wide canvas with a
+    /// The energy counter's rail X. The counter sits at <c>safe.X + 300</c> on the 1680-wide design canvas with a
     /// 1.8 scale, i.e. an orb centre of 415 units there; on the 1080 canvas that is 267, so the counter (pivot 64) starts
-    /// at 203. End Turn keeps the canvas centre, which leaves TouchSpireUI's 71-unit gap between the orb and the button.
+    /// at 203. End Turn keeps the canvas centre, which leaves a 71-unit gap between the orb and the button.
     /// </summary>
     public const float EnergyRailX = 203f;
 
@@ -157,8 +157,8 @@ public static class PortraitCombatMath
     public const float EnergyOrbSize = 128f;
 
     /// <summary>
-    /// The star badge's centre offsets from the energy orb's centre: TouchSpireUI's own numbers, the badge hung on the
-    /// orb's lower-left corner. The star draws in front of the orb (it is the counter's last child, as the native game
+    /// The star badge's centre offsets from the energy orb's centre: the badge hangs on the orb's lower-left corner.
+    /// The star draws in front of the orb (it is the counter's last child, as the native game
     /// leaves it), which is what keeps its count clear of the draw pile and lets its right tip cross the orb's spikes.
     /// </summary>
     public const float StarOrbOffsetX = -0.4f;
@@ -168,7 +168,7 @@ public static class PortraitCombatMath
     public const float SelectionCardSmallScale = 0.8f;
     public const float SelectionCardGap = 24f;
 
-    /// <summary>The largest scale a selected preview takes (TouchSpireUI's 1.72 at a 1680-wide canvas, converted).</summary>
+    /// <summary>The largest scale a selected preview takes (1.72 at the 1680-wide design canvas, converted).</summary>
     public const float SelectionCardMaxScale = 1.72f * (SafeAreaCanvas.PortraitWidth / 1680f) / SelectionCardSmallScale;
 
     /// <summary>
@@ -295,8 +295,8 @@ public static class PortraitCombatMath
     /// The card's place in its row, as a local offset from the bottom-centre holder container: the upper row fills first,
     /// rows are centred, and the focused card only grows in place (same centre and row; an edge card is straightened as
     /// it grows, as the native hover does) by its own resting scale × <see cref="HeldCardGrowth"/>.
-    /// Off (<paramref name="flat"/> false) fans every shape like the launcher's compact hand; on, it uses TouchSpireUI's
-    /// flat rows at every shape. Both keep the full shape card size, fill the upper row first, and let cards overlap
+    /// Off (<paramref name="flat"/> false) fans every shape like the launcher's compact hand; on, it uses flat rows at
+    /// every shape. Both keep the full shape card size, fill the upper row first, and let cards overlap
     /// rather than leave the canvas; the focused card grows in place.
     /// </summary>
     public static PortraitCardSlot ComputeHandCardSlot(int count, int index, int focusedIndex, PortraitCombatBands bands,
@@ -345,7 +345,7 @@ public static class PortraitCombatMath
     /// exhaust and discard, in the order a hand reads left to right. It depends only on the bands, so the rail never
     /// moves with the hand's size. Controls are centred on the rail (the End Turn and pile buttons pivot on their centre
     /// lines), End Turn keeps the canvas's centre, and every touch target is at least <c>PortraitBands.MinTarget</c>:
-    /// the piles are drawn at TouchSpireUI's 1.543 (123.4 units, 42.9 points) and their touch area is grown around them.
+    /// the piles are drawn at 1.543 (123.4 units, 42.9 points) and their touch area is grown around them.
     /// </summary>
     public static PortraitHudLayout ComputeHudLayout(float canvasHeight, PortraitCombatBands bands)
     {
@@ -359,7 +359,7 @@ public static class PortraitCombatMath
         const float endTurnScale = 1.42f;
         const float endTurnShowX = SafeAreaCanvas.PortraitWidth * 0.5f - 110f;
 
-        // TouchSpireUI keeps the star at its native scene size and simply places it from the orb: orb centre +
+        // The star keeps its native scene size and is simply placed from the orb: orb centre +
         // orb.Size * offset, top-left from the star's drawn span. It draws in front of the orb, as its count must.
         float orbSize = EnergyOrbSize * energyScale;
         float starCenterX = energyX + EnergyOrbSize * 0.5f + orbSize * StarOrbOffsetX;
@@ -374,9 +374,9 @@ public static class PortraitCombatMath
             EnergyScale: energyScale,
             StarCenterX: starCenterX,
             StarCenterY: starCenterY,
-            // TouchSpireUI's rail, converted: pile buttons 192 units at its 2.4 scale = 1.543 on the 1080 canvas (80 -> 123.4
+            // The rail, converted: pile buttons 192 units at a 2.4 scale = 1.543 on the 1080 canvas (80 -> 123.4
             // drawn), and the draw pile at its rect x of 10 (the pivot sits at 10 + 40 * 0.543 = 31.7, so 32). The badge on
-            // the pile then hangs where TouchSpireUI's does, beside the Regent's star.
+            // the pile then hangs beside the Regent's star.
             ExhaustShowX: 806f,
             ExhaustShowY: railCenter - 40f,
             ExhaustHideX: -180f,
@@ -439,7 +439,7 @@ public static class PortraitCombatMath
 
     /// <summary>
     /// The native selected-card previews (Purity, Burning Pact, the whole-hand choice) in the band between the prompt and
-    /// the rail, ported from TouchSpireUI's selected-row fit: up to five-in-a-row, wrapped to two rows only when that
+    /// the rail, using the selected-row fit: up to five-in-a-row, wrapped to two rows only when that
     /// gives a materially larger card. Positions are in the container's own space; the container's scale is the returned
     /// <see cref="PortraitSelectedCardsLayout.Scale"/>, and rows are centred on the band.
     /// </summary>
@@ -512,11 +512,11 @@ public static class PortraitCombatMath
     /// <summary>The largest a creature body is drawn; a lone enemy already uses this for the stage.</summary>
     public const float MaxBodyScale = 1.32f;
 
-    /// <summary>Preferred shared body scale for an ordinary encounter, re-derived for the 1080 canvas (TouchSpireUI's 2.05).</summary>
+    /// <summary>Preferred shared body scale for an ordinary encounter, re-derived for the 1080 canvas (2.05 at the design width).</summary>
     public const float PreferredSharedBodyScale = 1.32f;
 
     /// <summary>
-    /// TouchSpireUI's per-encounter body multipliers, applied to the preferred shared scale. The Kaiser Crab is excluded
+    /// Per-encounter body multipliers, applied to the preferred shared scale. The Kaiser Crab is excluded
     /// (the launcher's own arm fit owns it).
     /// </summary>
     public static float EncounterBodyMultiplier(string encounterKey)
@@ -550,7 +550,7 @@ public static class PortraitCombatMath
 
     /// <summary>
     /// The absolute world scale every body in the room is drawn at: the tightest fit any creature needs in its frame,
-    /// exactly as TouchSpireUI resolves one multiplier for the whole room (its 2.05 preferred, its 1.0 legibility floor).
+    /// one multiplier for the whole room (2.05 preferred and a 1.0 legibility floor at the 1680 design width).
     /// Unlike <see cref="SharedPeerScale"/> this is not a multiplier over a slot's own occupancy: it caps the hero and the
     /// enemies alike, so a room cannot draw its hero at one size and its monsters at another.
     /// </summary>
@@ -630,7 +630,7 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// Which enemy slot, if any, is the room's boss. TouchSpireUI's rule: not a segment chain, more than two slots, and the
+    /// Which enemy slot, if any, is the room's boss. The rule: not a segment chain, more than two slots, and the
     /// largest enemy is more than 1.8 times the next largest (a single enemy counts). Identical monster types never yield a
     /// boss, so four equal Exoskeletons share one row scale instead of one of them being promoted by a tie.
     /// </summary>
@@ -714,7 +714,7 @@ public static class PortraitCombatMath
     /// <summary>Every body of a tall-thin roster is at least this much taller than it is wide (the Gardeners are 1.83).</summary>
     public const float SingleRowMinAspect = 1.5f;
 
-    /// <summary>A row replaces TouchSpireUI's tall table only when its frozen room scale is at least this many times larger.</summary>
+    /// <summary>A row replaces the tall table only when its frozen room scale is at least this many times larger.</summary>
     public const float SingleRowMinGain = 1.5f;
 
     /// <summary>
@@ -752,7 +752,7 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// Whether a tall (9:19.5) encounter of 3–4 bodies should stand in one row instead of TouchSpireUI's tall table: every
+    /// Whether a tall (9:19.5) encounter of 3–4 bodies should stand in one row instead of the tall table: every
     /// body is clearly taller than wide, and the row's frozen room scale beats the table's by half again. The Phantasmal
     /// Gardeners (208×380 in 313 wide cells that stand only 200 tall above their intent band) qualify; a short or wide
     /// roster, or one whose row would be no larger (the Exoskeletons, the Slimes, the Knights), keeps the authored table.
@@ -777,8 +777,8 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// TouchSpireUI's tall (9:19.5 and taller) enemy formation, converted to the 1080 canvas and re-based on the launcher's
-    /// floor line. Depths are TouchSpireUI units ×0.642857: a negative depth stands in front of the floor (below it on
+    /// The tall (9:19.5 and taller) enemy formation, converted to the 1080 canvas and re-based on the launcher's
+    /// floor line. Depths are design-canvas units ×0.642857: a negative depth stands in front of the floor (below it on
     /// screen), a positive one behind it. The Ovicopter back rank, the Crab and the segment chain have their own layouts.
     /// </summary>
     public static PortraitCreatureSlot[] ComputeTallFormation(int capacity, PortraitCombatBands bands)
@@ -845,7 +845,7 @@ public static class PortraitCombatMath
 
     /// <summary>
     /// A tall-formation slot's frame: width capped by the nearest column pitch (so bodies and bars cannot touch), height by
-    /// TouchSpireUI's 220–475 converted to the launcher canvas.
+    /// the 220–475 design-unit height range converted to the launcher canvas.
     /// </summary>
     public static (float MaxWidth, float MaxHeight, float MinLeft, float MaxRight) TallFormationFrame(
         PortraitCreatureSlot[] formation,
@@ -869,7 +869,7 @@ public static class PortraitCombatMath
             : formation.Length == 2 ? SafeAreaCanvas.PortraitWidth * 0.31f
             : SafeAreaCanvas.PortraitWidth * 0.29f;
         float width = Math.Max(90f, Math.Min(baseWidth, pitch - 10f));
-        // TouchSpireUI's 475 clamp belongs to the 3–5 table; 1–2 use the whole stage from the top to their feet.
+        // The 475 clamp belongs to the 3–5 table; 1–2 use the whole stage from the top to their feet.
         float height = formation.Length <= 2
             ? Math.Max(120f, slot.CanvasFeetY - bands.StageTopY)
             : Math.Clamp(475f * (SafeAreaCanvas.PortraitWidth / 1680f), 141f, 305f);
@@ -1043,13 +1043,13 @@ public static class PortraitCombatMath
         return slots;
     }
 
-    /// <summary>The boss's frame centre and width as a fraction of the canvas: TouchSpireUI's EnemyFrame / CompactEnemyFrame.</summary>
+    /// <summary>The boss's frame centre and width as a fraction of the canvas.</summary>
     public const float DominantBossCentre = 0.70f, DominantBossWidth = 0.55f;
 
     /// <summary>The same on the short canvas: centred at 0.76 and 0.43 of the width.</summary>
     public const float DominantBossCentreCompact = 0.76f, DominantBossWidthCompact = 0.43f;
 
-    /// <summary>TouchSpireUI's summon lanes: Capacity−1 equal lanes starting at 0.35 over 0.635 of the width, 0.94 filled.</summary>
+    /// <summary>The summon lanes: Capacity−1 equal lanes starting at 0.35 over 0.635 of the width, 0.94 filled.</summary>
     public const float DominantLaneStart = 0.35f, DominantLaneSpan = 0.635f, DominantLaneFill = 0.94f;
 
     /// <summary>
@@ -1058,7 +1058,7 @@ public static class PortraitCombatMath
     public readonly record struct PortraitDominantStage(PortraitCreatureSlot[] Slots, float BossWidth, float LaneWidth);
 
     /// <summary>
-    /// TouchSpireUI's dominant stage without its boss lift, for an encounter whose boss arrives alone and whose remaining
+    /// The dominant stage without its boss lift, for an encounter whose boss arrives alone and whose remaining
     /// slots are its summons' reserved places (the Phrog Parasite and its four wrigglers): the boss keeps the authored
     /// 0.55W / 0.43W frame with its feet on the front line, and the reserved summons keep Capacity−1 equal lanes on that
     /// same ground band, so a summon appears where it was reserved and nothing moves.
@@ -1159,17 +1159,17 @@ public static class PortraitCombatMath
         float FloorHorizonY,
         bool FloorAligned);
 
-    /// <summary>The authored ground line of the arena art, in the container's local space (TouchSpireUI-documented).</summary>
+    /// <summary>The authored ground line of the arena art, in the container's local space.</summary>
     public const float GroundArtLocalY = 100f;
 
     /// <summary>
-    /// The authored line the native creature origins stand on, in the background scene's own space. TouchSpireUI measures
-    /// the exposed arena against it, which is why the layer's authored offset must stay part of the scene frame.
+    /// The authored line the native creature origins stand on, in the background scene's own space. The exposed arena is
+    /// measured against that line, which is why the layer's authored offset must stay part of the scene frame.
     /// </summary>
     public const float NativeOriginArtistY = 200f;
 
     /// <summary>
-    /// Frames a broad arena's floor art the way TouchSpireUI does for every arena it draws: the scale covers the canvas
+    /// Frames a broad arena's floor art: the scale covers the canvas
     /// width and the exposed arena (from under the run bars down to the foot line) measured against the art's own span to
     /// the native creature-origin line, and the art's bottom edge ends exactly at the hand row, so the art continues
     /// behind the cards and leaves no strip above them. No line of the painting is pinned to the feet: a hand-calibrated

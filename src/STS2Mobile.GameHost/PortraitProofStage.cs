@@ -11,7 +11,7 @@ namespace STS2Mobile.GameHost;
 internal static partial class PortraitProof
 {
     /// <summary>
-    /// Captures the Kaiser Crab fight with the TouchSpireUI placement (the only owner): skeleton centred and horizontally
+    /// Captures the Kaiser Crab fight with the portrait placement (the only owner): skeleton centred and horizontally
     /// squeezed so each arm sits above its own claw bar, inside the frozen stage.
     /// </summary>
     private static async Task RunCrabProofAsync(SceneTree tree, NGame game)

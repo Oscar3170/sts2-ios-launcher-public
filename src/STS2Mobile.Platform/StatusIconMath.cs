@@ -26,12 +26,12 @@ public readonly record struct StatusIconLayout(
 /// <c>NPowerContainer.UpdatePositions</c>: the container starts at the creature's hit-box left and is as wide as the hit
 /// box plus the native 25-unit padding; columns are the larger of the width's capacity and half the status count (so
 /// never more than two rows); icons run row-major; a block wider than the container is centred on it. Icons are drawn at
-/// TouchSpireUI's 82/1680 of the canvas width, shrunk only when the overhang exceeds 50 units per side or the gap to a
-/// neighbouring block on the same status row, never below 60% of that size.
+/// <see cref="StatusIconMath.IconWidthShare"/> of the canvas width, shrunk only when the overhang exceeds 50 units per
+/// side or the gap to a neighbouring block on the same status row, never below 60% of that size.
 /// </summary>
 public static class StatusIconMath
 {
-    /// <summary>TouchSpireUI's icon width as a share of the design width (82 of 1680).</summary>
+    /// <summary>The icon width as a share of the design width (82 of 1680).</summary>
     public const float IconWidthShare = 82f / 1680f;
 
     /// <summary>The native <c>NPowerContainer</c> padding: 25 display units at the 1.33 state-display scale.</summary>

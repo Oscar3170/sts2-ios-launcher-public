@@ -24,8 +24,7 @@ namespace STS2Mobile.GameHost;
 /// <item>An untargeted card is drawn with its bottom edge <see cref="TouchCardMath.DragLift"/> above the finger, at the
 /// hand's pressed scale (<c>HeldCardScaleFor</c>). Its position, scale, angle and Z are written in a render-frame pass,
 /// after the game's own move for the frame, so the card follows the finger without a fight with the game's tween. Its
-/// modulate is left at the game's own value: the dragged card is not faded, matching the native game and TouchSpireUI's
-/// portrait mode.</item>
+/// modulate is left at the game's own value: the dragged card is not faded, matching the native game.</item>
 /// <item>A targeted card stops following the finger once native aiming starts: it eases to the fixed park
 /// (<see cref="TouchCardMath.AimingCardCenter"/>: top on End Turn's top, centred) at
 /// <see cref="TouchCardMath.AimedCardScaleFor"/> (one size per shape), while the native arrow and reticle track the

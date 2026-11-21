@@ -23,7 +23,7 @@ namespace STS2Mobile.GameHost;
 /// <para>Some tips must not show in portrait at all. While a hand card is dragged or aimed (<see cref="PhoneTouchCards.CardIsBeingDragged"/>)
 /// its card tips are removed, so the card under the finger is not covered by text; and after End Turn is pressed its tip is
 /// parked, because the finger and the engine's pointer remain on the button after the press, where a mouse would have quickly
-/// moved off. The parking lasts until the next press elsewhere (or until the button goes away), like TouchSpireUI's.</para>
+/// moved off. The parking lasts until the next press elsewhere (or until the button goes away).</para>
 /// </summary>
 internal sealed class PhoneHoverTips
 {
@@ -214,9 +214,9 @@ internal sealed class PhoneHoverTips
         Rect2? owner = ownerControl != null && GodotObject.IsInstanceValid(ownerControl) && ownerControl.IsInsideTree()
             ? ItemRect(ownerControl, canvas)
             : null;
-        // A hand card's keyword tip must stay in the stage band: TouchSpireUI clamps it between stageTop+24 and
-        // railTop-24 so it can never cover the hand. The game may own the tip with the holder, the NCard under it, or a
-        // child, so any node under the hand counts.
+        // A hand card's keyword tip must stay in the stage band: it is clamped between stageTop+24 and railTop-24 so it
+        // can never cover the hand. The game may own the tip with the holder, the NCard under it, or a child, so any node
+        // under the hand counts.
         bool isHandTip = IsHandTip(ownerControl);
         (float Top, float Bottom)? band = isHandTip ? handBand : null;
         Transform2D toCanvas = set.GetGlobalTransformWithCanvas();

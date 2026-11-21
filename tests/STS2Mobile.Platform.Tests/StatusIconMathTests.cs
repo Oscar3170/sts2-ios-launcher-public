@@ -97,7 +97,7 @@ public class StatusIconMathTests
         StatusIconLayout rightFit = StatusIconMath.ApplyNeighbourLimits(right, 390f, 265.1f, Width,
             gap, float.PositiveInfinity);
 
-        // TouchSpireUI's rule, hardened: each block first steps off the other one (the right one has canvas room to its
+        // The rule, hardened: each block first steps off the other one (the right one has canvas room to its
         // right, so it keeps the normal icon size), and only the block pinned against the margin shrinks - never past the
         // floor - so the two blocks meet without overlapping.
         Assert.Equal(Normal, rightFit.IconWidth, 0.01f);

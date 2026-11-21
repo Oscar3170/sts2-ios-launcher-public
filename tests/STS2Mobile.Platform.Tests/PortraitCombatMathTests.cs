@@ -118,7 +118,7 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void TallBandsAndHandFollowTouchSpire()
+    public void TallBandsAndHandUseTheTallDesign()
     {
         const float canvasHeight = 2340f;
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
@@ -451,7 +451,7 @@ public class PortraitCombatMathTests
         Assert.InRange(hud.DiscardShowY + 40f, bands.RailTopY, bands.HandTopY);
         Assert.InRange(hud.ExhaustShowY + 40f, bands.RailTopY, bands.HandTopY);
 
-        // End Turn is the launcher's 220x90 at 1.42 (312.4x127.8); the piles are TouchSpireUI's 80 at 1.543 (123.4 drawn,
+        // End Turn is the launcher's 220x90 at 1.42 (312.4x127.8); the piles are 80-unit art at 1.543 (123.4 drawn,
         // 42.9 points, with the touch area grown back to the 44-point guidance around the drawn pile), energy 128 at 1.12.
         Assert.Equal(1.42f, hud.EndTurnScale, 3);
         Assert.Equal(312.4f, 220f * hud.EndTurnScale, 2);
@@ -476,9 +476,9 @@ public class PortraitCombatMathTests
         Assert.True(endTurnVisualTop >= bands.RailTopY + 0.01f);
         Assert.True(endTurnVisualBottom <= bands.HandTopY - 0.01f);
 
-        // The energy counter sits where TouchSpireUI puts it: an orb centre of 267 canvas units (415 on its 1680-wide
-        // canvas), which leaves 45 units to End Turn's left edge (TouchSpireUI's 71 units, same relative gap). The star
-        // keeps its native scene size and only inherits the counter's 1.12 scale.
+        // The energy counter's orb centre is 267 canvas units (415 on the 1680-wide design canvas), which leaves 45 units
+        // to End Turn's left edge (71 design units, same relative gap). The star keeps its native scene size and only
+        // inherits the counter's 1.12 scale.
         Assert.Equal(203f, hud.EnergyContainerX, 3);
         float orbSize = PortraitCombatMath.EnergyOrbSize * hud.EnergyScale;
         float orbCenterX = hud.EnergyContainerX + PortraitCombatMath.EnergyOrbSize * 0.5f;
@@ -506,9 +506,9 @@ public class PortraitCombatMathTests
         Assert.True(endTurnVisualLeft > starRight);
         Assert.True(endTurnVisualRight < 948f - 100f * PortraitCombatMath.SelectionConfirmScale);
 
-        // TSUI's lower-left badge: native size, no lift, still overlapping the orb's lower-left art. Its left tip is the
-        // only part near the draw pile, and the star draws in front of the orb and of the "3/3" (it stays the counter's
-        // last child), so neither count is covered.
+        // The star badge's lower-left placement: native size, no lift, still overlapping the orb's lower-left art. Its
+        // left tip is the only part near the draw pile, and the star draws in front of the orb and of the "3/3" (it stays
+        // the counter's last child), so neither count is covered.
         Assert.True(starLeft < orbRight && starRight > orbLeft && starTop < orbBottom && starBottom > orbTop);
         Assert.Equal(orbSize * -0.4f, hud.StarCenterX - orbCenterX, 2);
         Assert.Equal(orbSize * 0.3f, hud.StarCenterY - orbCenterY, 2);
@@ -520,7 +520,7 @@ public class PortraitCombatMathTests
         // Ink model: advance width + 14 outline each side horizontally; digit ascent + 14 outline vertically. The proof's
         // star count is one digit. The number is centred on the star (the native CountLabel box is 41 units lower), so it
         // stays inside the badge and clear of the pile and End Turn; it reaches the "3/3" only at their lower-left corner,
-        // which is the overlap TouchSpireUI has and draws the star over.
+        // which is the overlap the star is drawn over.
         const float starInkScale = starSceneScale * 1.12f;
         const float digitAdvance = 19f;
         const float digitAscent = 36f;
@@ -705,7 +705,7 @@ public class PortraitCombatMathTests
     public void SharedRoomScaleIsAbsoluteAndCappedByTheHeroFrame()
     {
         // The hero's frame (270x360 over a 242x278 body) is the tightest fit: 1.116, so the room is drawn at 1.116 even
-        // though the Nibbit's cell would allow 1.266. TouchSpireUI resolves the same one multiplier for the room.
+        // though the Nibbit's cell would allow 1.266. One multiplier is resolved for the whole room.
         var room = new[]
         {
             new PortraitCombatMath.PortraitFrameFit(242f, 278f, 270f, 360f, 0.75f),
@@ -720,7 +720,7 @@ public class PortraitCombatMathTests
         Assert.Equal(PortraitCombatMath.PeerScaleFloor, PortraitCombatMath.SharedRoomScale(oversized, out floored));
         Assert.True(floored);
 
-        // Nothing caps an ordinary body at more than the preferred shared scale (TouchSpireUI's 2.05).
+        // Nothing caps an ordinary body at more than the preferred shared scale (2.05 at the design width).
         var tiny = new[] { new PortraitCombatMath.PortraitFrameFit(100f, 100f, 600f, 600f, 1f) };
         Assert.Equal(PortraitCombatMath.PreferredSharedBodyScale, PortraitCombatMath.SharedRoomScale(tiny, out floored));
         Assert.False(floored);
@@ -729,7 +729,7 @@ public class PortraitCombatMathTests
     [Fact]
     public void BroadBackdropFramingIsTheSameRuleAtBothShapes()
     {
-        // The Waterfall Giant arena (TouchSpireUI's own numbers): a 2764.8x1296 art whose authored top sits at -648 in
+        // The Waterfall Giant arena: a 2764.8x1296 art whose authored top sits at -648 in
         // the scene's space and whose TextureRect bottom is at 1181 in the container's local space.
         const float artWidth = 2764.8f;
         const float artHeight = 1296f;
@@ -992,7 +992,7 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void EncounterBodyMultipliersMatchTouchSpire()
+    public void EncounterBodyMultipliersVaryByEncounter()
     {
         Assert.Equal(1f, PortraitCombatMath.EncounterBodyMultiplier("Exoskeleton|LeafSlimeM"));
         Assert.Equal(0.83f, PortraitCombatMath.EncounterBodyMultiplier("CeremonialBeast"));
@@ -1004,7 +1004,7 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void TallFormationMatchesTouchSpireDepths()
+    public void TallFormationUsesConvertedDepths()
     {
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 612f);
         float floor = bands.FrontFeetY;
@@ -1035,10 +1035,10 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void DominantStageKeepsTouchSpiresBossFrameAndLanesOnTheFrontLine()
+    public void DominantStageKeepsBossFrameAndLanesOnTheFrontLine()
     {
-        // The Phrog Parasite elite: one boss and four reserved wriggler slots. TouchSpireUI's dominant frame at both shapes,
-        // without its boss lift, so the boss's feet stay on the front foot line and the lanes stand on the same band.
+        // The Phrog Parasite elite: one boss and four reserved wriggler slots. The dominant frame at both shapes, without
+        // its boss lift, so the boss's feet stay on the front foot line and the lanes stand on the same band.
         foreach (float canvasHeight in new[] { 2340f, 1920f })
         {
             bool compact = canvasHeight < 2000f;
@@ -1082,7 +1082,7 @@ public class PortraitCombatMathTests
     [Fact]
     public void TallThinRostersOfThreeOrFourChooseTheSingleRow()
     {
-        // The Phantasmal Gardeners (208 by 380, four of them): TouchSpireUI's 2x2 cell is 313 wide but only 200 tall above
+        // The Phantasmal Gardeners (208 by 380, four of them): the 2x2 cell is 313 wide but only 200 tall above
         // its intent band, so the table's tightest fit is 0.528; the single row across the pier gives 0.855.
         PortraitCombatBands tall = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 612f);
         PortraitCombatBands compact = PortraitCombatMath.ComputeCombatBands(canvasHeight: 1920f, stageTopY: 612f);

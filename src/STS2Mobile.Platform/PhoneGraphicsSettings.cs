@@ -43,7 +43,7 @@ public sealed record PhoneGraphicsSettings(
     public PhoneGraphicsSettings WithPortraitDefault(bool enabled) =>
         PortraitMode ? this with { PortraitDefault = enabled } : this with { PortraitDefault = false };
 
-    /// <summary>Fans the hand (false, the default) or gives it TouchSpireUI's flat rows (true).</summary>
+    /// <summary>Fans the hand (false, the default) or lays it out in flat rows (true).</summary>
     public PhoneGraphicsSettings WithFlatHand(bool enabled) => this with { FlatHand = enabled };
 
     /// <summary>Writes the per-frame portrait pass timings to the game log (off by default; for testing).</summary>

@@ -186,7 +186,7 @@ private static Vector2 EndTurnRailPosition(Control endTurn, CombatReflection ref
 }
 
 /// <summary>
-/// The star's TouchSpireUI place from the energy counter's live rect: native size and TopLeft anchors, hung on the orb's
+/// The star's place from the energy counter's live rect: native size and TopLeft anchors, hung on the orb's
 /// lower-left corner. The native size is captured once per star node, before any of our writes.
 /// </summary>
 private void PlaceStarCounter(Control starCounter, Control energyCounter)
@@ -194,7 +194,7 @@ private void PlaceStarCounter(Control starCounter, Control energyCounter)
     ulong starId = starCounter.GetInstanceId();
     if (!_starNativeSizes.TryGetValue(starId, out Vector2 nativeSize))
         _starNativeSizes[starId] = nativeSize = starCounter.Size;
-    // The node stays the counter's last child, so it draws in front of the orb's art and the "3/3", as in TouchSpireUI.
+    // The node stays the counter's last child, so it draws in front of the orb's art and the "3/3".
     starCounter.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
     starCounter.Size = nativeSize;
     Rect2 orb = energyCounter.GetGlobalRect();
@@ -255,7 +255,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private const string ConfirmButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NConfirmButton";
 
     /// <summary>
-    /// The Graphics "Flat Hand" choice: false fans the hand at every shape, true gives TouchSpireUI's flat rows. It only
+    /// The Graphics "Flat Hand" choice: false fans the hand at every shape, true gives flat rows. It only
     /// changes the row shape, never the bands, card size or selection layout; PhoneGraphics writes it before the next
     /// frame and the test host may set it directly.
     /// </summary>
@@ -2729,9 +2729,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     {
         pile.PivotOffset = new Vector2(40f, 40f);
         pile.Scale = new Vector2(scale, scale);
-        // TouchSpireUI's pile size costs a little of the 44-point side (80 drawn at 1.543 is 123.44 units = 42.9 points),
-        // so the touch area is grown back around it on all four sides; the drawn pile keeps TSUI's size and its badge
-        // stays where TSUI has it.
+        // The pile's 80-unit art drawn at 1.543 is 123.44 canvas units = 42.9 points, a little short of the 44-point
+        // minimum target, so the touch area is grown back around it on all four sides; the drawn pile keeps its size and
+        // its badge stays where it is.
         float pileGrow = 80f * scale < PortraitBands.MinTarget ? (PortraitBands.MinTarget - 80f * scale) * 0.5f + 2f : 0f;
         if (pileGrow > 0f)
             PhoneHitArea.Grow(pile, pileGrow, pileGrow, pileGrow, pileGrow);
@@ -2891,7 +2891,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         bool tallRow = plan.TallFormation.Length > 0;
         float maxAllyW = orderedAllies.Count > 1 ? 210f : (tallRow ? 360f : 270f);
         float maxAllyH = orderedAllies.Count > 1 ? 260f : (tallRow ? 560f : 360f);
-        // One room scale, as TouchSpireUI resolves it: the hero's own frame caps the world scale for the whole room, so
+        // One room scale: the hero's own frame caps the world scale for the whole room, so
         // the hero and the monsters are never drawn at two different sizes. Frozen with the roster.
         if (!plan.HeroScaleComputed && players.Count > 0)
         {
@@ -2919,8 +2919,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 float allyFit = PortraitCombatMath.MaxBodyScale;
                 if (allyNative.X > 1f) allyFit = Math.Min(allyFit, maxAllyW / allyNative.X);
                 if (allyNative.Y > 1f) allyFit = Math.Min(allyFit, maxAllyH / allyNative.Y);
-                // The room's scale, capped by the ally's own frame; the legibility floor wins over a room of tiny cells,
-                // as it does in TouchSpireUI (the oversized body caps itself, never the hero's readability).
+                // The room's scale, capped by the ally's own frame; the legibility floor wins over a room of tiny cells
+                // (the oversized body caps itself, never the hero's readability).
                 allyForce = Math.Max(PortraitCombatMath.PeerScaleFloor,
                     Math.Min(plan.SharedBodyScale, Math.Max(PortraitCombatMath.MinBodyScale, allyFit)));
             }
@@ -3077,7 +3077,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             plan.RowScale = rowScale > 0f ? Math.Max(rowScale, PortraitCombatMath.MinBodyScale) : 0.82f;
             plan.RowScaleComputed = true;
 
-            // A1: one shared body scale for the encounter (plus the authored-size floor), then TouchSpireUI's per-encounter
+            // A1: one shared body scale for the encounter (plus the authored-size floor), then the encounter's own body
             // multiplier. It is still capped by the tightest cell so bodies cannot leave their cells; the boss keeps its own
             // frame (and the Ovicopter its back rank).
             float target = plan.BodyTargetScale > 0f
@@ -3336,10 +3336,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             if (!overflow && plan.OviFight && slotIndex == plan.OviSlot && plan.CrowdComputed &&
                 slotIndex < plan.CrowdMap.Length)
             {
-                // TouchSpireUI's Ovicopter slot at both shapes (CompactEnemyFrame / EnemyFrame, Dominant, index 0): an upper
-                // back slot over the right end of the egg row, 0.43W wide and 170 above the floor at 9:16, 0.55W wide and
-                // 400 design units (257 canvas) above it at 9:19.5. The flyer is drawn as large as the room scale allows
-                // once its intent row is kept just under the potion/relic header, never under the header itself.
+                // The Ovicopter slot at both shapes: an upper back slot over the right end of the egg row, 0.43W wide and
+                // 170 above the floor at 9:16, 0.55W wide and 400 design units (257 canvas) above it at 9:19.5. The flyer
+                // is drawn as large as the room scale allows once its intent row is kept just under the potion/relic
+                // header, never under the header itself.
                 float oviFrameW = (bands.Compact ? 0.43f : 0.55f) * SafeAreaCanvas.PortraitWidth;
                 float oviLift = bands.Compact ? 170f : 257f;
                 float oviFeet = bands.FrontFeetY - oviLift;
@@ -3369,7 +3369,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             if (!overflow && plan.ReservedBoss && plan.DominantStage.Slots.Length > 0)
             {
-                // TouchSpireUI's dominant frame on the front line, capped by the frozen room scale: the boss fills its
+                // The dominant frame on the front line, capped by the frozen room scale: the boss fills its
                 // 0.55W/0.43W frame and the reserved lanes fit their own bodies when their summons arrive, without the
                 // later body resizing the room or moving a peer.
                 if (slotIndex == plan.BossSlot)
@@ -3398,7 +3398,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             if (!overflow && forceScale <= 0.01f && plan.BodyTargetScale > 0f && !plan.EmbeddedCrab)
             {
-                // One shared authored-size scale for the encounter (TouchSpireUI's rule), still bounded by the frame.
+                // One shared authored-size scale for the encounter, still bounded by the frame.
                 forceScale = Math.Min(plan.BodyTargetScale, CellFit(enemy, maxW, maxH, refl, bands));
             }
             if (overflow)
@@ -3521,7 +3521,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// <summary>
     /// Enemies on both sides of a player in the middle (the Kaiser Crab): each side gets the stage between the
     /// player and its edge, its enemies side by side in the order the game has them, at the lone enemy's size rules.
-    /// The TouchSpire placement is the only owner of the background skeleton.
+    /// The portrait placement is the only owner of the background skeleton.
     /// </summary>
     private void LayoutSurroundingEnemies(
         CombatReflection refl,
@@ -3909,7 +3909,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             state.LastOrbChildren = children;
             state.LastOrbBodyScale = fittedScale;
         }
-        // TouchSpireUI draws the orbs at about 1.9 world units on its 1680 canvas, which is ~1.22 on ours; the harness
+        // The orbs are drawn at about 1.22 world units on the 1080 canvas (1.9 on the 1680 design canvas); the harness
         // floor for an orb icon is 75 canvas units, so target the larger high-count presentation (~1.45), then divide by
         // the body scale because the manager is a child of the creature.
         float orbWorld = 1.48f;
@@ -4171,7 +4171,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
 
         // The powers: the game's own two-row layout (container from the hit box, columns from its width and the count)
-        // with TouchSpireUI's icon size and the neighbour-limited block placed left of it.
+        // with the portrait icon size and the neighbour-limited block placed left of it.
         if (powerContainer != null)
         {
             // The batch already counted the block's icons to plan it; only a creature the batch did not plan needs a count.
@@ -4946,7 +4946,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         bool dominant = !plan.Segmented && !plan.EmbeddedCrab && capacity > 2 && capacity == enemies.Count &&
                         DominantByArea(enemies, refl);
         // The one exception is a boss whose encounter reserves its summons' slots and starts with that boss alone: the Phrog
-        // Parasite and its four wrigglers (also the Fabricator's bots and the Living Fog's bombs). It keeps TouchSpireUI's
+        // Parasite and its four wrigglers (also the Fabricator's bots and the Living Fog's bombs). It keeps the
         // dominant frame at both shapes — without the boss lift — with its feet on the front line, and the reserved slots
         // keep their lanes there from room start, so a summon appears where it was reserved and nothing reshuffles. The
         // Ovicopter is not this case: its reserved slots are eggs with their own row and its own back rank.
@@ -4979,7 +4979,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         plan.BossSlot = LargestEnemySlot(plan, refl, enemies);
         if (plan.ReservedBoss && plan.BossSlot == 0)
         {
-            // TouchSpireUI's dominant stage without its boss lift: the boss keeps its authored frame (0.55W on the tall
+            // The dominant stage without its boss lift: the boss keeps its authored frame (0.55W on the tall
             // canvas, 0.43W centred at 0.76 on the short one) with its feet on the front foot line, and the reserved slots
             // keep Capacity−1 equal lanes on that same ground band. The room scale freezes as usual, so a wriggler that
             // appears later fits its own lane without moving anything.
@@ -5074,7 +5074,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         if (plan.TallFormation.Length > 0 && !plan.Dominant && plan.BossSlot < 0 && capacity is 3 or 4 &&
             enemies.Count == capacity && players.Count > 0)
         {
-            // A tall-thin roster of three or four draws bigger in one row than in TouchSpireUI's table: its cells are only
+            // A tall-thin roster of three or four draws bigger in one row than in the tall table: its cells are only
             // as tall as the stage above their intent band (the Gardeners' 380-unit bodies fit 200), while a row of four
             // across the stage lets them use their width (0.53 in the 2x2 against 0.85 in the row). The row is the crowded
             // stage, so the table is simply not built and the same frozen row that lays the 9:16 room out lays this one.
@@ -5226,7 +5226,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         return markers;
     }
 
-    /// <summary>The slot of the room's boss under TouchSpireUI's dominance rule; -1 when the enemies share one size.</summary>
+    /// <summary>The slot of the room's boss under the dominance rule; -1 when the enemies share one size.</summary>
     private static int LargestEnemySlot(CombatStagePlan plan, CombatReflection refl, List<Control> enemies)
     {
         var candidates = new List<(int Slot, float Area, string Type)>(enemies.Count);
@@ -5306,7 +5306,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     }
 
     /// <summary>
-    /// The hero's own room scale for a given ally frame: TouchSpireUI's shared multiplier capped by the hero's body fit,
+    /// The hero's own room scale for a given ally frame: the shared multiplier capped by the hero's body fit,
     /// exactly as the stage resolves it (one ally's frame is 270 by 360, a crowd's 210 by 260).
     /// </summary>
     private static float HeroRoomScaleFor(List<Control> players, CombatReflection refl, bool crowded)
@@ -5331,8 +5331,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     }
 
     /// <summary>
-    /// The room's shared body scale, capped by the hero's own frame: the hero and the monsters share one size, exactly as
-    /// TouchSpireUI resolves one multiplier for the room. Before the roster has a player this is the value it already is.
+    /// The room's shared body scale, capped by the hero's own frame: the hero and the monsters share one size, one
+    /// multiplier for the room. Before the roster has a player this is the value it already is.
     /// </summary>
     private static float HeroCapped(CombatStagePlan plan, float scale) =>
         plan.HeroRoomScale > 0f ? Math.Min(scale, plan.HeroRoomScale) : scale;
@@ -5676,7 +5676,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             // The art's top in the scene's own space: Layer_00's authored offset is part of the composition (the base
             // art's registration against the parallax layers and the scene's VFX), and the 200-unit native
-            // creature-origin line only means anything in that frame. TouchSpireUI measures the same way.
+            // creature-origin line only means anything in that frame. The exposed arena is measured in that frame.
             float artTopInScene = topLeft.Y + nativeLayerY;
             PortraitCombatMath.PortraitBackdropFraming framing = PortraitCombatMath.ComputeBroadBackdropFraming(
                 artWidth, artHeight, artTopInScene, bottomRight.Y, SafeAreaCanvas.PortraitWidth, bands, barBottom,
@@ -5840,8 +5840,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// <summary>
     /// Native numbers and effects spawn at anchors computed from an unscaled hit box; with the creature drawn at a portrait
     /// scale those points land off the body. Each new child of the fight's VFX container is placed once on the creature it
-    /// belongs to, with the same clamps TouchSpireUI applies in its body hook: numbers inside the hit box, Ki and relic
-    /// flashes at its top, splashes at its feet.
+    /// belongs to, with the same clamps: numbers inside the hit box, Ki and relic flashes at its top, splashes at its feet.
     /// </summary>
     private void AlignNativeVfx(Control room, CombatReflection refl, List<Control> allies, List<Control> enemies)
     {
@@ -5996,12 +5995,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         public bool Dominant;
         public bool Segmented;
         /// <summary>
-        /// A lone boss whose encounter reserves its summons' slots: it keeps TouchSpireUI's dominant frame with its feet on
+        /// A lone boss whose encounter reserves its summons' slots: it keeps the dominant frame with its feet on
         /// the front line, and the reserved slots keep their lanes there from room start.
         /// </summary>
         public bool ReservedBoss;
         public PortraitCombatMath.PortraitDominantStage DominantStage;
-        /// <summary>A tall-thin 3–4 body roster drawn in the crowded single row instead of TouchSpireUI's tall table.</summary>
+        /// <summary>A tall-thin 3–4 body roster drawn in the crowded single row instead of the tall table.</summary>
         public bool SingleRow;
         public bool Pier;
         /// <summary>This encounter brings its own arena scene, so the act's pier is not what the room is drawn on.</summary>

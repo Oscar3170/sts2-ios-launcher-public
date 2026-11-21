@@ -9,17 +9,17 @@ namespace STS2Mobile.Platform;
 /// untargeted card is dragged its bottom edge stays <see cref="DragLift"/> above the finger; a targeted card parks at
 /// <see cref="AimingCardCenter"/> once aiming starts. A release reaches for a target a little outside the creature's hit
 /// box. Distances are canvas units on the 1080-wide portrait canvas, where one phone point is about 2.9 units; the
-/// starting values are TouchSpireUI's 1680-wide ones converted (<c>1080 / 1680</c>).
+/// starting values are converted from a 1680-wide design canvas (<c>1080 / 1680</c>).
 /// </summary>
 public static class TouchCardMath
 {
-    /// <summary>How far the finger must move from the press before the card is picked up (TouchSpireUI's 24, about 5.5 pt).</summary>
+    /// <summary>How far the finger must move from the press before the card is picked up (16 canvas units, about 5.5 pt).</summary>
     public const float PickupSlop = 16f;
 
-    /// <summary>How long a still finger must stay on a hand card before the card is inspected (TouchSpireUI's 0.60 s).</summary>
+    /// <summary>How long a still finger must stay on a hand card before the card is inspected (0.60 s).</summary>
     public const double HoldSeconds = 0.6;
 
-    /// <summary>How far outside a creature's hit box a release still targets it (TouchSpireUI's 60, about 13.4 pt).</summary>
+    /// <summary>How far outside a creature's hit box a release still targets it (39 canvas units, about 13.4 pt).</summary>
     public const float TargetPadding = 39f;
 
     /// <summary>How far from the nearest valid creature a release still snaps to it, past the padding (about 31 pt).</summary>

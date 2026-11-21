@@ -251,7 +251,7 @@ public sealed partial class PhoneGraphics : Node
                     PortraitCombatLayout.FlatHand = _settings.FlatHand;
                     _portraitLayout.ApplyImmediate();
                 },
-                out _, out _, out _, subtitle: "Fan the hand, or use flat rows like TouchSpireUI.");
+                out _, out _, out _, subtitle: "Fan the hand, or lay it out in flat rows.");
             index = AddRow(content, template, divider, index, "Performance Log", () => OffOn,
                 () => _settings.PerformanceLog ? 1 : 0,
                 choice =>
