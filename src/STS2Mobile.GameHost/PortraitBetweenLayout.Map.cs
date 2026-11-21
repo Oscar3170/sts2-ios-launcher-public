@@ -1,0 +1,644 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using Godot;
+using MegaCrit.Sts2.Core.Nodes;
+using STS2Mobile.Platform;
+
+namespace STS2Mobile.GameHost;
+
+/// <summary>
+/// The Spire Map in portrait: the torn-scroll art under the act backdrop, one clipped viewport for the whole graph
+/// (points, paths, drawings, marker), the native legend under the launcher's pill, and the drawing tools and Share button
+/// at 44 points. Every edit is captured first so leaving portrait puts the game's own map and footer back.
+/// </summary>
+internal sealed partial class PortraitBetweenLayout
+{
+    private const string LegendPillName = "PortraitLegendPill";
+    private const string MapViewportName = "PortraitMapViewport";
+    private const string MapShiftName = "PortraitMapShift";
+    private const string MapBackdropName = "PortraitMapBackdrop";
+    private const string MapShareMountName = "PortraitMapShare";
+
+    private const float LegendPillWidth = 230f;
+    private const int LegendPillFontSize = 34;
+    // The map points are drawn a quarter larger around their own centres: the centres, the paths, the visited circles
+    // (which are positioned from the point's unchanged pivot) and the centring measure all stay where the game put them.
+    private const float MapPointScale = 1.25f;
+    // The draw, erase and clear buttons are 60 units in the bar; the whole bar grows until each button is 44 points.
+    private const float DrawingToolsScale = PortraitBands.MinTarget / 60f;
+    // Share is 64 units tall natively; its mount grows it to the same 44 points without touching its own hover tween.
+    // The footer controls stay inside this bottom margin, and the graph clip stops above them.
+    private const float MapFooterBand = 150f;
+    // Share keeps the game's own 48-unit bottom margin; its right edge sits 32 units from the canvas edge.
+    private const float MapFooterInset = 32f;
+    private const float MapShareBottomInset = 48f;
+    private const float MapLegendInset = 20f;
+    private const float MapToolGap = 6f;
+    // Native legend is 340 x 454 at scale 1; the phone reference draws it at 2.3 on a 1680-wide canvas, which is
+    // 2.3 * 1080 / 1680 at ours (about 1.48: 13-22 point text).
+    private static readonly float MapLegendScale = PortraitBetweenMath.MapLegendScale;
+    // The act's own art behind the transparent edges of the torn paper.
+    private static readonly Color MapBackdropTint = new(0.20f, 0.23f, 0.25f);
+
+    private sealed class MapFrame
+    {
+        public Control? Clip;
+        public Control? Shift;
+        public Control? Map;
+        public Control? Points;
+        public Control? Tools;
+        public Control? Legend;
+        public Button? Pill;
+        public TextureRect? Backdrop;
+        public Control? Share;
+        public Control? ShareMount;
+        public PortraitControlSnapshot? MapSnapshot;
+        public PortraitControlSnapshot? ShareSnapshot;
+        public int MapIndex;
+        public int ShareIndex;
+
+        public bool IsValid() =>
+            Clip is { } clip && GodotObject.IsInstanceValid(clip) &&
+            Shift is { } shift && GodotObject.IsInstanceValid(shift) &&
+            Map is { } map && GodotObject.IsInstanceValid(map);
+    }
+
+    private readonly HashSet<ulong> _maps = new();
+    private readonly Dictionary<ulong, MapFrame> _mapFrames = new();
+    private readonly Dictionary<ulong, (ulong First, int Count, float Width, float Shift)> _mapShifts = new();
+    private readonly Dictionary<ulong, (ulong First, int Count)> _mapPointLayouts = new();
+    private readonly HashSet<ulong> _scaledMapPoints = new();
+    private readonly Dictionary<ulong, TextureRect.StretchModeEnum> _stretchModes = new();
+    private readonly Dictionary<ulong, bool> _mapHintVisibility = new();
+    private bool _legendOpen;
+
+    private Control? MapGraph(Control map)
+    {
+        if (_mapFrames.TryGetValue(map.GetInstanceId(), out MapFrame? frame) &&
+            frame.Map is { } cached && GodotObject.IsInstanceValid(cached))
+            return cached;
+        return map.GetNodeOrNull<Control>("TheMap") ?? map.FindChild("TheMap", true, false) as Control;
+    }
+
+    private void LayoutMapPortrait(Control map, float capHeight, float canvasHeight, float canvasWidth)
+    {
+        float shiftY = PortraitBetweenMath.MapBackgroundShift(canvasHeight);
+        Control? graph = MapGraph(map);
+        if (graph?.GetNodeOrNull<Control>("MapBg") is { } bg)
+        {
+            PortraitControlSnapshot snap = Capture(bg, captureVisible: false);
+            bg.OffsetTop = snap.InitialOffsetTop + shiftY;
+            bg.OffsetBottom = snap.InitialOffsetBottom + shiftY;
+            // Wider on both sides, so the parchment still covers the screen when the map is moved sideways to centre it and
+            // its centre (what multiplayer map positions are measured from) stays where it was.
+            bg.OffsetLeft = snap.InitialOffsetLeft - PortraitBetweenMath.MaxMapCentreShift;
+            bg.OffsetRight = snap.InitialOffsetRight + PortraitBetweenMath.MaxMapCentreShift;
+            // Each parchment tile is a 1080-tall slice of desktop-wide art: cover the narrow tile instead of fitting inside it,
+            // which would leave black bands between the tiles.
+            foreach (TextureRect tile in bg.GetChildren().OfType<TextureRect>())
+            {
+                _stretchModes.TryAdd(tile.GetInstanceId(), tile.StretchMode);
+                tile.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
+            }
+        }
+        if (graph?.GetNodeOrNull<Control>("Drawings") is { } drawings)
+        {
+            PortraitControlSnapshot snap = Capture(drawings, captureVisible: false);
+            // The drawing layer is authored on the game's 1920 x 1080 canvas. Its points container is centre-anchored, so
+            // the game shifts every point by (container - 1920x1080) / 2, and NMapDrawings.RepositionBasedOnBackground
+            // puts this layer at the same place once MapBg is widened symmetrically: a stroke keeps its point's net
+            // coordinate and moves exactly with the graph (PortraitBetweenMath.MapLayerOffset).
+            float shiftX = PortraitBetweenMath.MapLayerOffsetX(canvasWidth);
+            drawings.OffsetLeft = snap.InitialOffsetLeft + shiftX;
+            drawings.OffsetRight = snap.InitialOffsetRight + shiftX;
+            drawings.OffsetTop = snap.InitialOffsetTop + PortraitBetweenMath.MapLayerOffsetY(canvasHeight);
+            drawings.OffsetBottom = snap.InitialOffsetBottom + PortraitBetweenMath.MapLayerOffsetY(canvasHeight);
+        }
+        if (map.GetNodeOrNull<Control>("%MapLegend") is { } legend)
+        {
+            Capture(legend, captureVisible: true);
+            legend.PivotOffset = Vector2.Zero;
+            legend.Scale = new Vector2(MapLegendScale, MapLegendScale);
+            legend.Visible = _legendOpen;
+            // The keyboard hotkey hint is meaningless on a phone and would be drawn at 1.48x over the title.
+            if (legend.GetNodeOrNull<Control>("LegendHotkeyIcon") is { } hint && hint.Visible)
+            {
+                _mapHintVisibility.TryAdd(hint.GetInstanceId(), true);
+                hint.Hide();
+            }
+        }
+        EnsureLegendPill(map).Visible = true;
+
+        // The draw, erase and clear buttons are 60 units (21 points) in a bar at the bottom left, with nothing beside it
+        // up to the Share button: the whole bar grows from its bottom left corner until each button is 44 points.
+        if (map.GetNodeOrNull<Control>("%DrawingTools") is { } tools)
+        {
+            Capture(tools, captureVisible: false);
+            tools.PivotOffset = new Vector2(0f, tools.Size.Y);
+            tools.Scale = new Vector2(DrawingToolsScale, DrawingToolsScale);
+        }
+        EnsureMapFrame(map, new Vector2(canvasWidth, canvasHeight), PortraitBands.HeaderBottom(capHeight),
+            MapClipBottom(canvasHeight, map.GetNodeOrNull<Control>("%DrawingTools")));
+    }
+
+    /// <summary>
+    /// The graph's visible band. It starts under the stone header (the relic strip floats over the map art) and stops
+    /// above the drawing tools: the game draws paths, points, the marker and free strokes in the map container, so clipping
+    /// the whole container keeps all of them out of the header and the footer at once.
+    /// </summary>
+    private static float MapClipBottom(float canvasHeight, Control? tools)
+    {
+        float bottom = canvasHeight - MapFooterBand;
+        if (tools is { } bar && GodotObject.IsInstanceValid(bar) && bar.Size.Y > 0f && bar.Scale.Y > 0f)
+        {
+            float top = bar.Position.Y - bar.Size.Y * (bar.Scale.Y - 1f);
+            bottom = Math.Min(bottom, top - MapToolGap);
+        }
+        return bottom;
+    }
+
+    private MapFrame? EnsureMapFrame(Control map, Vector2 canvas, float clipTop, float clipBottom)
+    {
+        ulong id = map.GetInstanceId();
+        if (_mapFrames.TryGetValue(id, out MapFrame? known) && known.IsValid())
+        {
+            UpdateMapFrame(map, known, canvas, clipTop, clipBottom);
+            return known;
+        }
+        Control? theMap = MapGraph(map);
+        if (theMap == null) return null;
+        if (known != null) TearDownMapFrame(map, known);
+
+        int mapIndex = theMap.GetIndex();
+        var shift = new Control { Name = MapShiftName, MouseFilter = Control.MouseFilterEnum.Pass };
+        shift.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        shift.Size = canvas;
+        shift.Position = new Vector2(0f, -clipTop);
+        var clip = new Control
+        {
+            Name = MapViewportName,
+            ClipContents = true,
+            MouseFilter = Control.MouseFilterEnum.Pass,
+        };
+        clip.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        clip.Position = new Vector2(0f, clipTop);
+        clip.Size = new Vector2(canvas.X, Math.Max(0f, clipBottom - clipTop));
+        map.AddChild(clip);
+        map.MoveChild(clip, mapIndex);
+        clip.AddChild(shift);
+
+        var frame = new MapFrame
+        {
+            Clip = clip,
+            Shift = shift,
+            Map = theMap,
+            MapIndex = mapIndex,
+            MapSnapshot = Capture(theMap, captureVisible: false),
+        };
+        Vector2 mapPosition = theMap.Position;
+        // The shift cancels the clip's own offset, so the map container keeps the game's own position: the scroll target,
+        // the drag start (which copies the container's position) and the game's lerp all keep their meaning.
+        theMap.Reparent(shift, keepGlobalTransform: false);
+        theMap.Position = mapPosition;
+        _mapFrames[id] = frame;
+
+        // The act's own top illustration fills the bands the torn paper does not reach.
+        frame.Points = theMap.GetNodeOrNull<Control>("Points");
+        frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
+        frame.Legend = map.GetNodeOrNull<Control>("%MapLegend");
+        EnsureMapBackdrop(map, frame, ActMapTexture());
+        MountMapShare(map, frame, canvas);
+        UpdateMapFrame(map, frame, canvas, clipTop, clipBottom);
+        return frame;
+    }
+
+    private static void UpdateMapFrame(Control map, MapFrame frame, Vector2 canvas, float clipTop, float clipBottom)
+    {
+        if (frame.Clip is { } clip && GodotObject.IsInstanceValid(clip))
+        {
+            Vector2 size = new(canvas.X, Math.Max(0f, clipBottom - clipTop));
+            if (clip.Position.Y != clipTop) clip.Position = new Vector2(0f, clipTop);
+            if (clip.Size != size) clip.Size = size;
+        }
+        if (frame.Shift is { } shift && GodotObject.IsInstanceValid(shift))
+        {
+            if (shift.Position.Y != -clipTop) shift.Position = new Vector2(0f, -clipTop);
+            if (shift.Size != canvas) shift.Size = canvas;
+        }
+    }
+
+    /// <summary>The act's top map illustration, the same texture the native torn scroll's first slice shows.</summary>
+    private static Texture2D? ActMapTexture()
+    {
+        try
+        {
+            Type? runManager = typeof(NGame).Assembly.GetType("MegaCrit.Sts2.Core.Runs.RunManager");
+            object? instance = runManager?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            object? state = runManager?.GetMethod("DebugOnlyGetState", BindingFlags.Public | BindingFlags.Instance)
+                ?.Invoke(instance, null);
+            object? act = state?.GetType().GetProperty("Act", BindingFlags.Public | BindingFlags.Instance)?.GetValue(state);
+            return act?.GetType().GetProperty("MapTopBg", BindingFlags.Public | BindingFlags.Instance)?.GetValue(act) as Texture2D;
+        }
+        catch (Exception exception)
+        {
+            GD.PrintErr($"Portrait map backdrop: no act texture ({exception.Message})");
+            return null;
+        }
+    }
+
+    private static void EnsureMapBackdrop(Control map, MapFrame frame, Texture2D? texture)
+    {
+        texture ??= (frame.Map?.GetNodeOrNull<Control>("MapBg/MapTop") as TextureRect)?.Texture;
+        if (texture == null) return;
+        if (frame.Backdrop is { } existing && GodotObject.IsInstanceValid(existing))
+        {
+            if (existing.Texture != texture) existing.Texture = texture;
+            return;
+        }
+        var backdrop = new TextureRect
+        {
+            Name = MapBackdropName,
+            Texture = texture,
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            Modulate = MapBackdropTint,
+        };
+        backdrop.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        map.AddChild(backdrop);
+        // Just behind the clipped graph, over the game's own backstop.
+        map.MoveChild(backdrop, Math.Min(frame.MapIndex, map.GetChildCount() - 1));
+        frame.Backdrop = backdrop;
+    }
+
+    /// <summary>Scales the native Share button through a mount: its own hover tween keeps driving the button's scale.</summary>
+    private void MountMapShare(Control map, MapFrame frame, Vector2 canvas)
+    {
+        if (frame.Share is { } cached && GodotObject.IsInstanceValid(cached) && cached.GetParent() == frame.ShareMount)
+        {
+            PlaceMapShare(frame, canvas);
+            return;
+        }
+        if (map.GetNodeOrNull<Control>("%ShareButton") is not { } share || share.GetParent() != map) return;
+        int index = share.GetIndex();
+        var mount = new Control { Name = MapShareMountName, MouseFilter = Control.MouseFilterEnum.Ignore };
+        mount.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        map.AddChild(mount);
+        map.MoveChild(mount, index);
+        frame.Share = share;
+        frame.ShareMount = mount;
+        frame.ShareIndex = index;
+        frame.ShareSnapshot = Capture(share, captureVisible: false);
+        Vector2 size = share.Size;
+        share.Reparent(mount, keepGlobalTransform: false);
+        share.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        share.Position = Vector2.Zero;
+        share.Size = size;
+        PlaceMapShare(frame, canvas);
+    }
+
+    private static void PlaceMapShare(MapFrame frame, Vector2 canvas)
+    {
+        if (frame.Share is not { } share || frame.ShareMount is not { } mount ||
+            !GodotObject.IsInstanceValid(share) || !GodotObject.IsInstanceValid(mount))
+            return;
+        float scale = PortraitBands.MinTarget / Math.Max(1f, share.Size.Y);
+        if (mount.Scale.X != scale) mount.Scale = new Vector2(scale, scale);
+        Vector2 drawn = share.Size * scale;
+        Vector2 position = new(canvas.X - MapFooterInset - drawn.X, canvas.Y - MapShareBottomInset - drawn.Y);
+        if (mount.Position != position) mount.Position = position;
+    }
+
+    private void UpdateMapPortrait(Control map, Window root, Vector2 canvas)
+    {
+        float cap = PortraitLayout.ComputeCapHeight(root);
+        float clipTop = PortraitBands.HeaderBottom(cap);
+        MapFrame? probe = _mapFrames.TryGetValue(map.GetInstanceId(), out MapFrame? current) ? current : null;
+        float clipBottom = MapClipBottom(canvas.Y, probe?.Tools);
+        MapFrame? frame = EnsureMapFrame(map, canvas, clipTop, clipBottom);
+        if (frame != null && frame.Tools == null)
+            frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
+        // The game's scroll limits (-600..1800) were made for a 1080-tall canvas; keep its target inside the portrait range.
+        MapScrollRange range = MapScrollLimits(map, root, clipBottom, frame?.Map);
+        Type type = map.GetType();
+        bool dragging = type.GetField("_isDragging", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(map) is true;
+        FieldInfo? targetField = type.GetField("_targetDragPos", BindingFlags.Instance | BindingFlags.NonPublic);
+        // The game keeps the map container at x = 0 and writes that back whenever it opens or scrolls the map; it follows this
+        // target on both axes, so the sideways shift that centres the room points is held in the target as well.
+        float shiftX = MapCentreShift(map, frame, canvas.X);
+        if (targetField?.GetValue(map) is Vector2 target)
+        {
+            float targetY = target.Y;
+            if (!dragging)
+            {
+                float clamped = PortraitBetweenMath.ClampMapScroll(target.Y, range);
+                if (!Mathf.IsEqualApprox(clamped, target.Y))
+                    targetY = Mathf.Lerp(target.Y, clamped, (float)Math.Min(1.0, map.GetProcessDeltaTime() * 12.0));
+            }
+            if (targetY != target.Y || target.X != shiftX)
+                targetField.SetValue(map, new Vector2(shiftX, targetY));
+        }
+        if ((frame?.Map ?? MapGraph(map)) is { } theMap && theMap.Position.X != shiftX)
+            theMap.Position = new Vector2(shiftX, theMap.Position.Y);
+        UpdateMapPointsPortrait(map, frame);
+        if (frame is { } stack)
+        {
+            // The Share button sets its own scale whenever it is touched, so its mount keeps the picture and the 44 points.
+            if (stack.Share is { } share && GodotObject.IsInstanceValid(share) &&
+                share.GetParent() == stack.ShareMount && share.IsVisibleInTree())
+                PlaceMapShare(stack, canvas);
+            if (stack.Backdrop is null) EnsureMapBackdrop(map, stack, ActMapTexture());
+        }
+
+        (float bandTop, _) = VisibleBand(root);
+        Button pill = frame?.Pill ?? EnsureLegendPill(map);
+        if (frame != null) frame.Pill = pill;
+        pill.Visible = true;
+        pill.Position = new Vector2(canvas.X - pill.Size.X - 20f, bandTop - 40f);
+        Control? legend = frame?.Legend;
+        if (legend == null || !GodotObject.IsInstanceValid(legend))
+        {
+            legend = map.GetNodeOrNull<Control>("%MapLegend");
+            if (frame != null) frame.Legend = legend;
+        }
+        if (legend != null)
+        {
+            legend.Visible = _legendOpen;
+            legend.Scale = new Vector2(MapLegendScale, MapLegendScale);
+            legend.Position = new Vector2(canvas.X - legend.Size.X * MapLegendScale - MapLegendInset,
+                pill.Position.Y + pill.Size.Y + 13f);
+        }
+    }
+
+    /// <summary>
+    /// Room points for a finger, done once for each act's points. A room point is 56 units (19 points) with a
+    /// picture of 96, and the points sit about 150 units apart with some jitter. Each point is drawn a quarter larger around
+    /// its own centre, which leaves the centres, the paths and the centring measure where they were, and gets a square hit
+    /// area of up to 44 points: never more than half the way to the nearest other room point (measured along the longer
+    /// axis, so two hit areas cannot overlap) and never reaching a boss or the starting point. The point's own Size and
+    /// PivotOffset are never touched: NNormalMapPoint.ShowCircleVfx adds the current pivot to a visited circle's position,
+    /// so leaving it alone keeps existing circles centred on their nodes.
+    /// </summary>
+    private void UpdateMapPointsPortrait(Control map, MapFrame? frame)
+    {
+        Control? points = frame?.Points;
+        if (points == null || !GodotObject.IsInstanceValid(points))
+        {
+            points = MapGraph(map)?.GetNodeOrNull<Control>("Points");
+            if (points == null) return;
+            if (frame != null) frame.Points = points;
+        }
+        int count = points.GetChildCount();
+        ulong first = count > 0 ? points.GetChild(0).GetInstanceId() : 0;
+        ulong id = map.GetInstanceId();
+        if (_mapPointLayouts.TryGetValue(id, out (ulong First, int Count) known) && known.First == first && known.Count == count)
+            return;
+        _mapPointLayouts[id] = (first, count);
+        if (frame != null) EnsureMapBackdrop(map, frame, ActMapTexture());
+
+        var rooms = new List<Control>();
+        var others = new List<Rect2>();
+        foreach (Control point in points.GetChildren().OfType<Control>())
+        {
+            if (point.IsQueuedForDeletion()) continue;
+            string name = point.GetType().Name;
+            if (name == "NNormalMapPoint") rooms.Add(point);
+            else if (name.EndsWith("MapPoint", StringComparison.Ordinal)) others.Add(point.GetRect());
+        }
+        var centres = rooms.Select(p => p.Position + p.PivotOffset).ToList();
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            Control point = rooms[i];
+            Vector2 centre = centres[i];
+            float half = PortraitBands.MinTarget / 2f;
+            for (int j = 0; j < rooms.Count; j++)
+            {
+                if (j == i) continue;
+                Vector2 apart = (centres[j] - centre).Abs();
+                half = Math.Min(half, Math.Max(apart.X, apart.Y) / 2f);
+            }
+            foreach (Rect2 other in others)
+            {
+                float gap = Math.Max(
+                    Math.Max(other.Position.X - centre.X, centre.X - other.End.X),
+                    Math.Max(other.Position.Y - centre.Y, centre.Y - other.End.Y));
+                half = Math.Min(half, gap);
+            }
+            point.Scale = new Vector2(MapPointScale, MapPointScale);
+            _scaledMapPoints.Add(point.GetInstanceId());
+            if (half * 2f > Math.Max(point.Size.X, point.Size.Y) * MapPointScale + 1f)
+                EnsureHitPad(point, half * 2f, half * 2f);
+        }
+    }
+
+    /// <summary>
+    /// The sideways shift that centres this map's room points, measured again only when the points change (a new act).
+    /// </summary>
+    private float MapCentreShift(Control map, MapFrame? frame, float canvasWidth)
+    {
+        Control? points = frame?.Points;
+        if (points == null || !GodotObject.IsInstanceValid(points))
+            points = MapGraph(map)?.GetNodeOrNull<Control>("Points");
+        if (points == null) return 0f;
+        int count = points.GetChildCount();
+        ulong first = count > 0 ? points.GetChild(0).GetInstanceId() : 0;
+        ulong id = map.GetInstanceId();
+        if (_mapShifts.TryGetValue(id, out (ulong First, int Count, float Width, float Shift) known) &&
+            known.First == first && known.Count == count && known.Width == canvasWidth)
+            return known.Shift;
+
+        float left = float.MaxValue, right = float.MinValue;
+        foreach (Control point in points.GetChildren().OfType<Control>())
+        {
+            if (point.GetType().Name != "NNormalMapPoint" || point.IsQueuedForDeletion()) continue;
+            left = Math.Min(left, point.Position.X);
+            right = Math.Max(right, point.Position.X + point.Size.X);
+        }
+        float shift = left <= right ? PortraitBetweenMath.MapCentreShift(left, right, canvasWidth) : 0f;
+        _mapShifts[id] = (first, count, canvasWidth, shift);
+        return shift;
+    }
+
+    private Button EnsureLegendPill(Control map)
+    {
+        if (map.GetNodeOrNull<Button>(LegendPillName) is { } existing) return existing;
+        var style = new StyleBoxFlat
+        {
+            BgColor = PillFillColor,
+            BorderColor = PillBorderColor,
+            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+            CornerRadiusTopLeft = 63, CornerRadiusTopRight = 63, CornerRadiusBottomLeft = 63, CornerRadiusBottomRight = 63,
+        };
+        var pill = new Button
+        {
+            Name = LegendPillName,
+            CustomMinimumSize = new Vector2(LegendPillWidth, PortraitBands.MinTarget),
+            Size = new Vector2(LegendPillWidth, PortraitBands.MinTarget),
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+        };
+        foreach (string state in new[] { "normal", "hover", "pressed", "focus", "disabled" })
+            pill.AddThemeStyleboxOverride(state, style);
+        string header = map.GetNodeOrNull<Label>("MapLegend/Header")?.Text ?? "Legend";
+        var label = new Label
+        {
+            Name = "PillLabel",
+            Text = header + " ?",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+        };
+        label.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        label.AddThemeColorOverride("font_color", PillTextColor);
+        label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.65f));
+        label.AddThemeConstantOverride("outline_size", 8);
+        label.AddThemeFontSizeOverride("font_size", LegendPillFontSize);
+        if (ResourceLoader.Exists("res://themes/kreon_bold_glyph_space_one.tres") &&
+            ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres") is { } kreon)
+            label.AddThemeFontOverride("font", kreon);
+        pill.AddChild(label);
+        pill.Pressed += () => _legendOpen = !_legendOpen;
+        map.AddChild(pill);
+        return pill;
+    }
+
+    /// <summary>Back to the game's own map: the clip, the shift, the backdrop, the Share mount and the point sizes go.</summary>
+    private void RestoreMapLandscape()
+    {
+        foreach ((ulong id, MapFrame frame) in _mapFrames.ToList())
+        {
+            if (GodotObject.InstanceFromId(id) is Control map && GodotObject.IsInstanceValid(map))
+                TearDownMapFrame(map, frame);
+            else
+                TearDownMapFrame(null, frame);
+        }
+        _mapFrames.Clear();
+
+        foreach ((ulong id, TextureRect.StretchModeEnum mode) in _stretchModes)
+            if (GodotObject.InstanceFromId(id) is TextureRect rect && GodotObject.IsInstanceValid(rect))
+                rect.StretchMode = mode;
+        _stretchModes.Clear();
+        foreach ((ulong id, bool visible) in _mapHintVisibility)
+            if (GodotObject.InstanceFromId(id) is CanvasItem hint && GodotObject.IsInstanceValid(hint))
+                hint.Visible = visible;
+        _mapHintVisibility.Clear();
+
+        foreach (ulong id in _maps)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control map || !GodotObject.IsInstanceValid(map)) continue;
+            if (map.GetNodeOrNull<CanvasItem>(LegendPillName) is { } pill) pill.Visible = false;
+            if (map.GetType().GetField("_targetDragPos", BindingFlags.Instance | BindingFlags.NonPublic) is { } targetField &&
+                targetField.GetValue(map) is Vector2 target)
+                targetField.SetValue(map, new Vector2(0f, target.Y));
+            if (map.GetNodeOrNull<Control>("TheMap") is { } theMap)
+                theMap.Position = new Vector2(0f, theMap.Position.Y);
+            if (map.GetNodeOrNull<Control>("%MapLegend") is { } legend)
+            {
+                legend.Visible = true;
+                legend.Position = new Vector2(map.Size.X * 0.8f, legend.Position.Y);
+            }
+        }
+
+        foreach (ulong id in _scaledMapPoints)
+            if (GodotObject.InstanceFromId(id) is Control point && GodotObject.IsInstanceValid(point))
+                point.Scale = Vector2.One;
+        _scaledMapPoints.Clear();
+        _mapPointLayouts.Clear();
+        _mapShifts.Clear();
+    }
+
+    private static void TearDownMapFrame(Control? map, MapFrame frame)
+    {
+        if (frame.Share is { } share && GodotObject.IsInstanceValid(share))
+        {
+            if (frame.ShareMount is { } mount && GodotObject.IsInstanceValid(mount) && share.GetParent() == mount)
+            {
+                Node target = map ?? mount.GetParent();
+                share.Reparent(target, keepGlobalTransform: false);
+                frame.ShareSnapshot?.Restore(share);
+                if (map != null && GodotObject.IsInstanceValid(map))
+                    map.MoveChild(share, Math.Min(frame.ShareIndex, map.GetChildCount() - 1));
+            }
+        }
+        if (frame.ShareMount is { } shareMount && GodotObject.IsInstanceValid(shareMount))
+        {
+            shareMount.GetParent()?.RemoveChild(shareMount);
+            shareMount.QueueFree();
+        }
+        if (frame.Map is { } theMap && GodotObject.IsInstanceValid(theMap) && frame.Shift is { } shift &&
+            GodotObject.IsInstanceValid(shift) && theMap.GetParent() == shift)
+        {
+            if (map != null && GodotObject.IsInstanceValid(map))
+            {
+                // Keep the scroll exactly where the last portrait frame showed it; native then continues from there.
+                Vector2 shown = theMap.Position;
+                theMap.Reparent(map, keepGlobalTransform: false);
+                frame.MapSnapshot?.Restore(theMap);
+                theMap.Position = new Vector2(0f, shown.Y);
+                map.MoveChild(theMap, Math.Min(frame.MapIndex, map.GetChildCount() - 1));
+            }
+        }
+        if (frame.Backdrop is { } backdrop && GodotObject.IsInstanceValid(backdrop))
+        {
+            backdrop.GetParent()?.RemoveChild(backdrop);
+            backdrop.QueueFree();
+        }
+        if (frame.Clip is { } clip && GodotObject.IsInstanceValid(clip))
+        {
+            clip.GetParent()?.RemoveChild(clip);
+            clip.QueueFree();
+        }
+        frame.Backdrop = null;
+        frame.Clip = null;
+        frame.Shift = null;
+        frame.ShareMount = null;
+    }
+
+    private void PruneMapInstances()
+    {
+        _maps.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _mapFrames.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapFrames.Remove(id);
+        foreach (ulong id in _mapShifts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapShifts.Remove(id);
+        foreach (ulong id in _stretchModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _stretchModes.Remove(id);
+        foreach (ulong id in _mapHintVisibility.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapHintVisibility.Remove(id);
+        _scaledMapPoints.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _mapPointLayouts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapPointLayouts.Remove(id);
+    }
+
+    /// <summary>Top of the band below the top bar and relic strip, and the bottom of the band above the back button.</summary>
+    public static (float Top, float Bottom) VisibleBand(Window root)
+    {
+        float canvasHeight = Math.Max(root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
+        double inset = SafeAreaCanvas.TopInset();
+        float cap = inset > 0 ? MathF.Ceiling((float)(inset * canvasHeight)) : 162f;
+        cap = Math.Max(cap, 136f);
+        return (cap + PortraitBands.TopBarHeight + 200f, canvasHeight - MapFooterBand);
+    }
+
+    public static MapScrollRange MapScrollLimits(Control map, Window root)
+    {
+        float canvasHeight = Math.Max(root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
+        return MapScrollLimits(map, root,
+            MapClipBottom(canvasHeight, map.GetNodeOrNull<Control>("%DrawingTools")),
+            map.GetNodeOrNull<Control>("TheMap") ?? map.FindChild("TheMap", true, false) as Control);
+    }
+
+    private static MapScrollRange MapScrollLimits(Control map, Window root, float visibleBottom, Control? graph)
+    {
+        (float top, _) = VisibleBand(root);
+        Type type = map.GetType();
+        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Control? theMap = graph ?? map.GetNodeOrNull<Control>("TheMap") ?? map.FindChild("TheMap", true, false) as Control;
+        if (theMap == null ||
+            type.GetField("_bossPointNode", Flags)?.GetValue(map) is not Control boss ||
+            type.GetField("_startingPointNode", Flags)?.GetValue(map) is not Control start)
+            return new MapScrollRange(-600f, 1800f);
+        Control topBoss = type.GetField("_secondBossPointNode", Flags)?.GetValue(map) is Control second && second.IsVisibleInTree() &&
+            second.GlobalPosition.Y < boss.GlobalPosition.Y ? second : boss;
+        float bossTop = topBoss.GetGlobalRect().Position.Y - theMap.GlobalPosition.Y;
+        float startBottom = start.GetGlobalRect().End.Y - theMap.GlobalPosition.Y;
+        return PortraitBetweenMath.MapScrollRange(bossTop - 20f, startBottom + 20f, top, visibleBottom);
+    }
+}

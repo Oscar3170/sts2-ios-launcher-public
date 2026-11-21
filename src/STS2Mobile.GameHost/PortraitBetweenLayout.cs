@@ -39,6 +39,7 @@ internal sealed partial class PortraitBetweenLayout
         MerchantInventoryTypeName, FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
         BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, AncientDialogueLineTypeName,
         MerchantRoomTypeName, BlitzMerchantRoomTypeName, FakeMerchantRoomTypeName,
+        EventRoomTypeName, CombatEventLayoutTypeName,
     };
 
     // Card grids in portrait: two cards to a row at 1.8, each card 432 units (150 points) wide. The grid's
@@ -53,28 +54,12 @@ internal sealed partial class PortraitBetweenLayout
     private const float SortRowHeight = 75f;
     private const float SortRowGap = 6f;
     private const float SortButtonPad = 4f;
-    private const float AncientContentLift = 150f;
-    private const float AncientNextEdgeMargin = 40f;
-    // The ancients' dialogue lines are 800 wide in a 1000 wide column; in portrait they take the column's width.
-    private const float AncientDialogueWiden = 200f;
-
-    // Event art keeps its subject left of centre on the desktop; this brings it to the middle of the portrait canvas.
-    private const float EventArtShiftX = 320f;
-    private const float EventArtCentreY = 44f;
-
-    private const string LegendPillName = "PortraitLegendPill";
 
     // Sizes for a finger. 127 units are 44 points and a font of 32 units is 11 points (PortraitBands).
     private const string HitPadHolderName = PhoneHitArea.HolderName;
-    private const float LegendPillWidth = 230f;
-    private const int LegendPillFontSize = 34;
-    private const float MapPointScale = 1.25f;
-    private const float DrawingToolsScale = PortraitBands.MinTarget / 60f;
     private const float RewardsScale = 1.5f;
     private const float RewardsPivotY = 400f;
     private const int EventTextFontSize = 32;
-    private const float EventBottomMargin = 60f;
-    private const float EventMaxLift = 400f;
     private const float RestChoicesMaxScale = 1.35f;
     private const float RestChoicesMinScale = 0.6f;
     private const float RestChoicesPivotY = 80f;
@@ -96,29 +81,21 @@ internal sealed partial class PortraitBetweenLayout
     private static readonly Color PillTextColor = new(239f / 255f, 200f / 255f, 81f / 255f, 1f);
 
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
-    private readonly HashSet<ulong> _maps = new();
-    private readonly Dictionary<ulong, (ulong First, int Count, float Width, float Shift)> _mapShifts = new();
     private readonly HashSet<ulong> _proceedButtons = new();
     private readonly HashSet<ulong> _cardRewards = new();
     private readonly Dictionary<ulong, List<ulong>> _laidOutRewardHolders = new();
     private readonly HashSet<ulong> _mapFtues = new();
     private readonly HashSet<ulong> _grids = new();
-    private readonly Dictionary<ulong, TextureRect.StretchModeEnum> _stretchModes = new();
     private readonly HashSet<ulong> _hitAreaTargets = new();
-    private readonly HashSet<ulong> _liftedAncientContents = new();
     private readonly HashSet<ulong> _liftedBanners = new();
     private readonly HashSet<ulong> _shops = new();
     private readonly HashSet<ulong> _hitPadHolders = new();
-    private readonly Dictionary<ulong, (ulong First, int Count)> _mapPointLayouts = new();
-    private readonly HashSet<ulong> _scaledMapPoints = new();
     private readonly HashSet<ulong> _events = new();
     private readonly HashSet<ulong> _restSites = new();
     private readonly Dictionary<ulong, int> _labelMaxFontSizes = new();
     private readonly Dictionary<ulong, int> _labelMinFontSizes = new();
-    private readonly HashSet<ulong> _ancients = new();
     private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
-    private bool _legendOpen;
 
     // ---- entry points from PortraitLayout -------------------------------------------------------------------------------
 
@@ -131,7 +108,7 @@ internal sealed partial class PortraitBetweenLayout
         switch (typeName)
         {
             case MapScreenTypeName:
-                LayoutMapPortrait(control, canvasHeight, canvasWidth);
+                LayoutMapPortrait(control, capHeight, canvasHeight, canvasWidth);
                 _maps.Add(control.GetInstanceId());
                 break;
             case ProceedButtonTypeName:
@@ -142,7 +119,8 @@ internal sealed partial class PortraitBetweenLayout
                 EnsureHitPad(control, 0f, PortraitBands.MinTarget);
                 break;
             case EventOptionTypeName:
-                LayoutEventOptionPortrait(control);
+                if (IsInLayout(control, AncientLayoutTypeName)) LayoutAncientOptionPortrait(control);
+                else ApplyEventOption(control);
                 break;
             case AncientDialogueLineTypeName:
                 LayoutAncientDialogueLinePortrait(control);
@@ -164,8 +142,7 @@ internal sealed partial class PortraitBetweenLayout
                 LayoutShopRemovalPreview(control);
                 break;
             case AncientLayoutTypeName:
-                LayoutAncientPortrait(control, canvasWidth);
-                _ancients.Add(control.GetInstanceId());
+                LayoutAncientPortrait(control, capHeight, canvasWidth, canvasHeight);
                 break;
             case MerchantInventoryTypeName:
                 _shops.Add(control.GetInstanceId());
@@ -182,6 +159,12 @@ internal sealed partial class PortraitBetweenLayout
                 break;
             case EventLayoutTypeName:
                 LayoutEventPortrait(control, capHeight, canvasHeight, canvasWidth);
+                break;
+            case CombatEventLayoutTypeName:
+                LayoutCombatEventPortrait(control, capHeight, canvasHeight, canvasWidth);
+                break;
+            case EventRoomTypeName:
+                TrackEventRoom(control, canvasWidth, canvasHeight);
                 break;
             case MapFtueTypeName:
                 _mapFtues.Add(control.GetInstanceId());
@@ -207,6 +190,8 @@ internal sealed partial class PortraitBetweenLayout
             LayoutAncientOptionPortrait(control);
             return true;
         }
+        if (typeName == EventOptionTypeName) return ApplyEventOption(control);
+        if (typeName == EventLayoutTypeName) return HoldEventArtUntilFramed(control);
         return false;
     }
 
@@ -237,13 +222,14 @@ internal sealed partial class PortraitBetweenLayout
                 KeepMapFtueOnScreen(ftue, canvas);
         foreach (ulong id in _events)
             if (GodotObject.InstanceFromId(id) is Control layout && GodotObject.IsInstanceValid(layout) && layout.IsVisibleInTree())
-                KeepEventTextOnScreen(layout, capHeight, canvas);
+                UpdateEventPortrait(layout, capHeight, canvas);
+        foreach (ulong id in _eventRooms)
+            if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsInsideTree())
+                UpdateEventRoomCover(room, canvas);
         foreach (ulong id in _restSites)
             if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
                 UpdateRestSitePortrait(room, canvas);
-        foreach (ulong id in _ancients)
-            if (GodotObject.InstanceFromId(id) is Control ancient && GodotObject.IsInstanceValid(ancient) && ancient.IsVisibleInTree())
-                KeepAncientOptionsInside(ancient);
+        UpdateAncientPortraits(capHeight, canvas);
         foreach (ulong id in _shops)
             if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop) && shop.IsVisibleInTree())
                 UpdateShopPortrait(shop, capHeight, canvas);
@@ -255,29 +241,13 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
                 RestoreCardRewardLandscape(screen);
         _laidOutRewardHolders.Clear();
+        RestoreEventsLandscape();
 
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
-        foreach ((ulong id, TextureRect.StretchModeEnum mode) in _stretchModes)
-            if (GodotObject.InstanceFromId(id) is TextureRect rect && GodotObject.IsInstanceValid(rect))
-                rect.StretchMode = mode;
 
-        foreach (ulong id in _maps)
-        {
-            if (GodotObject.InstanceFromId(id) is not Control map || !GodotObject.IsInstanceValid(map)) continue;
-            if (map.GetNodeOrNull<CanvasItem>(LegendPillName) is { } pill) pill.Visible = false;
-            if (map.GetType().GetField("_targetDragPos", BindingFlags.Instance | BindingFlags.NonPublic) is { } targetField &&
-                targetField.GetValue(map) is Vector2 target)
-                targetField.SetValue(map, new Vector2(0f, target.Y));
-            if (map.GetNodeOrNull<Control>("TheMap") is { } theMap)
-                theMap.Position = new Vector2(0f, theMap.Position.Y);
-            if (map.GetNodeOrNull<Control>("%MapLegend") is { } legend)
-            {
-                legend.Visible = true;
-                legend.Position = new Vector2(map.Size.X * 0.8f, legend.Position.Y);
-            }
-        }
+        RestoreMapLandscape();
 
         foreach (ulong id in _proceedButtons)
             if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button))
@@ -294,10 +264,6 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _shops)
             if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop))
                 RestoreShopLandscape(shop);
-        foreach (ulong id in _liftedAncientContents)
-            if (GodotObject.InstanceFromId(id) is Control content && GodotObject.IsInstanceValid(content))
-                content.Position += new Vector2(0f, AncientContentLift);
-        _liftedAncientContents.Clear();
         foreach (ulong id in _hitPadHolders)
         {
             if (GodotObject.InstanceFromId(id) is not Control holder || !GodotObject.IsInstanceValid(holder)) continue;
@@ -305,11 +271,6 @@ internal sealed partial class PortraitBetweenLayout
             holder.QueueFree();
         }
         _hitPadHolders.Clear();
-        foreach (ulong id in _scaledMapPoints)
-            if (GodotObject.InstanceFromId(id) is Control point && GodotObject.IsInstanceValid(point))
-                point.Scale = Vector2.One;
-        _scaledMapPoints.Clear();
-        _mapPointLayouts.Clear();
         foreach ((ulong id, int size) in _labelMaxFontSizes)
             if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
                 label.Set("MaxFontSize", size);
@@ -335,247 +296,33 @@ internal sealed partial class PortraitBetweenLayout
             }
         }
         _richFontSizes.Clear();
+        // After the snapshots: the painting goes back into the layout and the game's own window rule places it.
+        RestoreAncientLandscape();
     }
 
     public void PruneDead()
     {
         foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
-        _maps.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        foreach (ulong id in _mapShifts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapShifts.Remove(id);
+        PruneMapInstances();
         _proceedButtons.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _cardRewards.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _mapFtues.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _grids.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        foreach (ulong id in _stretchModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _stretchModes.Remove(id);
         foreach (ulong id in _laidOutRewardHolders.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList())
             _laidOutRewardHolders.Remove(id);
         _hitAreaTargets.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _liftedAncientContents.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _liftedBanners.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _shops.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         PruneShopInstances();
         _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _scaledMapPoints.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _events.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _restSites.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _ancients.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        foreach (ulong id in _mapPointLayouts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapPointLayouts.Remove(id);
+        PruneAncientInstances();
         foreach (ulong id in _labelMaxFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMaxFontSizes.Remove(id);
         foreach (ulong id in _labelMinFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMinFontSizes.Remove(id);
         foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
         foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
-    }
-
-    // ---- Spire Map ------------------------------------------------------------------------------------------------------
-
-    private void LayoutMapPortrait(Control map, float canvasHeight, float canvasWidth)
-    {
-        float shiftY = PortraitBetweenMath.MapBackgroundShift(canvasHeight);
-        if (map.GetNodeOrNull<Control>("TheMap/MapBg") is { } bg)
-        {
-            PortraitControlSnapshot snap = Capture(bg, captureVisible: false);
-            bg.OffsetTop = snap.InitialOffsetTop + shiftY;
-            bg.OffsetBottom = snap.InitialOffsetBottom + shiftY;
-            // Wider on both sides, so the parchment still covers the screen when the map is moved sideways to centre it and
-            // its centre (what multiplayer map positions are measured from) stays where it was.
-            bg.OffsetLeft = snap.InitialOffsetLeft - PortraitBetweenMath.MaxMapCentreShift;
-            bg.OffsetRight = snap.InitialOffsetRight + PortraitBetweenMath.MaxMapCentreShift;
-            // Each parchment tile is a 1080-tall slice of desktop-wide art: cover the narrow tile instead of fitting inside it,
-            // which would leave black bands between the tiles.
-            foreach (TextureRect tile in bg.GetChildren().OfType<TextureRect>())
-            {
-                _stretchModes.TryAdd(tile.GetInstanceId(), tile.StretchMode);
-                tile.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
-            }
-        }
-        if (map.GetNodeOrNull<Control>("TheMap/Drawings") is { } drawings)
-        {
-            PortraitControlSnapshot snap = Capture(drawings, captureVisible: false);
-            float shiftX = (canvasWidth - 1920f) / 2f;
-            drawings.OffsetLeft = snap.InitialOffsetLeft + shiftX;
-            drawings.OffsetRight = snap.InitialOffsetRight + shiftX;
-            drawings.OffsetTop = snap.InitialOffsetTop + shiftY;
-            drawings.OffsetBottom = snap.InitialOffsetBottom + shiftY;
-        }
-        if (map.GetNodeOrNull<Control>("%MapLegend") is { } legend)
-        {
-            Capture(legend, captureVisible: true);
-            legend.PivotOffset = Vector2.Zero;
-            legend.Scale = new Vector2(0.8f, 0.8f);
-            legend.Visible = _legendOpen;
-        }
-        EnsureLegendPill(map).Visible = true;
-
-        // The draw, erase and clear buttons are 60 units (21 points) in a bar at the bottom left, with nothing beside it
-        // up to the Share button: the whole bar grows from its bottom left corner until each button is 44 points.
-        if (map.GetNodeOrNull<Control>("%DrawingTools") is { } tools)
-        {
-            Capture(tools, captureVisible: false);
-            tools.PivotOffset = new Vector2(0f, tools.Size.Y);
-            tools.Scale = new Vector2(DrawingToolsScale, DrawingToolsScale);
-        }
-    }
-
-    private void UpdateMapPortrait(Control map, Window root, Vector2 canvas)
-    {
-        // The game's scroll limits (-600..1800) were made for a 1080-tall canvas; keep its target inside the portrait range.
-        MapScrollRange range = MapScrollLimits(map, root);
-        Type type = map.GetType();
-        bool dragging = type.GetField("_isDragging", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(map) is true;
-        FieldInfo? targetField = type.GetField("_targetDragPos", BindingFlags.Instance | BindingFlags.NonPublic);
-        // The game keeps the map container at x = 0 and writes that back whenever it opens or scrolls the map; it follows this
-        // target on both axes, so the sideways shift that centres the room points is held in the target as well.
-        float shiftX = MapCentreShift(map, canvas.X);
-        if (targetField?.GetValue(map) is Vector2 target)
-        {
-            float targetY = target.Y;
-            if (!dragging)
-            {
-                float clamped = PortraitBetweenMath.ClampMapScroll(target.Y, range);
-                if (!Mathf.IsEqualApprox(clamped, target.Y))
-                    targetY = Mathf.Lerp(target.Y, clamped, (float)Math.Min(1.0, map.GetProcessDeltaTime() * 12.0));
-            }
-            if (targetY != target.Y || target.X != shiftX)
-                targetField.SetValue(map, new Vector2(shiftX, targetY));
-        }
-        if (map.GetNodeOrNull<Control>("TheMap") is { } theMap && theMap.Position.X != shiftX)
-            theMap.Position = new Vector2(shiftX, theMap.Position.Y);
-        UpdateMapPointsPortrait(map);
-        // The Share button sets its own scale whenever it is touched, so it keeps its picture and gets a taller hit area.
-        // Done here and not when the map is laid out: the layout runs as the map enters the tree, before its children have.
-        if (map.GetNodeOrNull<Control>("%ShareButton") is { } share && share.IsVisibleInTree())
-            EnsureHitPad(share, 0f, PortraitBands.MinTarget);
-
-        (float bandTop, _) = VisibleBand(root);
-        Button pill = EnsureLegendPill(map);
-        pill.Visible = true;
-        pill.Position = new Vector2(canvas.X - pill.Size.X - 20f, bandTop - 40f);
-        if (map.GetNodeOrNull<Control>("%MapLegend") is { } legend)
-        {
-            legend.Visible = _legendOpen;
-            legend.Scale = new Vector2(0.8f, 0.8f);
-            legend.Position = new Vector2(canvas.X - legend.Size.X * 0.8f - 16f, pill.Position.Y + pill.Size.Y + 13f);
-        }
-    }
-
-    /// <summary>
-    /// Room points for a finger, done once for each act's points. A room point is 56 units (19 points) with a
-    /// picture of 96, and the points sit about 150 units apart with some jitter. Each point is drawn a quarter larger around
-    /// its own centre, which leaves the centres, the paths and the centring measure where they were, and gets a square hit
-    /// area of up to 44 points: never more than half the way to the nearest other room point (measured along the longer
-    /// axis, so two hit areas cannot overlap) and never reaching a boss or the starting point.
-    /// </summary>
-    private void UpdateMapPointsPortrait(Control map)
-    {
-        if (map.GetNodeOrNull<Control>("TheMap/Points") is not { } points) return;
-        int count = points.GetChildCount();
-        ulong first = count > 0 ? points.GetChild(0).GetInstanceId() : 0;
-        ulong id = map.GetInstanceId();
-        if (_mapPointLayouts.TryGetValue(id, out (ulong First, int Count) known) && known.First == first && known.Count == count)
-            return;
-        _mapPointLayouts[id] = (first, count);
-
-        var rooms = new List<Control>();
-        var others = new List<Rect2>();
-        foreach (Control point in points.GetChildren().OfType<Control>())
-        {
-            if (point.IsQueuedForDeletion()) continue;
-            string name = point.GetType().Name;
-            if (name == "NNormalMapPoint") rooms.Add(point);
-            else if (name.EndsWith("MapPoint", StringComparison.Ordinal)) others.Add(point.GetRect());
-        }
-        var centres = rooms.Select(p => p.Position + p.PivotOffset).ToList();
-        for (int i = 0; i < rooms.Count; i++)
-        {
-            Control point = rooms[i];
-            Vector2 centre = centres[i];
-            float half = PortraitBands.MinTarget / 2f;
-            for (int j = 0; j < rooms.Count; j++)
-            {
-                if (j == i) continue;
-                Vector2 apart = (centres[j] - centre).Abs();
-                half = Math.Min(half, Math.Max(apart.X, apart.Y) / 2f);
-            }
-            foreach (Rect2 other in others)
-            {
-                float gap = Math.Max(
-                    Math.Max(other.Position.X - centre.X, centre.X - other.End.X),
-                    Math.Max(other.Position.Y - centre.Y, centre.Y - other.End.Y));
-                half = Math.Min(half, gap);
-            }
-            point.Scale = new Vector2(MapPointScale, MapPointScale);
-            _scaledMapPoints.Add(point.GetInstanceId());
-            if (half * 2f > Math.Max(point.Size.X, point.Size.Y) * MapPointScale + 1f)
-                EnsureHitPad(point, half * 2f, half * 2f);
-        }
-    }
-
-    /// <summary>
-    /// The sideways shift that centres this map's room points, measured again only when the points change (a new act).
-    /// </summary>
-    private float MapCentreShift(Control map, float canvasWidth)
-    {
-        if (map.GetNodeOrNull<Control>("TheMap/Points") is not { } points) return 0f;
-        int count = points.GetChildCount();
-        ulong first = count > 0 ? points.GetChild(0).GetInstanceId() : 0;
-        ulong id = map.GetInstanceId();
-        if (_mapShifts.TryGetValue(id, out (ulong First, int Count, float Width, float Shift) known) &&
-            known.First == first && known.Count == count && known.Width == canvasWidth)
-            return known.Shift;
-
-        float left = float.MaxValue, right = float.MinValue;
-        foreach (Control point in points.GetChildren().OfType<Control>())
-        {
-            if (point.GetType().Name != "NNormalMapPoint" || point.IsQueuedForDeletion()) continue;
-            left = Math.Min(left, point.Position.X);
-            right = Math.Max(right, point.Position.X + point.Size.X);
-        }
-        float shift = left <= right ? PortraitBetweenMath.MapCentreShift(left, right, canvasWidth) : 0f;
-        _mapShifts[id] = (first, count, canvasWidth, shift);
-        return shift;
-    }
-
-    private Button EnsureLegendPill(Control map)
-    {
-        if (map.GetNodeOrNull<Button>(LegendPillName) is { } existing) return existing;
-        var style = new StyleBoxFlat
-        {
-            BgColor = PillFillColor,
-            BorderColor = PillBorderColor,
-            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
-            CornerRadiusTopLeft = 63, CornerRadiusTopRight = 63, CornerRadiusBottomLeft = 63, CornerRadiusBottomRight = 63,
-        };
-        var pill = new Button
-        {
-            Name = LegendPillName,
-            CustomMinimumSize = new Vector2(LegendPillWidth, PortraitBands.MinTarget),
-            Size = new Vector2(LegendPillWidth, PortraitBands.MinTarget),
-            FocusMode = Control.FocusModeEnum.None,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-        };
-        foreach (string state in new[] { "normal", "hover", "pressed", "focus", "disabled" })
-            pill.AddThemeStyleboxOverride(state, style);
-        string header = map.GetNodeOrNull<Label>("MapLegend/Header")?.Text ?? "Legend";
-        var label = new Label
-        {
-            Name = "PillLabel",
-            Text = header + " ?",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        label.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        label.AddThemeColorOverride("font_color", PillTextColor);
-        label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.65f));
-        label.AddThemeConstantOverride("outline_size", 8);
-        label.AddThemeFontSizeOverride("font_size", LegendPillFontSize);
-        if (ResourceLoader.Exists("res://themes/kreon_bold_glyph_space_one.tres") &&
-            ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres") is { } kreon)
-            label.AddThemeFontOverride("font", kreon);
-        pill.AddChild(label);
-        pill.Pressed += () => _legendOpen = !_legendOpen;
-        map.AddChild(pill);
-        return pill;
+        PruneEventInstances();
     }
 
     // ---- Proceed button (rewards, shop, rest site, treasure) ------------------------------------------------------------
@@ -866,51 +613,6 @@ internal sealed partial class PortraitBetweenLayout
         grid.GetType().GetField("_needsReinit", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(grid, true);
     }
 
-    // ---- Ancient events (Neow) -----------------------------------------------------------------------------------------
-
-    private void LayoutAncientPortrait(Control layout, float canvasWidth)
-    {
-        // The dialogue's "Continue" hint is placed 268 to 663 units right of the centre, for a desktop-wide screen; on the
-        // narrow canvas its text ran past the right edge. Keep its right end inside the screen.
-        if (layout.GetNodeOrNull<Control>("%FakeNextButtonContainer/FakeNextButton") is { } next)
-        {
-            PortraitControlSnapshot nextSnap = Capture(next, captureVisible: false);
-            float shift = Math.Max(0f, nextSnap.InitialOffsetRight - (canvasWidth / 2f - AncientNextEdgeMargin));
-            next.OffsetLeft = nextSnap.InitialOffsetLeft - shift;
-            next.OffsetRight = nextSnap.InitialOffsetRight - shift;
-        }
-
-        // Lift the dialogue and options above the ancient's name plate in the bottom-left corner. Once only, and by moving
-        // the box as it is: the game changes this box's height itself (short while the dialogue runs, so it ends above the
-        // "Continue" hint, and full again for the options), so writing a height kept from an earlier moment here cut the
-        // third option off when a later layout pass came after the options were shown.
-        if (layout.GetNodeOrNull<Control>("%ContentContainer") is not { } content) return;
-        if (_liftedAncientContents.Add(content.GetInstanceId()))
-            content.Position -= new Vector2(0f, AncientContentLift);
-    }
-
-    /// <summary>
-    /// When the last dialogue line shows, the game slides the column so the options end at the bottom of its clipped box,
-    /// measuring the options as they are at that moment; rows that grew after (portrait's 44 point rows, laid out a frame
-    /// later) ran past the box and the last option was cut off. Once the slide has ended, the column is held
-    /// with its end at the box's bottom. Earlier lines are left as the game places them (the lines to come wait below).
-    /// </summary>
-    private void KeepAncientOptionsInside(Control layout)
-    {
-        Type type = layout.GetType();
-        object? lastLine = type.GetProperty("IsDialogueOnLastLine", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(layout);
-        // No slide yet: the game has not set the screen up, and puts the column below the box when it does.
-        if (type.GetField("_contentTween", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(layout) is not Tween tween) return;
-        bool sliding = tween.IsValid() && tween.IsRunning();
-        Control? box = layout.GetNodeOrNull<Control>("%ContentContainer");
-        Control? content = box?.GetNodeOrNull<Control>("Content");
-        if (lastLine is not true || sliding || box == null || content == null) return;
-        float overflow = content.Position.Y + content.Size.Y - box.Size.Y;
-        if (overflow <= 0.5f) return;
-        content.Position -= new Vector2(0f, overflow);
-        GD.Print($"Portrait ancient: options lifted {overflow:F0} into the box.");
-    }
-
     // ---- Map tutorial tip ------------------------------------------------------------------------------------------------
 
     private static void KeepMapFtueOnScreen(Control ftue, Vector2 canvas)
@@ -937,165 +639,6 @@ internal sealed partial class PortraitBetweenLayout
 
     private int GameLabelFontSize(Control label) =>
         _labelFontSizes.TryGetValue(label.GetInstanceId(), out (bool Had, int Size) kept) ? kept.Size : label.GetThemeFontSize("font_size");
-
-    // ---- Events --------------------------------------------------------------------------------------------------------
-
-    private void LayoutEventPortrait(Control layout, float capHeight, float canvasHeight, float canvasWidth)
-    {
-        if (layout.GetType().FullName != EventLayoutTypeName) return;
-        float bandTop = capHeight + PortraitBands.TopBarHeight;
-        float artCentre = bandTop + 540f;
-        float shiftY = artCentre - (canvasHeight / 2f + EventArtCentreY);
-        foreach (string name in new[] { "%Portrait", "%VfxContainer" })
-        {
-            if (layout.GetNodeOrNull<Control>(name) is not { } art) continue;
-            PortraitControlSnapshot snap = Capture(art, captureVisible: false);
-            art.OffsetLeft = snap.InitialOffsetLeft + EventArtShiftX;
-            art.OffsetRight = snap.InitialOffsetRight + EventArtShiftX;
-            art.OffsetTop = snap.InitialOffsetTop + shiftY;
-            art.OffsetBottom = snap.InitialOffsetBottom + shiftY;
-        }
-        if (layout.GetNodeOrNull<Control>("VBoxContainer") is { } text)
-        {
-            Capture(text, captureVisible: false);
-            float rootTop = layout.OffsetTop;
-            float top = bandTop + 1080f - 40f - rootTop;
-            text.OffsetLeft = -(canvasWidth / 2f) + 40f;
-            text.OffsetRight = canvasWidth / 2f - 40f;
-            text.OffsetTop = top;
-        }
-        // The description is drawn at 26 units (9 points); it does not size itself, so its font sizes are set to 11 points.
-        if (layout.GetNodeOrNull<Control>("%EventDescription") is { } description)
-            SetRichFontSize(description, EventTextFontSize);
-        _events.Add(layout.GetInstanceId());
-        KeepEventTextOnScreen(layout, capHeight, new Vector2(canvasWidth, canvasHeight));
-    }
-
-    /// <summary>
-    /// With larger text and option rows a long event can be taller than the room under the art. The text block is anchored
-    /// at its top and grows down, so when its bottom would pass the screen's bottom it is lifted over the art's lower edge
-    /// by what is missing.
-    /// </summary>
-    private static void KeepEventTextOnScreen(Control layout, float capHeight, Vector2 canvas)
-    {
-        if (layout.GetNodeOrNull<Control>("VBoxContainer") is not { } text) return;
-        float baseTop = capHeight + PortraitBands.TopBarHeight + 1080f - 40f - layout.OffsetTop;
-        float bottom = layout.GlobalPosition.Y + baseTop + text.GetCombinedMinimumSize().Y;
-        float lift = Math.Clamp(bottom - (canvas.Y - EventBottomMargin), 0f, EventMaxLift);
-        float top = baseTop - lift;
-        if (Math.Abs(text.OffsetTop - top) > 0.5f) text.OffsetTop = top;
-    }
-
-    /// <summary>
-    /// An event's option row is 100 units tall (35 points) with text of up to 24 units (8 points). In the default event
-    /// layout the row becomes 44 points tall, its frame follows, and its text gets the row's full width and may size itself
-    /// up to 11 points. The ancients' options keep their own layout.
-    /// </summary>
-    private void LayoutEventOptionPortrait(Control option)
-    {
-        bool inDefaultLayout = false, inAncientLayout = false;
-        for (Node? node = option.GetParent(); node != null && !inDefaultLayout && !inAncientLayout; node = node.GetParent())
-        {
-            inDefaultLayout = node.GetType().FullName == EventLayoutTypeName;
-            inAncientLayout = node.GetType().FullName == AncientLayoutTypeName;
-        }
-        if (inAncientLayout) LayoutAncientOptionPortrait(option);
-        if (!inDefaultLayout) return;
-
-        PortraitControlSnapshot snap = Capture(option, captureVisible: false);
-        option.CustomMinimumSize = new Vector2(snap.InitialCustomMinimumSize.X, PortraitBands.MinTarget);
-        foreach (string name in new[] { "Shadow", "Outline" })
-        {
-            // Both are centred on the row and 100 units tall whatever the row's height.
-            if (option.GetNodeOrNull<Control>(name) is not { } frame) continue;
-            Capture(frame, captureVisible: false);
-            frame.OffsetTop = -PortraitBands.MinTarget / 2f;
-            frame.OffsetBottom = PortraitBands.MinTarget / 2f;
-        }
-        if (option.GetNodeOrNull<Control>("%Text") is { } label)
-        {
-            // The text sizes itself between its smallest and largest font when its box changes, so the limit goes up first.
-            ulong id = label.GetInstanceId();
-            if (!_labelMaxFontSizes.ContainsKey(id) && label.Get("MaxFontSize").VariantType == Variant.Type.Int)
-            {
-                _labelMaxFontSizes[id] = label.Get("MaxFontSize").AsInt32();
-                label.Set("MaxFontSize", EventTextFontSize);
-            }
-            PortraitControlSnapshot textSnap = Capture(label, captureVisible: false);
-            label.AnchorRight = 1f;
-            label.AnchorBottom = 1f;
-            label.OffsetLeft = textSnap.InitialOffsetLeft;
-            label.OffsetTop = textSnap.InitialOffsetTop;
-            label.OffsetRight = -36f;
-            label.OffsetBottom = -13f;
-        }
-    }
-
-    /// <summary>
-    /// An ancient's option row (Neow's and the others') is 1000 x 100 units, 34 points tall, with text of up to 24 units (8
-    /// points). In portrait the row is 44 points tall, its outline and its icon and text row grow with it, and the text may
-    /// size itself up to 11 points. The game places the column from the rows' sizes when the options
-    /// show, so the taller rows stay inside the screen.
-    /// </summary>
-    private void LayoutAncientOptionPortrait(Control option)
-    {
-        PortraitControlSnapshot snap = Capture(option, captureVisible: false);
-        float grow = PortraitBands.MinTarget - snap.InitialCustomMinimumSize.Y;
-        if (grow <= 0f) return;
-        option.CustomMinimumSize = new Vector2(snap.InitialCustomMinimumSize.X, PortraitBands.MinTarget);
-        if (option.GetNodeOrNull<Control>("Outline") is { } outline)
-        {
-            // Centred on the row, a little taller than it.
-            PortraitControlSnapshot outlineSnap = Capture(outline, captureVisible: false);
-            outline.OffsetTop = outlineSnap.InitialOffsetTop - grow / 2f;
-            outline.OffsetBottom = outlineSnap.InitialOffsetBottom + grow / 2f;
-        }
-        if (option.GetNodeOrNull<Control>("HBoxContainer") is { } row)
-        {
-            // Placed by its offsets inside the row, 13 units from its top and bottom.
-            PortraitControlSnapshot rowSnap = Capture(row, captureVisible: false);
-            row.OffsetBottom = rowSnap.InitialOffsetBottom + grow;
-        }
-        if (option.GetNodeOrNull<Control>("%Text") is { } label)
-        {
-            ulong id = label.GetInstanceId();
-            if (!_labelMaxFontSizes.ContainsKey(id) && label.Get("MaxFontSize").VariantType == Variant.Type.Int)
-            {
-                _labelMaxFontSizes[id] = label.Get("MaxFontSize").AsInt32();
-                label.Set("MaxFontSize", EventTextFontSize);
-            }
-        }
-    }
-
-    /// <summary>
-    /// An ancient's dialogue line is a speech bubble 800 units wide with its text at a fixed 24 units (8 points). In portrait
-    /// it takes the column's full width and its text is drawn at 11 points; the bubble grows with the text. The line is not a
-    /// touch target of its own: a touch anywhere on the screen moves the dialogue on.
-    /// </summary>
-    private void LayoutAncientDialogueLinePortrait(Control line)
-    {
-        foreach (string path in new[] { ".", "DialogueContainer", "DialogueContainer/TextContainer/Text" })
-        {
-            if (line.GetNodeOrNull<Control>(path) is not { } part) continue;
-            PortraitControlSnapshot snap = Capture(part, captureVisible: false);
-            part.CustomMinimumSize = new Vector2(snap.InitialCustomMinimumSize.X + AncientDialogueWiden, snap.InitialCustomMinimumSize.Y);
-        }
-        if (line.GetNodeOrNull<Control>("DialogueContainer/TextContainer/Text") is { } text)
-        {
-            ulong id = text.GetInstanceId();
-            if (!_labelMaxFontSizes.ContainsKey(id) && text.Get("MaxFontSize").VariantType == Variant.Type.Int)
-            {
-                _labelMaxFontSizes[id] = text.Get("MaxFontSize").AsInt32();
-                text.Set("MaxFontSize", EventTextFontSize);
-            }
-            if (!_labelMinFontSizes.ContainsKey(id) && text.Get("MinFontSize").VariantType == Variant.Type.Int)
-            {
-                _labelMinFontSizes[id] = text.Get("MinFontSize").AsInt32();
-                text.Set("MinFontSize", EventTextFontSize);
-            }
-            SetRichFontSize(text, EventTextFontSize);
-        }
-    }
 
     // ---- Rest site -------------------------------------------------------------------------------------------------------
 
@@ -1189,32 +732,6 @@ internal sealed partial class PortraitBetweenLayout
                 label.AddThemeFontSizeOverride(name, size);
     }
 
-    /// <summary>Top of the band below the top bar and relic strip, and the bottom of the band above the back button.</summary>
-    public static (float Top, float Bottom) VisibleBand(Window root)
-    {
-        float canvasHeight = Math.Max(root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
-        double inset = SafeAreaCanvas.TopInset();
-        float cap = inset > 0 ? MathF.Ceiling((float)(inset * canvasHeight)) : 162f;
-        cap = Math.Max(cap, 136f);
-        return (cap + PortraitBands.TopBarHeight + 200f, canvasHeight - 150f);
-    }
-
-    public static MapScrollRange MapScrollLimits(Control map, Window root)
-    {
-        (float top, float bottom) = VisibleBand(root);
-        Type type = map.GetType();
-        const BindingFlags Flags = BindingFlags.Instance | BindingFlags.NonPublic;
-        if (map.GetNodeOrNull<Control>("TheMap") is not { } theMap ||
-            type.GetField("_bossPointNode", Flags)?.GetValue(map) is not Control boss ||
-            type.GetField("_startingPointNode", Flags)?.GetValue(map) is not Control start)
-            return new MapScrollRange(-600f, 1800f);
-        Control topBoss = type.GetField("_secondBossPointNode", Flags)?.GetValue(map) is Control second && second.IsVisibleInTree() &&
-            second.GlobalPosition.Y < boss.GlobalPosition.Y ? second : boss;
-        float bossTop = topBoss.GetGlobalRect().Position.Y - theMap.GlobalPosition.Y;
-        float startBottom = start.GetGlobalRect().End.Y - theMap.GlobalPosition.Y;
-        return PortraitBetweenMath.MapScrollRange(bossTop - 20f, startBottom + 20f, top, bottom);
-    }
-
     /// <summary>One line naming the visible between-fight screens and their rectangles, for the proof log.</summary>
     public static string DescribeForProof(Node root)
     {
@@ -1231,7 +748,7 @@ internal sealed partial class PortraitBetweenLayout
             {
                 Rect2 r = control.GetGlobalRect();
                 parts.Add($"{shortName}[{r.Position.X:F0},{r.Position.Y:F0} {r.Size.X:F0}x{r.Size.Y:F0}]");
-                if (shortName == "NMapScreen" && control.GetNodeOrNull<Control>("TheMap") is { } theMap &&
+                if (shortName == "NMapScreen" && (control.GetNodeOrNull<Control>("TheMap") ?? control.FindChild("TheMap", true, false) as Control) is { } theMap &&
                     control.GetType().GetField("_bossPointNode", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(control) is Control boss)
                     parts.Add($"mapY={theMap.Position.Y:F0} boss=[{boss.GetGlobalRect().Position.Y:F0}..{boss.GetGlobalRect().End.Y:F0}]");
                 if (shortName == "NMerchantInventory" && control.GetNodeOrNull<Control>("%SlotsContainer") is { } slotsNode)

@@ -385,9 +385,38 @@ internal static partial class PortraitProof
         Control? layout = Descendants(tree.Root).OfType<Control>().FirstOrDefault(c => c.GetType().Name == "NEventLayout" && c.IsVisibleInTree());
         if (layout == null) return "event=none";
         string Rect(string path) => layout.GetNodeOrNull<Control>(path) is { } c ? CanvasRect(c) : "none";
+        // The portrait composition moves the title and the copy into its slot and the options into their scroll; before it
+        // runs (or for an event without a picture) they are still where the game put them.
+        string slot = PortraitBetweenLayout.EventTextSlotName;
+        string copy = slot + "/Panel/Text/Copy/";
+        bool composed = layout.GetNodeOrNull<Control>(slot) != null;
+        string title = Rect(layout.GetNodeOrNull<Control>(copy + "Title") != null ? copy + "Title" : "VBoxContainer/Title");
         string description = "none";
-        if ((layout.GetNodeOrNull<RichTextLabel>("%EventDescription") ?? layout.GetNodeOrNull<RichTextLabel>("VBoxContainer/EventDescription")) is { } d)
-            description = $"{CanvasRect(d)} content-height={d.GetContentHeight()} size-y={d.Size.Y:F0} font={d.GetThemeFontSize("normal_font_size")} chars={d.GetTotalCharacterCount()} visible-ratio={d.VisibleRatio:F2}";
-        return $"canvas={tree.Root.GetVisibleRect().Size} art={Rect("%Portrait")} text={Rect("VBoxContainer")} title={Rect("VBoxContainer/Title")} description[{description}] options={Rect("%OptionsContainer")}";
+        RichTextLabel? label = layout.GetNodeOrNull<RichTextLabel>(copy + "EventDescription") ??
+            layout.GetNodeOrNull<RichTextLabel>("%EventDescription") ?? layout.GetNodeOrNull<RichTextLabel>("VBoxContainer/EventDescription");
+        if (label != null)
+            description = $"{CanvasRect(label)} content-height={label.GetContentHeight()} size-y={label.Size.Y:F0} font={label.GetThemeFontSize("normal_font_size")} chars={label.GetTotalCharacterCount()} visible-ratio={label.VisibleRatio:F2}";
+        string textScroll = "none";
+        if (layout.GetNodeOrNull<ScrollContainer>(slot + "/Panel/Text") is { } scroll)
+            textScroll = $"slot={Rect(slot)} scroll={CanvasRect(scroll)} {Overflow(scroll)}";
+        string choices = "none";
+        if (layout.GetNodeOrNull<ScrollContainer>(PortraitBetweenLayout.EventChoicesScrollName) is { } rows)
+        {
+            Control? options = layout.GetNodeOrNull<Control>("%OptionsContainer");
+            List<Control> buttons = options?.GetChildren().OfType<Control>()
+                .Where(c => c.GetType().FullName == PortraitBetweenLayout.EventOptionTypeName).ToList() ?? [];
+            string sizes = string.Join(",", buttons.Select(b => $"{b.Size.Y:F0}"));
+            choices = $"scroll={CanvasRect(rows)} {Overflow(rows)} rows={buttons.Count}[{sizes}] first={((buttons.Count > 0) ? CanvasRect(buttons[0]) : "none")}";
+        }
+        return $"canvas={tree.Root.GetVisibleRect().Size} composed={composed} art={Rect("%Portrait")} " +
+            $"clip={Rect(PortraitBetweenLayout.EventArtClipName)} text={Rect(composed ? slot : "VBoxContainer")} title={title} " +
+            $"description[{description}] text-scroll[{textScroll}] options={Rect("%OptionsContainer")} choices[{choices}]";
+    }
+
+    /// <summary>A scroll region's content against its page: whether it actually has more to show.</summary>
+    private static string Overflow(ScrollContainer scroll)
+    {
+        var bar = scroll.GetVScrollBar();
+        return $"content={bar.MaxValue:F0} page={bar.Page:F0} at={scroll.ScrollVertical}";
     }
 }

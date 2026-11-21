@@ -18,6 +18,31 @@ public static class PortraitBetweenMath
     /// <summary>Desktop design height of the map scene's canvas; its points are laid out around the canvas centre.</summary>
     public const float DesktopCanvasHeight = 1080f;
 
+    /// <summary>Desktop design width of the map scene's canvas (NGame's dev resolution); point positions assume it.</summary>
+    public const float DesktopCanvasWidth = 1920f;
+
+    /// <summary>
+    /// How far the map's fixed-size layers move in a portrait canvas. NMapScreen places points with
+    /// <c>position + (containerSize - 1920x1080) / 2</c> because the points container is centre-anchored, and
+    /// NMapDrawings.RepositionBasedOnBackground centres the drawing layer on MapBg. Widening MapBg by the same amount
+    /// on both sides and moving it left by half that (as the portrait layout does) leaves the native formula equal to
+    /// this offset, so a stroke keeps the net coordinate of the point under the finger and scrolls with the graph.
+    /// </summary>
+    public static float MapLayerOffsetX(float canvasWidth) => (canvasWidth - DesktopCanvasWidth) * 0.5f;
+
+    /// <summary>The vertical half of <see cref="MapLayerOffsetX"/>'s centring: the canvas's extra height, half above.</summary>
+    public static float MapLayerOffsetY(float canvasHeight) => (canvasHeight - DesktopCanvasHeight) * 0.5f;
+
+    /// <summary>NMapDrawings.RepositionBasedOnBackground: the drawing layer is centred on the map background.</summary>
+    public static float MapDrawingsOffsetX(float backgroundLeft, float backgroundWidth, float drawingsWidth) =>
+        backgroundLeft + (backgroundWidth - drawingsWidth) * 0.5f;
+
+    /// <summary>
+    /// The native map legend is drawn at 2.3 on the reference phone layout's 1680-wide canvas; on the 1080-wide canvas the
+    /// same size in points is 2.3 * 1080 / 1680 (about 1.48), which makes the legend's 24-42 unit text 13-22 points.
+    /// </summary>
+    public const float MapLegendScale = 2.3f * 1080f / 1680f;
+
     /// <summary>
     /// How far the map container may scroll in portrait so the boss medallion can be brought just under the top bar and the
     /// starting point just above the bottom edge. <paramref name="bossTop"/> and <paramref name="startBottom"/> are in the map

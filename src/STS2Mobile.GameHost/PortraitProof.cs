@@ -256,7 +256,8 @@ internal static partial class PortraitProof
         await BetweenStepAsync(tree, "map");
         DismissFtues(tree, sts2);
         await WaitFramesAsync(tree, 20);
-        if (map is Control mapControl && mapControl.GetNodeOrNull<Control>("TheMap") is { } theMap)
+        if (map is Control mapControl &&
+            (mapControl.GetNodeOrNull<Control>("TheMap") ?? mapControl.FindChild("TheMap", true, false) as Control) is { } theMap)
         {
             // A touch drag downwards scrolls the map towards the boss; the portrait range then holds it.
             float before = theMap.Position.Y;

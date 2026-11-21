@@ -258,10 +258,11 @@ internal static partial class PortraitProof
         string Boss(string field) => map.GetType().GetField(field, AnyInstance)?.GetValue(map) is Control node && GodotObject.IsInstanceValid(node)
             ? $"{(node.IsVisibleInTree() ? "" : "hidden ")}{CanvasRect(node)} scale={node.Scale.X:F2} size={node.Size.X:F0}x{node.Size.Y:F0}"
             : "none";
-        Vector2 mapPos = map.GetNodeOrNull<Control>("TheMap")?.Position ?? new Vector2(float.NaN, float.NaN);
+        Control? graph = map.GetNodeOrNull<Control>("TheMap") ?? map.FindChild("TheMap", true, false) as Control;
+        Vector2 mapPos = graph?.Position ?? new Vector2(float.NaN, float.NaN);
         // The outer edges of the room points on the canvas: equal gaps to both screen edges when the map is centred.
         float left = float.MaxValue, right = float.MinValue;
-        foreach (Control point in map.GetNodeOrNull<Control>("TheMap/Points")?.GetChildren().OfType<Control>() ?? [])
+        foreach (Control point in graph?.GetNodeOrNull<Control>("Points")?.GetChildren().OfType<Control>() ?? [])
         {
             if (point.GetType().Name != "NNormalMapPoint") continue;
             Rect2 rect = point.GetGlobalRect();
@@ -284,7 +285,12 @@ internal static partial class PortraitProof
                 second.GetGlobalRect().End.X <= mapButton.GetGlobalRect().Position.X;
             bar = $"boss-icon={Shown(icon)} first={Shown(first)} second={Shown(second)} map-button={Shown(mapButton)} second-clear-of-map-button={clear} left-row={Shown(leftBox)}";
         }
-        return $"map-visible={map.IsVisibleInTree()} mapX={mapPos.X:F1} mapY={mapPos.Y:F0} points[{points}] limits={PortraitBetweenLayout.MapScrollLimits(map, tree.Root)} band={bandTop:F0}..{bandBottom:F0} boss[{Boss("_bossPointNode")}] second[{Boss("_secondBossPointNode")}] top-bar[{bar}]";
+        Control? clip = map.GetNodeOrNull<Control>("PortraitMapViewport");
+        string frame = clip == null
+            ? "clip=none"
+            : $"clip=[{CanvasRect(clip)}] share={(map.GetNodeOrNull<Control>("PortraitMapShare") is { } mount ? CanvasRect(mount) : "none")} " +
+              $"cover={(map.GetNodeOrNull<TextureRect>("PortraitMapBackdrop") is { } backdrop ? CanvasRect(backdrop) : "none")}";
+        return $"map-visible={map.IsVisibleInTree()} mapX={mapPos.X:F1} mapY={mapPos.Y:F0} points[{points}] limits={PortraitBetweenLayout.MapScrollLimits(map, tree.Root)} band={bandTop:F0}..{bandBottom:F0} {frame} boss[{Boss("_bossPointNode")}] second[{Boss("_secondBossPointNode")}] top-bar[{bar}]";
     }
 
     private static async Task<Control?> WaitForRewardsAsync(SceneTree tree)

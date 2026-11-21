@@ -46,6 +46,40 @@ public class PortraitBetweenMathTests
         Assert.Equal(expected, PortraitBetweenMath.MapBackgroundShift(canvas), 3);
     }
 
+    [Theory]
+    [InlineData(1080f, 2340f, -420f, 630f)]
+    [InlineData(1080f, 1920f, -420f, 420f)]
+    [InlineData(1920f, 1080f, 0f, 0f)]
+    public void MapLayerOffsetCentresTheAuthoredCanvas(float width, float height, float expectedX, float expectedY)
+    {
+        Assert.Equal(expectedX, PortraitBetweenMath.MapLayerOffsetX(width), 3);
+        Assert.Equal(expectedY, PortraitBetweenMath.MapLayerOffsetY(height), 3);
+    }
+
+    [Fact]
+    public void WidenedMapBackgroundAndNativeDrawingRepositionAgreeWithTheLayerOffset()
+    {
+        // The portrait layout widens MapBg by MaxMapCentreShift on both sides and moves it left by that much; the game's
+        // own RepositionBasedOnBackground then centres the 1920-wide drawing layer on it.
+        const float widen = PortraitBetweenMath.MaxMapCentreShift;
+        const float canvasWidth = 1080f;
+        float backgroundLeft = -widen;
+        float backgroundWidth = canvasWidth + 2f * widen;
+        float native = PortraitBetweenMath.MapDrawingsOffsetX(
+            backgroundLeft, backgroundWidth, PortraitBetweenMath.DesktopCanvasWidth);
+        Assert.Equal(PortraitBetweenMath.MapLayerOffsetX(canvasWidth), native, 3);
+        // The points container is centre-anchored too, so a point keeps this very net coordinate.
+        Assert.Equal(-420f, native, 3);
+    }
+
+    [Fact]
+    public void NativeMapLegendGrowsFromTheReferencePointsSize()
+    {
+        // 2.3 at 1680 is 4.48 units per point; the launcher's 1080 canvas is 2.88, so the same legend is ~1.48.
+        Assert.Equal(1.478571f, PortraitBetweenMath.MapLegendScale, 3);
+        Assert.InRange(PortraitBetweenMath.MapLegendScale, 1.46f, 1.5f);
+    }
+
     [Fact]
     public void FourRewardCardsFormTwoByTwoGridAroundCentre()
     {

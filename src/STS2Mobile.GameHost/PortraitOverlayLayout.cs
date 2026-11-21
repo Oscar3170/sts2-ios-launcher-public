@@ -177,14 +177,11 @@ internal sealed class PortraitOverlayLayout
 
     private readonly HashSet<ulong> _ftues = new();
     private readonly HashSet<ulong> _previewRows = new();
-    private readonly HashSet<ulong> _ancientBgs = new();
     private readonly HashSet<ulong> _peekButtons = new();
     private const string PeekButtonTypeName = "MegaCrit.Sts2.Core.Nodes.Combat.NPeekButton";
     private const string CardSelectionNamespace = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection";
     private const float PeekSideMargin = 32f;
     private const float PeekBottomMargin = 150f;
-    private const string AncientBgTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NAncientBgContainer";
-    private const float AncientArtWidth = 1920f;
 
     /// <summary>Called for every node the tree adds: tutorial popups and card preview rows are followed from then on.</summary>
     public void Track(Node node)
@@ -193,8 +190,6 @@ internal sealed class PortraitOverlayLayout
         Type type = control.GetType();
         if (type.Namespace == FtueNamespace && type.FullName != MapFtueTypeName && IsFtueRoot(type))
             _ftues.Add(control.GetInstanceId());
-        else if (type.FullName == AncientBgTypeName)
-            _ancientBgs.Add(control.GetInstanceId());
         else if (type.FullName == PeekButtonTypeName)
             _peekButtons.Add(control.GetInstanceId());
         else if (control.Name == "Cards" && control.GetParent() is Control parent && parent.Name.ToString().Contains("PreviewContainer", StringComparison.Ordinal))
@@ -220,9 +215,6 @@ internal sealed class PortraitOverlayLayout
         foreach (ulong id in _previewRows)
             if (GodotObject.InstanceFromId(id) is Control row && GodotObject.IsInstanceValid(row) && row.IsVisibleInTree())
                 FitPreviewRow(row, canvas);
-        foreach (ulong id in _ancientBgs)
-            if (GodotObject.InstanceFromId(id) is Control bg && GodotObject.IsInstanceValid(bg) && bg.IsVisibleInTree())
-                CentreAncientArt(bg, canvas);
         foreach (ulong id in _peekButtons)
             if (GodotObject.InstanceFromId(id) is Control peek && GodotObject.IsInstanceValid(peek) && peek.IsInsideTree())
                 PlacePeekButton(peek);
@@ -249,16 +241,6 @@ internal sealed class PortraitOverlayLayout
         peek.OffsetBottom = -PeekBottomMargin;
         peek.OffsetTop = -PeekBottomMargin - size;
         if (_logged.Add(peek.GetInstanceId())) GD.Print($"Portrait overlay: peek button of {peek.GetParent()!.GetType().Name} moved to the bottom left.");
-    }
-
-    /// <summary>
-    /// The ancient's art is 1920 wide; the game places it for the narrowest desktop shape (4:3) at x -140, which on the portrait
-    /// screen shows its left part. Centre it instead; the game's own placement comes back when the window changes again.
-    /// </summary>
-    private static void CentreAncientArt(Control bg, Vector2 canvas)
-    {
-        float x = -(AncientArtWidth - canvas.X) / 2f;
-        if (Math.Abs(bg.Position.X - x) > 0.5f) bg.Position = new Vector2(x, bg.Position.Y);
     }
 
     private void KeepFtueOnScreen(Control ftue, Vector2 canvas)
@@ -1093,9 +1075,6 @@ internal sealed class PortraitOverlayLayout
             if (GodotObject.InstanceFromId(id) is RichTextLabel label && GodotObject.IsInstanceValid(label))
                 label.AutowrapMode = mode;
         _wrapModes.Clear();
-        foreach (ulong id in _ancientBgs)
-            if (GodotObject.InstanceFromId(id) is Control bg && GodotObject.IsInstanceValid(bg) && bg.HasMethod("OnWindowChange"))
-                bg.Call("OnWindowChange");
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
@@ -1106,7 +1085,6 @@ internal sealed class PortraitOverlayLayout
         foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
         _ftues.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _previewRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _ancientBgs.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _peekButtons.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _wrapModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _wrapModes.Remove(id);
         foreach (ulong id in _gameOverButtons.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _gameOverButtons.Remove(id);
