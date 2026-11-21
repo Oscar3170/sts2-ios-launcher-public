@@ -85,7 +85,7 @@ public class PortraitHeaderMathTests
     [InlineData(1280, 100, 30, 20, 30, 30)]
     [InlineData(40, 20, 19, 9, 19, 9)]
     [InlineData(0, 0, 0, 0, 0, 0)]
-    public void StonePatchMarginsFollowTusiAndFitTheTexture(int width, int height, int left, int top, int right, int bottom)
+    public void StonePatchMarginsFollowTheHeaderAndFitTheTexture(int width, int height, int left, int top, int right, int bottom)
     {
         StonePatchMargins margins = PortraitHeaderMath.StonePatchMargins(width, height);
         Assert.Equal(new StonePatchMargins(left, top, right, bottom), margins);

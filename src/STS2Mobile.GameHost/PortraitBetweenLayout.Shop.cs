@@ -10,7 +10,7 @@ namespace STS2Mobile.GameHost;
 /// <summary>
 /// The shop in portrait: the native rug turned upright as the shop's cloth, the Cards and Items pages with their two
 /// settings tabs, the weird shop's relic grid, the Blitz shop's two columns over its remaining-picks line, and the shop
-/// room's full-bleed backdrop with the merchant and the player seated as the desktop scene has them. Every control keeps
+/// room's full-bleed backdrop with the merchant and the player seated as the room's own scene has them. Every control keeps
 /// its game layout for landscape; the stock groups are never reparented, only placed and shown or hidden by page.
 /// </summary>
 internal sealed partial class PortraitBetweenLayout
@@ -42,12 +42,11 @@ internal sealed partial class PortraitBetweenLayout
     private const float ShopBackFallbackY = 355f;
     private const float ShopTabMargin = 16f;
 
-    // The shop room's authored composition, in the room scene's own units (TSUI's measured values).
+    // The shop room's authored composition, in the room scene's own units (measured from the native art).
     private static readonly Vector2 ShopAuthoredSize = new(2560f, 1200f);
     private static readonly Vector2 ShopArtOrigin = new(-10f, 20f);
     private const float ShopArtScale = 1.01f;
     private const float ShopCoverScale = 1.035f;
-    private const float ShopTsui = PortraitShopMath.TsuiToLauncher;
 
     private readonly Dictionary<ulong, ShopState> _shopStates = new();
     private readonly Dictionary<ulong, ShopRoomState> _shopRoomStates = new();
@@ -346,7 +345,7 @@ internal sealed partial class PortraitBetweenLayout
         TextureRect stock = state.Stock!;
         float top = capHeight + PortraitBands.RunContentTop + 8f;
         ShopLayoutRect cloth = PortraitShopMath.ClothRect(canvas.X, top, canvas.Y);
-        // The tabs sit in the bottom band under the stock's content (as in TSUI): every card, removal and price stays above.
+        // The tabs sit in the bottom band under the stock's content: every card, removal and price stays above them.
         float backHeight = state.BackCaptured ? state.BackSizeHome.Y : 110f;
         float tabTop = PortraitShopMath.TabRowTop(canvas.Y, backHeight);
         ShopLayoutRect rect = PortraitShopMath.StockRect(cloth, tabTop - ShopTabMargin);
@@ -855,7 +854,7 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.IsInstanceValid(stock))
             {
                 stock.Position = new Vector2(stock.Position.X, state.ClosedY);
-                // TSUI's AfterClose: nothing of the shop is left in the tree's drawing after the slide.
+                // Nothing of the shop is drawn after the slide.
                 stock.Hide();
             }
             HideShopTabs(state);
@@ -1085,7 +1084,7 @@ internal sealed partial class PortraitBetweenLayout
     // ---- The room behind the shop --------------------------------------------------------------------------------------
 
     /// <summary>
-    /// The merchant room's backdrop, player and merchant, composed like the desktop mod's shop room: the art scaled to
+    /// The merchant room's backdrop, player and merchant composed from the room's authored art: the art scaled to
     /// cover the whole canvas, the player standing beside the rug and the merchant on his authored seat. Applied from
     /// stored baselines, so re-applying after a rotation or an orientation switch lands in the same place.
     /// </summary>
@@ -1212,8 +1211,8 @@ internal sealed partial class PortraitBetweenLayout
         scene.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
         scene.Size = new Vector2(1920f, 1080f);
         scene.PivotOffset = Vector2.Zero;
-        float scale = (canvas.X - 90f * ShopTsui) / (1140f * ShopTsui);
-        float floor = canvas.Y * 0.60f - 155f * ShopTsui;
+        float scale = (canvas.X - 57.86f) / 732.86f;
+        float floor = canvas.Y * 0.60f - 99.64f;
         scene.Scale = Vector2.One * scale;
         scene.GlobalPosition = new Vector2(canvas.X / 2f, floor) - new Vector2(1000f, 766f) * scale;
 
@@ -1301,10 +1300,10 @@ internal sealed partial class PortraitBetweenLayout
         state.Fade.Size = canvas;
         state.Fade.GlobalPosition = Vector2.Zero;
         var material = (ShaderMaterial)state.Fade.Material;
-        float lowerStart = floor + 610f * ShopTsui;
-        float lowerEnd = floor + 960f * ShopTsui;
-        float upperStart = floor - 1320f * ShopTsui;
-        float upperEnd = floor - 920f * ShopTsui;
+        float lowerStart = floor + 392.14f;
+        float lowerEnd = floor + 617.14f;
+        float upperStart = floor - 848.57f;
+        float upperEnd = floor - 591.43f;
         material.SetShaderParameter("lower_start", lowerStart);
         material.SetShaderParameter("lower_end", lowerEnd);
         material.SetShaderParameter("blend_top", true);

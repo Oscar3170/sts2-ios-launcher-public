@@ -75,7 +75,7 @@ public readonly record struct PortraitOrbArcPlan(
 
 /// <summary>
 /// Pure portrait-mode orb geometry on the 1080-wide canvas, free of engine types so the arrangement rules are unit-tested.
-/// The rules are the phone's version of TouchSpireUI's C4 arc: one to three orbs keep the game's tight native-radius arc;
+/// The rules are the phone's version of the game's orb fan: one to three orbs keep the game's tight native-radius arc;
 /// four take one wide arc that leaves no gap between the art's edges; five to ten take one compact arc whose pitch is the
 /// phone's overlap spacing, widened by the value labels and narrowed by an enemy lane and by the safe width. The orbit
 /// top is the caller's: below the relic band on a tall phone, under the stone header at 9:16.
@@ -163,7 +163,7 @@ public static class PortraitOrbMath
     /// <summary>An orb's touch target on a wide single arc: 42 points.</summary>
     public const float SingleTouchWorld = 121f;
 
-    /// <summary>An orb's touch target in a dense queue: 32 points, as TouchSpireUI keeps them (neighbours overlap).</summary>
+    /// <summary>An orb's touch target in a dense queue: 32 points, so its neighbours' targets overlap as their art does.</summary>
     public const float DenseTouchWorld = 93f;
 
     /// <summary>The tween a retarget runs: one sine ease in, one out, 0.45 s — the game's own orb layout speed.</summary>

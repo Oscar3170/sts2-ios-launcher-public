@@ -30,11 +30,11 @@ public readonly record struct PopupPlacement(float Scale, float X, float Y)
 public static class PortraitHeaderMath
 {
     /// <summary>
-    /// TouchSpireUI's nine-patch margins for the game's own top-bar stone texture. They are texture pixels, so the
+    /// The portrait header's nine-patch margins for the game's own top-bar stone texture. They are texture pixels, so the
     /// NinePatchRect draws the torn edges and the side seams at their own size and stretches only the middle for a header of
     /// any height; a texture smaller than twice a margin is clamped so a middle still exists.
     /// </summary>
-    public const int TusiPatchLeft = 30, TusiPatchTop = 20, TusiPatchRight = 30, TusiPatchBottom = 30;
+    public const int StonePatchLeft = 30, StonePatchTop = 20, StonePatchRight = 30, StonePatchBottom = 30;
 
     /// <summary>
     /// The potion row, left of the map and deck buttons in the second header row. Its height is the row's own; what potions
@@ -90,8 +90,8 @@ public static class PortraitHeaderMath
         int horizontal = Math.Max(0, textureWidth / 2 - 1);
         int vertical = Math.Max(0, textureHeight / 2 - 1);
         return new StonePatchMargins(
-            Math.Min(TusiPatchLeft, horizontal), Math.Min(TusiPatchTop, vertical),
-            Math.Min(TusiPatchRight, horizontal), Math.Min(TusiPatchBottom, vertical));
+            Math.Min(StonePatchLeft, horizontal), Math.Min(StonePatchTop, vertical),
+            Math.Min(StonePatchRight, horizontal), Math.Min(StonePatchBottom, vertical));
     }
 
     /// <summary>

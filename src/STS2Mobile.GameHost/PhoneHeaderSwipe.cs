@@ -56,8 +56,12 @@ internal sealed class PhoneHeaderSwipe
     /// </summary>
     public static ulong LastSwipeMsec { get; private set; }
 
-    /// <summary>How long after a swipe a relic or potion tip is still treated as the finger's, not the player's.</summary>
-    public const ulong TipSuppressMilliseconds = 500;
+    /// <summary>
+    /// How long after a swipe a relic or potion tip is still treated as the finger's. Long enough to take down the tip the
+    /// last drag's emulated hover creates (a frame or two), short enough that a stationary hold a moment later keeps its
+    /// native tip.
+    /// </summary>
+    public const ulong TipSuppressMilliseconds = 120;
 
     /// <summary>Whether a header swipe happened within <see cref="TipSuppressMilliseconds"/>.</summary>
     public static bool RecentlySwiped
@@ -236,10 +240,17 @@ internal sealed class PhoneHeaderSwipe
         if (button == null || _pressHandler == null || _clickableEnabled?.GetValue(button) is false) return;
         // Touch and its emulated mouse describe one press.
         if (_popupButton == button.GetInstanceId()) return;
+        Control target = button;
+        _popupButton = target.GetInstanceId();
+        // Deferred: the press belongs after this event has finished its GUI/targeting pass, as the native control's would.
         try
         {
-            _pressHandler.Invoke(button, null);
-            _popupButton = button.GetInstanceId();
+            Callable.From(() =>
+            {
+                if (!GodotObject.IsInstanceValid(target) || !target.IsInsideTree()) return;
+                try { _pressHandler!.Invoke(target, null); }
+                catch (Exception error) { GD.PrintErr("Phone header swipe: potion action press: ", error.Message); }
+            }).CallDeferred();
         }
         catch (Exception error)
         {
@@ -255,9 +266,17 @@ internal sealed class PhoneHeaderSwipe
         _popupButton = 0;
         if (GodotObject.InstanceFromId(id) is not Control button || !GodotObject.IsInstanceValid(button) || !button.IsInsideTree())
             return;
+        Control target = button;
+        // Deferred: a targeted potion starts its native targeting on the release; letting the release event finish first
+        // keeps the target manager from reading that same event as a click on empty space and cancelling it.
         try
         {
-            _releaseHandler?.Invoke(button, null);
+            Callable.From(() =>
+            {
+                if (!GodotObject.IsInstanceValid(target) || !target.IsInsideTree()) return;
+                try { _releaseHandler?.Invoke(target, null); }
+                catch (Exception error) { GD.PrintErr("Phone header swipe: potion action release: ", error.Message); }
+            }).CallDeferred();
         }
         catch (Exception error)
         {

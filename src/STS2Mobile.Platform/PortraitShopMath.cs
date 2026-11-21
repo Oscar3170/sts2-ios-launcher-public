@@ -30,21 +30,17 @@ public readonly record struct ShopItemsPage(
 public readonly record struct ShopBlitzFootprint(float CenterY, float Height);
 
 /// <summary>
-/// Pure layout math for the portrait shop: the cloth and the stock viewport it frames, the Cards and Items pages (the
-/// desktop mod's 3-column card page with its staggered Power and colorless row, and its three-row Items page), the weird
-/// shop's 2-column relic grid and the Blitz shop's 2-column slots over a footer, plus the Cards/Items tab row.
+/// Pure layout math for the portrait shop: the cloth and the stock viewport it frames, the Cards page (three columns, a
+/// five-card Power staggered beside two pairs, and the colorless row), the Items page (relics, potions, card removal), the
+/// weird shop's 2-column relic grid and the Blitz shop's 2-column slots over a footer, plus the Cards/Items tab row.
 /// <para>
-/// Lengths are in this app's canvas units (1080 across; 2.88 units are one point on an iPhone 11 Pro). The mod's own
-/// template is 1680 wide for the same phone, so its canvas-space margins and heights are converted here; the game's own
-/// slot sizes (a card is 300 x 422 units, a footprint divisor 319 or 1539) are already canvas units and stay as they are.
-/// A returned scale is the slot's drawing scale in this canvas (1 draws the game's own art size).
+/// Lengths are in this app's canvas units (1080 across; 2.88 units are one point on an iPhone 11 Pro), sized in phone
+/// points; the game's own slot sizes (a card is 300 x 422 units) are canvas units already. A returned scale is the slot's
+/// drawing scale in this canvas (1 draws the game's own art size).
 /// </para>
 /// </summary>
 public static class PortraitShopMath
 {
-    /// <summary>One unit of the desktop mod's 1680-wide template, in this app's units.</summary>
-    public const float TsuiToLauncher = 1080f / 1680f;
-
     // ---- The cloth and the stock viewport inside it ---------------------------------------------------------------
     /// <summary>The rug's side margin from the canvas edge.</summary>
     public const float ClothSideMargin = 16f;
@@ -64,8 +60,8 @@ public static class PortraitShopMath
     /// <summary>The closed stock is lifted this far past the rug's bottom, so no part of the rug remains on screen.</summary>
     public const float ClosedLift = 32f;
 
-    /// <summary>Space around the stock's content.</summary>
-    public const float Pad = 18f * TsuiToLauncher;
+    /// <summary>Space around the stock's content (4 points).</summary>
+    public const float Pad = 11.57f;
 
     // ---- The Cards page -------------------------------------------------------------------------------------------
     /// <summary>A card slot's share of a column at scale 1.</summary>
@@ -80,52 +76,63 @@ public static class PortraitShopMath
     /// <summary>Row pitch at scale 1 (a card's height plus the gap and price).</summary>
     public const float CardRowPitch = 513f;
 
-    /// <summary>The class-card column margin, converted from the mod's template.</summary>
-    public const float CardColumnGap = 28f * TsuiToLauncher;
+    /// <summary>The class-card columns' side margin (6.25 points).</summary>
+    public const float CardColumnGap = 18f;
 
-    /// <summary>The card block's bottom margin, converted from the mod's template.</summary>
-    public const float CardRowInset = 30f * TsuiToLauncher;
+    /// <summary>The card block's bottom margin (6.7 points).</summary>
+    public const float CardRowInset = 19.29f;
 
-    /// <summary>The mod's colorless pair is spread over this part of the content width.</summary>
+    /// <summary>The colorless pair is spread over this part of the content width.</summary>
     public const float CardColorlessSpread = 2.65f;
 
-    /// <summary>The mod's smallest and largest card scales, in this canvas's units.</summary>
-    public const float MinCardScale = 0.82f * TsuiToLauncher;
-    public const float MaxCardScale = 1.46f * TsuiToLauncher;
+    /// <summary>The smallest and largest card scale: a card 0.82 to 1.46 times its standard drawing.</summary>
+    public const float MinCardScale = 0.527f;
+    public const float MaxCardScale = 0.939f;
 
     // ---- The Items page -------------------------------------------------------------------------------------------
-    public const float RelicScale = 2.35f * TsuiToLauncher;
-    public const float PotionScale = 2.35f * TsuiToLauncher;
-    public const float RemovalScale = 2.2f * TsuiToLauncher;
-    /// <summary>The Items page leaves this much of the stock under the last row, converted from the mod's template.</summary>
-    public const float ItemsBottomInset = 48f * TsuiToLauncher;
+    /// <summary>Relics and potions are drawn 1.51 times their own art (a relic about 43 points wide).</summary>
+    public const float RelicScale = 1.511f;
+    public const float PotionScale = 1.511f;
+    /// <summary>The card removal is drawn 1.41 times its own art (about 49 points).</summary>
+    public const float RemovalScale = 1.414f;
+    /// <summary>The Items page leaves this much of the stock under its last row (10.7 points).</summary>
+    public const float ItemsBottomInset = 30.86f;
     private const float RelicRow = 0.16f;
     private const float PotionRow = 0.42f;
     private const float RemovalRow = 0.72f;
 
     // ---- The weird shop's relic grid -------------------------------------------------------------------------------
-    private const float WeirdTop = 32f * TsuiToLauncher;
-    private const float WeirdBottomInset = 46f * TsuiToLauncher;
+    /// <summary>The weird shop's first row starts this far down the stock (7.1 points).</summary>
+    private const float WeirdTop = 20.57f;
+    /// <summary>The relic grid leaves this much of the stock under its last row (10.3 points).</summary>
+    private const float WeirdBottomInset = 29.57f;
     private const float WeirdCellHeight = 325f;
-    private const float WeirdSideInset = 52f * TsuiToLauncher;
+    /// <summary>The relic grid's side margin (11.6 points).</summary>
+    private const float WeirdSideInset = 33.43f;
     public const float WeirdWidth = 332f;
-    public const float WeirdMaxScale = 2f * TsuiToLauncher;
+    /// <summary>The grid never draws a relic larger than 1.29 times its art.</summary>
+    public const float WeirdMaxScale = 1.286f;
 
     // ---- The Blitz shop ---------------------------------------------------------------------------------------------
-    /// <summary>The line under the slots that says how many picks remain.</summary>
-    public const float BlitzFooter = 82f * TsuiToLauncher;
+    /// <summary>The line under the slots that says how many picks remain (18.3 points).</summary>
+    public const float BlitzFooter = 52.71f;
 
-    private const float BlitzCellPad = 16f * TsuiToLauncher;
-    public const float BlitzMaxScale = 1.8f * TsuiToLauncher;
+    /// <summary>Room left inside a Blitz cell around its footprint (3.6 points).</summary>
+    private const float BlitzCellPad = 10.29f;
+    /// <summary>Blitz slots never grow past 1.16 times their art.</summary>
+    public const float BlitzMaxScale = 1.157f;
     private const float BlitzWorstCase = 1.03f;
     public const int BlitzFooterFontSize = 31;
 
     // ---- The Cards/Items tab row ------------------------------------------------------------------------------------
-    public const float TabHeight = 200f * TsuiToLauncher;
+    /// <summary>The tabs are 44.6 points tall.</summary>
+    public const float TabHeight = 128.57f;
     public const float TabMinHeight = 127f;
     public const float TabGap = 24f;
-    public const float TabStartX = 442f * TsuiToLauncher;
-    public const float TabSideMargin = 60f * TsuiToLauncher;
+    /// <summary>The first tab starts 98.7 points in, after the native Back button.</summary>
+    public const float TabStartX = 284.14f;
+    /// <summary>The tab row ends 13.4 points from the right edge.</summary>
+    public const float TabSideMargin = 38.57f;
     /// <summary>The tab row's bottom sits this far above the canvas bottom (52 points: clear of the home indicator).</summary>
     public const float TabRowBottomMargin = 150f;
     public const int TabFontSize = 41;
