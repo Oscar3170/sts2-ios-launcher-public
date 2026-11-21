@@ -126,6 +126,8 @@ public static class PortraitShopMath
     public const float TabGap = 24f;
     public const float TabStartX = 442f * TsuiToLauncher;
     public const float TabSideMargin = 60f * TsuiToLauncher;
+    /// <summary>The tab row's bottom sits this far above the canvas bottom (52 points: clear of the home indicator).</summary>
+    public const float TabRowBottomMargin = 150f;
     public const int TabFontSize = 41;
     private const float TabMinWidth = 120f;
 
@@ -136,12 +138,35 @@ public static class PortraitShopMath
         return new ShopLayoutRect(ClothSideMargin, visualTop, Math.Max(0f, canvasWidth - 2f * ClothSideMargin), height);
     }
 
-    /// <summary>The stock's viewport inside the rug.</summary>
-    public static ShopLayoutRect StockRect(ShopLayoutRect cloth) => new(
-        cloth.X + ClothInsetSide,
-        cloth.Y + ClothInsetTop,
-        Math.Max(0f, cloth.Width - 2f * ClothInsetSide),
-        Math.Max(0f, cloth.Height - ClothInsetTop - ClothInsetBottom));
+    /// <summary>
+    /// The stock's viewport inside the rug, ending above the tab row: <paramref name="contentBottom"/> is the canvas Y the
+    /// stock may not pass, so every card, removal and price stays above the tabs. The rug itself may run on behind them.
+    /// </summary>
+    public static ShopLayoutRect StockRect(ShopLayoutRect cloth, float contentBottom)
+    {
+        float top = cloth.Y + ClothInsetTop;
+        float bottom = Math.Min(cloth.Bottom - ClothInsetBottom, contentBottom);
+        return new ShopLayoutRect(
+            cloth.X + ClothInsetSide,
+            top,
+            Math.Max(0f, cloth.Width - 2f * ClothInsetSide),
+            Math.Max(0f, bottom - top));
+    }
+
+    /// <summary>The top of the Cards/Items row in the bottom band, its height set by the Back button it stands beside.</summary>
+    public static float TabRowTop(float canvasHeight, float backHeight) =>
+        canvasHeight - TabRowBottomMargin - Math.Max(TabMinHeight, backHeight);
+
+    /// <summary>The row's vertical middle: the Back button and both tabs share it.</summary>
+    public static float TabRowCentre(float canvasHeight, float backHeight) =>
+        TabRowTop(canvasHeight, backHeight) + Math.Max(TabMinHeight, backHeight) / 2f;
+
+    /// <summary>
+    /// Where a shop button waits when hidden: its native hide offset from the show point, moved far enough left that no
+    /// part of it (<paramref name="width"/>) is on the canvas.
+    /// </summary>
+    public static float HideX(float showX, float hideOffsetX, float width) =>
+        Math.Min(showX + hideOffsetX, -Math.Abs(width));
 
     /// <summary>
     /// The stock's local Y when the shop is closed: high enough that the rug (which reaches

@@ -290,6 +290,7 @@ internal sealed partial class PortraitBetweenLayout
         _hitAreaTargets.Clear();
         RestoreBanners(_liftedBanners);
         RestoreShopRoomsLandscape();
+        RestoreShopPreviewButtons();
         foreach (ulong id in _shops)
             if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop))
                 RestoreShopLandscape(shop);

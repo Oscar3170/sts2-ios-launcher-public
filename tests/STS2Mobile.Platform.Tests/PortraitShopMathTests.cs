@@ -7,10 +7,19 @@ namespace STS2Mobile.Platform.Tests;
 
 public class PortraitShopMathTests
 {
-    private static (float Width, float Height) Stock()
+    // The Back button's row is 110 units tall and lives in the bottom band above the home indicator.
+    private const float BackHeight = 110f;
+
+    private static ShopLayoutRect StockRectFor(float canvasHeight)
     {
-        ShopLayoutRect cloth = PortraitShopMath.ClothRect(1080f, 620f, 2340f);
-        ShopLayoutRect stock = PortraitShopMath.StockRect(cloth);
+        ShopLayoutRect cloth = PortraitShopMath.ClothRect(1080f, 620f, canvasHeight);
+        float tabTop = PortraitShopMath.TabRowTop(canvasHeight, BackHeight);
+        return PortraitShopMath.StockRect(cloth, tabTop - 16f);
+    }
+
+    private static (float Width, float Height) Stock(float canvasHeight = 2340f)
+    {
+        ShopLayoutRect stock = StockRectFor(canvasHeight);
         return (stock.Width, stock.Height);
     }
 
@@ -25,15 +34,60 @@ public class PortraitShopMathTests
         Assert.True(cloth.Bottom > 2000f, "the rug reaches down behind the tabs");
     }
 
-    [Fact]
-    public void StockIsInsetInsideTheRug()
+    [Theory]
+    [InlineData(2340f)]
+    [InlineData(1920f)]
+    public void StockIsInsetInsideTheRugAndEndsAboveTheTabs(float canvasHeight)
     {
-        ShopLayoutRect cloth = PortraitShopMath.ClothRect(1080f, 620f, 2340f);
-        ShopLayoutRect stock = PortraitShopMath.StockRect(cloth);
+        ShopLayoutRect cloth = PortraitShopMath.ClothRect(1080f, 620f, canvasHeight);
+        ShopLayoutRect stock = StockRectFor(canvasHeight);
         Assert.Equal(cloth.X + PortraitShopMath.ClothInsetSide, stock.X);
         Assert.Equal(cloth.Y + PortraitShopMath.ClothInsetTop, stock.Y);
         Assert.Equal(cloth.Width - 2f * PortraitShopMath.ClothInsetSide, stock.Width);
         Assert.True(stock.Bottom < cloth.Bottom);
+        float tabTop = PortraitShopMath.TabRowTop(canvasHeight, BackHeight);
+        Assert.True(stock.Bottom <= tabTop - 15f, $"stock {stock.Bottom} tab top {tabTop}");
+        Assert.Equal(canvasHeight - PortraitShopMath.TabRowBottomMargin, tabTop + PortraitShopMath.TabMinHeight, 3);
+        Assert.True(stock.Height > 900f, $"stock height {stock.Height}");
+    }
+
+    [Theory]
+    [InlineData(2340f)]
+    [InlineData(1920f)]
+    public void CardRowsAndPricesStayAboveTheTabs(float canvasHeight)
+    {
+        (float width, float height) = Stock(canvasHeight);
+        ShopCardPage page = PortraitShopMath.CardPage(5, 2, 2, width, height);
+        foreach (ShopSlotPlacement slot in page.ClassCards.Concat(page.Colorless))
+        {
+            // The slot's price row reaches 278 units below its origin at scale 1.
+            float priceBottom = slot.Y + 278f * page.Scale;
+            Assert.True(priceBottom <= height - PortraitShopMath.Pad + 0.01f,
+                $"price bottom {priceBottom} in stock {height}");
+        }
+        Assert.Equal(2, page.Colorless.Count);
+        Assert.True(page.ClassCards[0].Y < page.ClassCards[3].Y);
+        Assert.True(page.ClassCards[3].Y < page.Colorless[0].Y);
+        // 9:16 still gives three rows and readable cards (the smallest the scale may go is the mod's floor).
+        Assert.True(page.Scale >= PortraitShopMath.MinCardScale);
+        Assert.True(page.Scale > PortraitShopMath.MinCardScale, "9:16 needs more than the floor scale");
+    }
+
+    [Theory]
+    [InlineData(2340f)]
+    [InlineData(1920f)]
+    public void RemovalPriceFitsAboveTheTabs(float canvasHeight)
+    {
+        (_, float height) = Stock(canvasHeight);
+        const float nativeTop = -180f;
+        const float nativeBottom = 210f;
+        ShopItemsPage page = PortraitShopMath.ItemsPage(3, 3, 968f, height);
+        float potionPriceBottom = page.Potions[0].Y + PortraitShopMath.PotionScale * 160f;
+        ShopSlotPlacement fitted = PortraitShopMath.FitRemoval(potionPriceBottom, height, nativeTop, nativeBottom,
+            PortraitShopMath.RemovalScale);
+        float bottom = fitted.Y + fitted.Scale * nativeBottom;
+        Assert.True(bottom <= height + 0.01f, $"removal price {bottom} in stock {height}");
+        Assert.True(page.Relics[0].Y < page.Potions[0].Y && page.Potions[0].Y < fitted.Y);
     }
 
     [Fact]
@@ -217,6 +271,14 @@ public class PortraitShopMathTests
         Assert.True(items.Right <= 1080f);
         Assert.True(cards.Width > 0f);
         Assert.Equal(back.CenterY, cards.CenterY, 3);
+    }
+
+    [Theory]
+    [InlineData(20f, -40f, 200f, -200f)]
+    [InlineData(20f, -300f, 200f, -280f)]
+    public void HiddenShopButtonIsFullyOffCanvas(float showX, float hideOffsetX, float width, float expected)
+    {
+        Assert.Equal(expected, PortraitShopMath.HideX(showX, hideOffsetX, width), 3);
     }
 
     [Fact]
