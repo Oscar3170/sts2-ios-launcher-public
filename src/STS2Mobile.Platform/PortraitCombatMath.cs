@@ -706,6 +706,77 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
+    /// A roster's single row as a room: the edge its cells start at, the cell's body width and the room scale that row
+    /// freezes. <see cref="RoomScale"/> is the tightest body fit the cells allow, capped by the hero's own room scale.
+    /// </summary>
+    public readonly record struct PortraitRowFit(float LeftEdge, float CellWidth, float RoomScale);
+
+    /// <summary>Every body of a tall-thin roster is at least this much taller than it is wide (the Gardeners are 1.83).</summary>
+    public const float SingleRowMinAspect = 1.5f;
+
+    /// <summary>A row replaces TouchSpireUI's tall table only when its frozen room scale is at least this many times larger.</summary>
+    public const float SingleRowMinGain = 1.5f;
+
+    /// <summary>
+    /// The room scale a single row of the roster would freeze: the tightest body fit in <see cref="ComputeCrowdedCells"/>'
+    /// equal cells (each body keeps out of its neighbours, and the intent band is reserved above it unless the canvas is
+    /// short), capped by the hero's room scale. <paramref name="leftEdge"/> is where the row may start — the hero's drawn
+    /// right edge plus its gap, as the crowded stage measures it.
+    /// </summary>
+    public static PortraitRowFit FitSingleRow(
+        int count,
+        ReadOnlySpan<(float Width, float Height)> bodies,
+        PortraitCombatBands bands,
+        float leftEdge,
+        float roomScaleCap,
+        float intentBandHeight)
+    {
+        PortraitStageCells cells = ComputeCrowdedCells(count, -1, leftEdge, bands);
+        if (cells.Widths.Length == 0 || bodies.Length == 0)
+            return new PortraitRowFit(Math.Max(0f, leftEdge), 0f, 0f);
+        float heightBudget = Math.Max(60f,
+            Math.Min(cells.Heights[0], bands.FrontFeetY - bands.StageTopY) - Math.Max(0f, intentBandHeight));
+        float tightest = 0f;
+        foreach ((float width, float height) in bodies)
+        {
+            float fit = MaxBodyScale;
+            if (width > 1f)
+                fit = Math.Min(fit, cells.Widths[0] / width);
+            if (height > 1f)
+                fit = Math.Min(fit, heightBudget / height);
+            tightest = tightest <= 0f ? fit : Math.Min(tightest, fit);
+        }
+        float scale = Math.Clamp(tightest, MinBodyScale, MaxBodyScale);
+        float room = roomScaleCap > 0f ? Math.Min(scale, roomScaleCap) : scale;
+        return new PortraitRowFit(Math.Max(0f, leftEdge), cells.Widths[0], room);
+    }
+
+    /// <summary>
+    /// Whether a tall (9:19.5) encounter of 3–4 bodies should stand in one row instead of TouchSpireUI's tall table: every
+    /// body is clearly taller than wide, and the row's frozen room scale beats the table's by half again. The Phantasmal
+    /// Gardeners (208×380 in 313 wide cells that stand only 200 tall above their intent band) qualify; a short or wide
+    /// roster, or one whose row would be no larger (the Exoskeletons, the Slimes, the Knights), keeps the authored table.
+    /// </summary>
+    public static bool PrefersSingleRow(
+        ReadOnlySpan<(float Width, float Height)> bodies,
+        float formationScale,
+        float rowRoomScale)
+    {
+        if (bodies.Length is < 3 or > 4 || rowRoomScale <= 0f || formationScale <= 0f)
+            return false;
+        float aspect = float.MaxValue;
+        foreach ((float width, float height) in bodies)
+        {
+            if (width < 1f)
+                return false;
+            aspect = Math.Min(aspect, height / width);
+        }
+        if (aspect < SingleRowMinAspect)
+            return false;
+        return rowRoomScale >= Math.Min(formationScale, MaxBodyScale) * SingleRowMinGain;
+    }
+
+    /// <summary>
     /// TouchSpireUI's tall (9:19.5 and taller) enemy formation, converted to the 1080 canvas and re-based on the launcher's
     /// floor line. Depths are TouchSpireUI units ×0.642857: a negative depth stands in front of the floor (below it on
     /// screen), a positive one behind it. The Ovicopter back rank, the Crab and the segment chain have their own layouts.
@@ -972,6 +1043,44 @@ public static class PortraitCombatMath
         return slots;
     }
 
+    /// <summary>The boss's frame centre and width as a fraction of the canvas: TouchSpireUI's EnemyFrame / CompactEnemyFrame.</summary>
+    public const float DominantBossCentre = 0.70f, DominantBossWidth = 0.55f;
+
+    /// <summary>The same on the short canvas: centred at 0.76 and 0.43 of the width.</summary>
+    public const float DominantBossCentreCompact = 0.76f, DominantBossWidthCompact = 0.43f;
+
+    /// <summary>TouchSpireUI's summon lanes: Capacity−1 equal lanes starting at 0.35 over 0.635 of the width, 0.94 filled.</summary>
+    public const float DominantLaneStart = 0.35f, DominantLaneSpan = 0.635f, DominantLaneFill = 0.94f;
+
+    /// <summary>
+    /// A dominant encounter's frozen stage: the boss's own slot, the width of its frame and the width of one summon lane.
+    /// </summary>
+    public readonly record struct PortraitDominantStage(PortraitCreatureSlot[] Slots, float BossWidth, float LaneWidth);
+
+    /// <summary>
+    /// TouchSpireUI's dominant stage without its boss lift, for an encounter whose boss arrives alone and whose remaining
+    /// slots are its summons' reserved places (the Phrog Parasite and its four wrigglers): the boss keeps the authored
+    /// 0.55W / 0.43W frame with its feet on the front line, and the reserved summons keep Capacity−1 equal lanes on that
+    /// same ground band, so a summon appears where it was reserved and nothing moves.
+    /// </summary>
+    public static PortraitDominantStage ComputeDominantStage(int capacity, PortraitCombatBands bands)
+    {
+        int count = Math.Max(1, capacity);
+        var slots = new PortraitCreatureSlot[count];
+        bool compact = bands.Compact;
+        float bossCentre = SafeAreaCanvas.PortraitWidth * (compact ? DominantBossCentreCompact : DominantBossCentre);
+        float bossWidth = SafeAreaCanvas.PortraitWidth * (compact ? DominantBossWidthCompact : DominantBossWidth);
+        slots[0] = new PortraitCreatureSlot(bossCentre, bands.FrontFeetY, 0.94f, 0);
+        int lanes = count - 1;
+        float lane = lanes > 0 ? DominantLaneSpan / lanes : 0f;
+        for (int i = 1; i < count; i++)
+        {
+            float centre = SafeAreaCanvas.PortraitWidth * (DominantLaneStart + lane * (i - 1 + 0.5f));
+            slots[i] = new PortraitCreatureSlot(centre, bands.FrontFeetY, 0.76f, 1);
+        }
+        return new PortraitDominantStage(slots, bossWidth, SafeAreaCanvas.PortraitWidth * lane * DominantLaneFill);
+    }
+
     /// <summary>Where a lone player stands (its feet), in canvas units from the left edge.</summary>
     public const float LonePlayerX = 180f;
 
@@ -1152,6 +1261,29 @@ public static class PortraitCombatMath
         float mostDown = bottomLimitY - bottomAfterScale;
         float shift = leastDown > 0f ? Math.Min(leastDown, MathF.Max(0f, mostDown)) : MathF.Min(0f, mostDown);
         return new PortraitOrbArcFit(shift, scale);
+    }
+
+    /// <summary>
+    /// How far a bar's centred HP text must move right to start after the block shield drawn at the bar's left end. The
+    /// shield's right edge plus <paramref name="gap"/> is where the text has to start; the shift is what is left of that
+    /// over the text's own left edge, and it is capped so the text's right edge never passes the bar's right end less
+    /// <paramref name="edge"/>. Zero when the text already clears the shield (a wide bar, or no block at all), so a bar
+    /// the game already draws cleanly is left exactly as it is.
+    /// </summary>
+    /// <param name="barRight">The bar frame's right edge, canvas units.</param>
+    /// <param name="textLeft">The centred text's left edge before any shift, canvas units.</param>
+    /// <param name="textWidth">The drawn text's width, canvas units.</param>
+    /// <param name="shieldRight">The block shield's right edge, canvas units.</param>
+    /// <param name="gap">The clearance the text keeps after the shield.</param>
+    /// <param name="edge">The margin the text keeps inside the bar's right end.</param>
+    public static float BlockedHpLabelShift(float barRight, float textLeft, float textWidth, float shieldRight,
+        float gap, float edge)
+    {
+        float needed = shieldRight + gap - textLeft;
+        if (needed <= 0f)
+            return 0f;
+        float room = barRight - edge - (textLeft + textWidth);
+        return Math.Clamp(needed, 0f, MathF.Max(0f, room));
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;

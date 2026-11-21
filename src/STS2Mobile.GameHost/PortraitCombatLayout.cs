@@ -307,6 +307,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     // points at 1.33, 22 units at 1.45, and power amounts are set in 24 units.
     private const float StateDisplayCanvasScale = 1.33f;
     private const float IntentCanvasScale = 1.45f;
+    // The clearance the HP text keeps after the block shield and inside the bar's right end.
+    private const float HpTextClearance = 4f;
     // The health display's own HUD box (the bar plus the HP value under it, the box the stage checks measure) is this
     // tall, so a bar band placed BarBandClearance under a creature's foot line ends this far below those feet.
     private const float EnemyHudBoxHeight = 41.23f;
@@ -399,6 +401,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private double _handAddIntervalMsec;
     private bool _handDirty;
     private long _handLastPassFrame;
+    // The drawn frame the motion cap last granted its one step in: the cap may run again in the same frame (a focus or
+    // hover signal re-runs the pass) and the second run must not hand out a second step.
+    private long _capFrame = -1;
     private bool _lastInCardPlay;
     private ulong _lastPressedHolder;
     private PortraitCombatBands? _lastHandBands;
@@ -965,11 +970,14 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         // The card under a finger is the one that grows. The pickup gate suppresses the native hover/focus on a touch
         // press, so the touch pass's pressed holder comes first and the native focus is only the fallback (mouse,
-        // controller or a game-driven focus).
+        // controller or a game-driven focus). While the hover itself belongs to a touch it is not a fallback at all: the
+        // engine parks its emulated mouse under the released finger, so the game reports the card there as focused for a
+        // frame after a cancel and lays the whole hand out around it, which is the one-frame snapshot when a card is
+        // released on top of another.
         int focusedIndex = -1;
         if (PhoneTouchCards.PressedHolder is { } pressedHolder)
             focusedIndex = activeHolders.IndexOf(pressedHolder);
-        if (focusedIndex < 0 && focusedObj is Control focusedControl)
+        if (focusedIndex < 0 && !PhoneTouchCards.HoverFromTouch && focusedObj is Control focusedControl)
             focusedIndex = activeHolders.IndexOf(focusedControl);
         int focusedSlotIndex = focusedIndex >= 0 ? PortraitCombatMath.SlotIndexBesideHeldCard(focusedIndex, heldIndex) : -1;
 
@@ -1021,6 +1029,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 if (expected < 0)
                     expected = refl.HandDrawCount();
                 _handCountLock = Math.Clamp(_lastHandHolderCount + expected, 0, HandCardLimit);
+                // A size is known from here on: the batch becomes a turn draw's, which means the long patience below
+                // (a slow device delivers its cards far apart) and the direction lock in CapArrivalMotion.
                 _turnDrawBatch = _handCountLock > 0;
                 if (DiagnoseHandDraw)
                 {
@@ -1144,7 +1154,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // never touched: it moved since the last pass.
             if (_stillness.IsStalled(holder, slotPosition))
                 refl.HolderSetTargetPosMethod?.Invoke(holder, [slotPosition]);
-            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive);
+            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive, frame);
             _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale),
                 isFocused ? 0f : slot.AngleDegrees);
 
@@ -1162,6 +1172,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 $"step={_diagnoseStep:F1} allowed={_diagnoseAllowed:F1} weight={_diagnoseWeight:F3}");
         }
 
+        // The batch closes on the count it was waiting for, or when the draw stops arriving: a turn draw with a known size
+        // gets the long patience, so a slow device's gaps between its cards never end it early (only a draw that comes up
+        // short, e.g. the pile ran out, does); every other batch keeps the adaptive quiet window, which follows the gap the
+        // draw is actually delivering at.
         if (_handDrawBatch && (_handCountLock > 0 && activeHolders.Count >= _handCountLock
                 || _handBatchMsec > (_turnDrawBatch ? TurnDrawQuietMsec : QuietWindowMsec())))
         {
@@ -1257,16 +1271,19 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     }
 
     /// <summary>
-    /// A card in flight, and its size. The game's animation lerps by <c>dt * 7</c> per frame, but a single drawn frame can
-    /// carry more than one of those steps: its layout pass moves the holder toward its desktop slot as well, and on uneven
-    /// frames the async loop resumes more than once before the next frame is drawn (measured: up to 3-4 native steps in one
-    /// 6-17 ms frame on the arrivals). So every frame a card is moving is capped at one native step — <c>dt * 7</c> of the
-    /// distance left to its slot — which is exactly the speed the game's own animation has for that frame, at any frame
-    /// rate; a card that is gliding normally is never touched. A card also never draws larger than its resting scale (the
-    /// scale lerp overshoots on a long frame).
+    /// Two rules for a card's drawn transform, in one place.
+    /// <para>Always: no drawn frame draws a card further than one step of the game's own animation toward its portrait slot —
+    /// <c>clamp(dt·7)</c> of the distance it had left at the last pass, plus a unit — and no frame draws it larger than its
+    /// resting scale. This is what keeps the game's own retargets off the screen until the next pass applies the portrait
+    /// slot: the synchronous first step of a press's desktop hover target, a re-layout on an add, a card put back. A card
+    /// that is gliding normally is never touched.</para>
+    /// <para>While a turn draw's batch is open, for a card the player is not holding: the step may only go along the line
+    /// to the slot (the frame's displacement is projected on <c>slot − previous</c> and clamped to the same one-step share),
+    /// so a native step in another direction is never drawn; a card already within 2 u of its slot does not move at all; and
+    /// the angle may only turn toward the slot's.</para>
     /// </summary>
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
-        CombatReflection refl, bool interactive)
+        CombatReflection refl, bool interactive, long frame)
     {
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
@@ -1274,7 +1291,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             refl.HolderTargetScaleField?.SetValue(holder, new Vector2(slot.Scale, slot.Scale));
         }
         Vector2 previous = _stillness.PreviousPosition(holder, holder.Position);
-        float weight = Mathf.Clamp((float)hand.GetProcessDeltaTime() * 7f, 0f, 1f);
+        // One step per drawn frame: a pass that runs again in the same frame (the focus/hover signals re-run it, so a native
+        // write that lands after the first pass is still corrected) may not hand out another step, only undo what moved.
+        float weight = frame == _capFrame ? 0f : Mathf.Clamp((float)hand.GetProcessDeltaTime() * 7f, 0f, 1f);
+        _capFrame = frame;
         Vector2 toSlot = slotPosition - previous;
         float length = toSlot.Length();
         _diagnoseStep = holder.Position.DistanceTo(previous);
@@ -1282,8 +1302,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _diagnoseAllowed = length * weight + 1f;
         if (interactive || !_turnDrawBatch)
         {
-            // Always on (as committed in 3443cb4): no frame moves a card more than one native step toward OUR slot, which
-            // also undoes the game's own retargets (a press's desktop hover target, a re-layout) before they are drawn.
+            // The always-on rule: a step longer than one native step is shortened, in whatever direction it took.
             float step = _diagnoseStep;
             if (step > _diagnoseAllowed)
                 holder.Position = previous + (holder.Position - previous) * (_diagnoseAllowed / step);
@@ -2625,7 +2644,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     ? Math.Clamp(Math.Min(target, tightestFit), PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale)
                     : Math.Clamp(target, PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale));
 
-            if (!bands.Compact && !plan.BackBoss && plan.Capacity is 4 or 5 && plan.CrowdBoss < 0 &&
+            if (!plan.SingleRow && !bands.Compact && !plan.BackBoss && plan.Capacity is 4 or 5 && plan.CrowdBoss < 0 &&
                 plan.HorizonY > 0f && bands.FrontFeetY - plan.HorizonY >= 420f)
             {
                 // Four or five ordinary enemies: two ranks with disjoint vertical bands. The front bodies may then be much
@@ -2733,6 +2752,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     cellWidths.Add(plan.Crowd.Widths[i].ToString("F0"));
             }
             GD.Print($"Portrait stage: capacity={plan.Capacity} dominant={plan.Dominant} crowd={plan.CrowdEnabled}/{plan.CrowdComputed} " +
+                     $"reserved={plan.ReservedBoss} row={plan.SingleRow} " +
                      $"backBoss={plan.BackBoss} stagger={plan.Staggered} chain={plan.Segmented} target={plan.BodyTargetScale:F3} " +
                      $"shared={plan.SharedBodyScale:F3} locked={plan.SharedLocked} left={plan.CrowdLeft:F0} " +
                      $"cells=[{string.Join(",", cellWidths)}]");
@@ -2865,6 +2885,22 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 float fitH = oviNative.Y > 1f ? maxH / oviNative.Y : PortraitCombatMath.MaxBodyScale;
                 float roomScale = plan.BodyScaleFrozen ? plan.FrozenBodyScale : plan.BodyTargetScale;
                 forceScale = Math.Min(roomScale, Math.Min(fitW, fitH));
+            }
+            if (!overflow && plan.ReservedBoss && plan.DominantStage.Slots.Length > 0)
+            {
+                // TouchSpireUI's dominant frame on the front line, capped by the frozen room scale: the boss fills its
+                // 0.55W/0.43W frame and the reserved lanes fit their own bodies when their summons arrive, without the
+                // later body resizing the room or moving a peer.
+                if (slotIndex == plan.BossSlot)
+                    maxW = plan.DominantStage.BossWidth;
+                else
+                    maxW = plan.DominantStage.LaneWidth;
+                float roomScale = plan.BodyScaleFrozen ? plan.FrozenBodyScale : plan.SharedBodyScale;
+                float fit = CellFit(enemy, maxW, maxH, refl, bands);
+                if (roomScale > 0.01f)
+                    forceScale = Math.Min(roomScale, fit);
+                else
+                    forceScale = fit;
             }
             if (!overflow && plan.Segmented && plan.ChainComputed)
             {
@@ -3675,6 +3711,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                         powerContainer.GlobalPosition.Y + shift);
             }
         }
+        // The block shield is drawn at the bar's left end; on a narrow bar it covers the first digit of the centred HP
+        // text (a 7 shield over "12/29" shows "2/29"). The native bar never moves the label, so the digit is moved clear
+        // here — only while a block is shown, only as far as it must, and never past the bar's right end.
+        KeepHpTextClearOfBlockBand(hpBar, bandNode);
 
         if (nameSynced)
             return;
@@ -3687,6 +3727,53 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             barHitbox.OffsetLeft = hpBar.Position.X - 8f;
             barHitbox.OffsetRight = hpBar.Position.X + barWidth / unit + 8f;
         }
+    }
+
+    /// <summary>
+    /// Keeps the HP text clear of the block shield the game draws at the bar's left end. The native bar toggles the
+    /// shield (and slides it in on a block gain) but never moves <c>%HpLabel</c>, so its place is ours to set: the label
+    /// is moved right by the overlap the shield has with the centred text, capped inside the bar's right end, and it goes
+    /// back to its native X as soon as the shield is hidden again. Everything is measured in canvas units and the write
+    /// is converted through the label's parent scale, so a nested or scaled bar behaves the same.
+    /// </summary>
+    private static void KeepHpTextClearOfBlockBand(Control hpBar, Control hpLabel)
+    {
+        if (hpLabel == hpBar)
+            return;   // no HP label in this bar's scene: the bar itself is never moved sideways
+        if (hpBar.GetNodeOrNull<Control>("%BlockContainer") is not { } shield)
+        {
+            if (hpLabel.HasMeta("portrait_hp_x"))
+                hpLabel.Position = new Vector2(hpLabel.GetMeta("portrait_hp_x").AsSingle(), hpLabel.Position.Y);
+            return;
+        }
+        // The label's native place, kept before the first write (the native health bar never sets its X). Its own rect
+        // follows the bar's width, so the place is converted from the last shift this pass instead of cached globally.
+        if (!hpLabel.HasMeta("portrait_hp_x"))
+            hpLabel.SetMeta("portrait_hp_x", hpLabel.Position.X);
+        float nativeX = hpLabel.GetMeta("portrait_hp_x").AsSingle();
+        float appliedLocal = hpLabel.HasMeta("portrait_hp_shift") ? hpLabel.GetMeta("portrait_hp_shift").AsSingle() : 0f;
+        float labelScale = MathF.Max(0.0001f, hpLabel.GetGlobalTransform().Scale.X);
+        float parentScale = MathF.Max(0.0001f, labelScale / MathF.Max(0.0001f, hpLabel.Scale.X));
+        Rect2 bar = hpBar.GetGlobalRect();
+        Rect2 label = hpLabel.GetGlobalRect();
+        // The rect the native bar lays the label out in: what was drawn less the shift this pass wrote last time. Without
+        // this the measured text would already include the shift and the rule would undo itself every frame.
+        float nativeLeft = label.Position.X - appliedLocal * parentScale;
+        // The text is centred in the label's rect: its left edge is the native left plus the centring term.
+        float textWidth = MathF.Max(1f, hpLabel.GetMinimumSize().X * labelScale);
+        float textLeft = nativeLeft + (label.Size.X - textWidth) * 0.5f;
+        float shift = 0f;
+        if (shield.IsVisibleInTree())
+        {
+            Rect2 shieldRect = shield.GetGlobalRect();
+            shift = PortraitCombatMath.BlockedHpLabelShift(bar.End.X, textLeft, textWidth, shieldRect.End.X,
+                HpTextClearance, HpTextClearance);
+        }
+        float local = shift / parentScale;
+        hpLabel.SetMeta("portrait_hp_shift", local);
+        float target = nativeX + local;
+        if (MathF.Abs(hpLabel.Position.X - target) > 0.01f)
+            hpLabel.Position = new Vector2(target, hpLabel.Position.Y);
     }
 
     /// <summary>
@@ -4167,6 +4254,15 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // dominant boss over them would put its wide health display across the summons that later fill those slots.
         bool dominant = !plan.Segmented && !plan.EmbeddedCrab && capacity > 2 && capacity == enemies.Count &&
                         DominantByArea(enemies, refl);
+        // The one exception is a boss whose encounter reserves its summons' slots and starts with that boss alone: the Phrog
+        // Parasite and its four wrigglers (also the Fabricator's bots and the Living Fog's bombs). It keeps TouchSpireUI's
+        // dominant frame at both shapes — without the boss lift — with its feet on the front line, and the reserved slots
+        // keep their lanes there from room start, so a summon appears where it was reserved and nothing reshuffles. The
+        // Ovicopter is not this case: its reserved slots are eggs with their own row and its own back rank.
+        plan.ReservedBoss = !dominant && !plan.Segmented && !plan.EmbeddedCrab && capacity > 2 &&
+                            capacity > enemies.Count && enemies.Count == 1 && DominantByArea(enemies, refl) &&
+                            BossOwnsFirstSlot(markers, enemies, refl) && !HasOvicopter(markers, enemies, refl);
+        dominant |= plan.ReservedBoss;
         plan.Dominant = dominant;
         plan.Capacity = capacity;
         // The act's narrow pier, not every fight that happens to be in that act: a boss that brings its own arena scene
@@ -4190,6 +4286,19 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         AssignCreatureSlots(plan, refl, enemies);
         plan.BossSlot = LargestEnemySlot(plan, refl, enemies);
+        if (plan.ReservedBoss && plan.BossSlot == 0)
+        {
+            // TouchSpireUI's dominant stage without its boss lift: the boss keeps its authored frame (0.55W on the tall
+            // canvas, 0.43W centred at 0.76 on the short one) with its feet on the front foot line, and the reserved slots
+            // keep Capacity−1 equal lanes on that same ground band. The room scale freezes as usual, so a wriggler that
+            // appears later fits its own lane without moving anything.
+            plan.DominantStage = PortraitCombatMath.ComputeDominantStage(capacity, bands);
+            plan.EnemySlots = plan.DominantStage.Slots;
+        }
+        else
+        {
+            plan.ReservedBoss = false;
+        }
         var targetTypes = new List<string>(enemies.Count);
         foreach (Control enemy in enemies)
             targetTypes.Add(refl.GetMonsterTypeName(enemy));
@@ -4218,7 +4327,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
         plan.Dominant = plan.Dominant && plan.BossSlot >= 0;
         plan.TallFormation = !bands.Compact && !plan.OviFight && !plan.EmbeddedCrab && !plan.Segmented &&
-                             capacity >= 1 && capacity <= 5
+                             !plan.ReservedBoss && capacity >= 1 && capacity <= 5
             ? PortraitCombatMath.ComputeTallFormation(capacity, bands)
             : Array.Empty<PortraitCreatureSlot>();
         // Every non-boss group uses the one clear row at 9:16 (a pier even for one peer pair).
@@ -4270,6 +4379,38 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 Math.Min(plan.BodyTargetScale, tightest > 0f ? tightest : plan.BodyTargetScale),
                 PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
             plan.SharedLocked = true;
+        }
+        if (plan.TallFormation.Length > 0 && !plan.Dominant && plan.BossSlot < 0 && capacity is 3 or 4 &&
+            enemies.Count == capacity && players.Count > 0)
+        {
+            // A tall-thin roster of three or four draws bigger in one row than in TouchSpireUI's table: its cells are only
+            // as tall as the stage above their intent band (the Gardeners' 380-unit bodies fit 200), while a row of four
+            // across the stage lets them use their width (0.53 in the 2x2 against 0.85 in the row). The row is the crowded
+            // stage, so the table is simply not built and the same frozen row that lays the 9:16 room out lays this one.
+            var bodies = new (float Width, float Height)[enemies.Count];
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                Vector2 native = refl.GetCreatureFootprintSize(enemies[i]);
+                bodies[i] = (Math.Max(1f, native.X), Math.Max(1f, native.Y));
+            }
+            bool crowded = players.Count + pets.Count > 1;
+            float heroRoomScale = HeroRoomScaleFor(players, refl, crowded);
+            float heroX = plan.AllySlots.Length > 0 ? plan.AllySlots[0].CanvasX : PortraitCombatMath.LonePlayerX;
+            (_, float heroRightLocal) = HitboxLocalExtent(players[0], refl);
+            float heroDrawn = Math.Max(PortraitCombatMath.PeerScaleFloor, heroRoomScale);
+            float rowLeft = Math.Max(StageSideMargin + 6f, heroX + Math.Max(0f, heroRightLocal) * heroDrawn + 6f);
+            PortraitCombatMath.PortraitRowFit row = PortraitCombatMath.FitSingleRow(capacity, bodies, bands, rowLeft,
+                heroRoomScale, bands.Compact ? 0f : IntentBandHeight);
+            float formationScale = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
+            if (PortraitCombatMath.PrefersSingleRow(bodies, formationScale, row.RoomScale))
+            {
+                plan.SingleRow = true;
+                plan.TallFormation = Array.Empty<PortraitCreatureSlot>();
+                plan.SharedBodyScale = 0f;
+                plan.SharedLocked = false;
+                plan.SharedExcludeSlot = -1;
+                plan.CrowdEnabled = plan.Capacity >= 2 && !plan.Segmented && !plan.EmbeddedCrab;
+            }
         }
         foreach (PortraitCreatureSlot tall in plan.TallFormation)
         {
@@ -4431,6 +4572,65 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
         }
         return second <= 0f || first > second * 1.8f;
+    }
+
+    /// <summary>
+    /// Whether the lone enemy's own authored marker is the one the dominant table promotes to the first slot: the table
+    /// reorders the boss ahead of every other slot by area, so the two must name the same marker for the boss to keep the
+    /// dominant frame when it is the roster's only body.
+    /// </summary>
+    private static bool BossOwnsFirstSlot(List<PortraitCombatMath.PortraitSlotMarker> markers, List<Control> enemies,
+        CombatReflection refl)
+    {
+        if (enemies.Count != 1)
+            return false;
+        string key = refl.GetSlotName(enemies[0]) ?? "";
+        if (key.Length == 0)
+            return false;
+        int boss = -1;
+        for (int i = 0; i < markers.Count; i++)
+        {
+            if (markers[i].Area <= 0f) continue;
+            if (boss < 0 || markers[i].Area > markers[boss].Area)
+                boss = i;
+        }
+        return boss >= 0 && string.Equals(markers[boss].Name, key, StringComparison.Ordinal);
+    }
+
+    /// <summary>The Ovicopter's reserved slots are eggs with their own row and its own back rank, never a boss's lanes.</summary>
+    private static bool HasOvicopter(List<PortraitCombatMath.PortraitSlotMarker> markers, List<Control> enemies,
+        CombatReflection refl)
+    {
+        foreach (PortraitCombatMath.PortraitSlotMarker marker in markers)
+        {
+            if (string.Equals(marker.Name, "ovicopter", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        foreach (Control enemy in enemies)
+        {
+            if (refl.GetMonsterTypeName(enemy) == "Ovicopter")
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The hero's own room scale for a given ally frame: TouchSpireUI's shared multiplier capped by the hero's body fit,
+    /// exactly as the stage resolves it (one ally's frame is 270 by 360, a crowd's 210 by 260).
+    /// </summary>
+    private static float HeroRoomScaleFor(List<Control> players, CombatReflection refl, bool crowded)
+    {
+        if (players.Count == 0)
+            return PortraitCombatMath.PreferredSharedBodyScale;
+        float maxW = crowded ? 210f : 270f;
+        float maxH = crowded ? 260f : 360f;
+        var fits = new PortraitCombatMath.PortraitFrameFit[players.Count];
+        for (int i = 0; i < players.Count; i++)
+        {
+            Vector2 native = refl.GetCreatureFootprintSize(players[i]);
+            fits[i] = new PortraitCombatMath.PortraitFrameFit(native.X, native.Y, maxW, maxH, 1f);
+        }
+        return PortraitCombatMath.SharedRoomScale(fits, out _);
     }
 
     private static bool IsUnderdocksActor(CombatReflection refl, List<Control> players, List<Control> enemies)
@@ -5102,6 +5302,14 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         public int Capacity;
         public bool Dominant;
         public bool Segmented;
+        /// <summary>
+        /// A lone boss whose encounter reserves its summons' slots: it keeps TouchSpireUI's dominant frame with its feet on
+        /// the front line, and the reserved slots keep their lanes there from room start.
+        /// </summary>
+        public bool ReservedBoss;
+        public PortraitCombatMath.PortraitDominantStage DominantStage;
+        /// <summary>A tall-thin 3–4 body roster drawn in the crowded single row instead of TouchSpireUI's tall table.</summary>
+        public bool SingleRow;
         public bool Pier;
         /// <summary>This encounter brings its own arena scene, so the act's pier is not what the room is drawn on.</summary>
         public bool CustomArena;

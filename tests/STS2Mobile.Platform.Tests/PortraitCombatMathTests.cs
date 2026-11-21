@@ -1035,6 +1035,111 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
+    public void DominantStageKeepsTouchSpiresBossFrameAndLanesOnTheFrontLine()
+    {
+        // The Phrog Parasite elite: one boss and four reserved wriggler slots. TouchSpireUI's dominant frame at both shapes,
+        // without its boss lift, so the boss's feet stay on the front foot line and the lanes stand on the same band.
+        foreach (float canvasHeight in new[] { 2340f, 1920f })
+        {
+            bool compact = canvasHeight < 2000f;
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+            Assert.Equal(compact, bands.Compact);
+            PortraitCombatMath.PortraitDominantStage stage = PortraitCombatMath.ComputeDominantStage(5, bands);
+            Assert.Equal(5, stage.Slots.Length);
+            Assert.Equal(1080f * (compact ? 0.76f : 0.70f), stage.Slots[0].CanvasX, 0.5f);
+            Assert.Equal(1080f * (compact ? 0.43f : 0.55f), stage.BossWidth, 0.5f);
+            Assert.Equal(0, stage.Slots[0].RowDepth);
+            Assert.All(stage.Slots, slot => Assert.Equal(bands.FrontFeetY, slot.CanvasFeetY));
+            // The boss frame ends exactly at the canvas's right margin (1053) at both shapes.
+            Assert.Equal(1053f, stage.Slots[0].CanvasX + stage.BossWidth * 0.5f, 0.5f);
+
+            // Four equal lanes from 0.35 over 0.635 of the width, 0.94 filled: centres 463.7/635.2/806.6/978.1.
+            float laneWidth = 1080f * 0.635f / 4f * 0.94f;
+            Assert.Equal(laneWidth, stage.LaneWidth, 0.05f);
+            Assert.Equal(1080f * 0.429375f, stage.Slots[1].CanvasX, 0.5f);
+            Assert.Equal(1080f * 0.588125f, stage.Slots[2].CanvasX, 0.5f);
+            Assert.Equal(1080f * 0.746875f, stage.Slots[3].CanvasX, 0.5f);
+            Assert.Equal(1080f * 0.905625f, stage.Slots[4].CanvasX, 0.5f);
+            for (int i = 1; i < stage.Slots.Length; i++)
+            {
+                Assert.Equal(1, stage.Slots[i].RowDepth);
+                Assert.Equal(0.76f, stage.Slots[i].BaseScale);
+                if (i > 1)
+                    Assert.True(stage.Slots[i].CanvasX - stage.Slots[i - 1].CanvasX - laneWidth > 9f);
+            }
+            Assert.True(stage.Slots[1].CanvasX - laneWidth * 0.5f >= 1080f * 0.35f);
+            Assert.True(stage.Slots[4].CanvasX + laneWidth * 0.5f <= 1080f * 0.985f);
+
+            // A three-slot summoner keeps two equal lanes; a lone body has no lane at all.
+            PortraitCombatMath.PortraitDominantStage three = PortraitCombatMath.ComputeDominantStage(3, bands);
+            Assert.Equal(1080f * 0.50875f, three.Slots[1].CanvasX, 0.5f);
+            Assert.Equal(1080f * 0.82625f, three.Slots[2].CanvasX, 0.5f);
+            Assert.Equal(1080f * 0.635f / 2f * 0.94f, three.LaneWidth, 0.05f);
+            Assert.Equal(0f, PortraitCombatMath.ComputeDominantStage(1, bands).LaneWidth, 0.01f);
+        }
+    }
+
+    [Fact]
+    public void TallThinRostersOfThreeOrFourChooseTheSingleRow()
+    {
+        // The Phantasmal Gardeners (208 by 380, four of them): TouchSpireUI's 2x2 cell is 313 wide but only 200 tall above
+        // its intent band, so the table's tightest fit is 0.528; the single row across the pier gives 0.855.
+        PortraitCombatBands tall = PortraitCombatMath.ComputeCombatBands(canvasHeight: 2340f, stageTopY: 612f);
+        PortraitCombatBands compact = PortraitCombatMath.ComputeCombatBands(canvasHeight: 1920f, stageTopY: 612f);
+        const float intentBand = 64f * 1.45f + 12f;
+        // The hero's drawn hit box (Ironclad: x 180, local right 121) at its own room scale ends at 315, so the row starts
+        // at 321 — the same edge the crowded stage freezes at 9:16.
+        const float heroRight = 315f;
+        const float heroRoomScale = 1.116f;
+        (float Width, float Height)[] gardeners = { (208f, 380f), (208f, 380f), (208f, 380f), (208f, 380f) };
+        PortraitCombatMath.PortraitRowFit row =
+            PortraitCombatMath.FitSingleRow(4, gardeners, tall, heroRight + 6f, heroRoomScale, intentBand);
+        Assert.Equal(321f, row.LeftEdge, 0.01f);
+        Assert.Equal(177.75f, row.CellWidth, 0.05f);
+        Assert.Equal(0.8546f, row.RoomScale, 0.001f);
+        Assert.Equal(208f * row.RoomScale, row.CellWidth, 0.1f);
+        // 9:16 needs no intent band above the body: the same cells and the same scale, which is why the short room already
+        // stands them in this row.
+        Assert.Equal(row.RoomScale, PortraitCombatMath.FitSingleRow(4, gardeners, compact, heroRight + 6f,
+            heroRoomScale, 0f).RoomScale, 0.001f);
+
+        float formation = Math.Min(313.2f / 208f, (Math.Min(305.36f, tall.FrontFeetY - tall.StageTopY) - intentBand) / 380f);
+        Assert.Equal(0.5278f, formation, 0.001f);
+        Assert.True(PortraitCombatMath.PrefersSingleRow(gardeners, formation, row.RoomScale));
+        Assert.InRange(row.RoomScale / Math.Min(formation, PortraitCombatMath.MaxBodyScale), 1.6f, 1.7f);
+
+        // Every other 3–4 body roster keeps its authored table: the row is not materially bigger (ConstructMenagerie 1.35,
+        // Knights 1.10) or the bodies are not tall-thin (Exoskeletons 0.98, Inklets 1.34, Scrolls 0.91).
+        (float Width, float Height)[] constructs = { (272f, 306f), (180f, 294f), (180f, 294f) };
+        Assert.Equal(0.8836f, PortraitCombatMath.FitSingleRow(3, constructs, tall, 321f, heroRoomScale, intentBand).RoomScale, 0.002f);
+        Assert.False(PortraitCombatMath.PrefersSingleRow(constructs, 0.6554f,
+            PortraitCombatMath.FitSingleRow(3, constructs, tall, 321f, heroRoomScale, intentBand).RoomScale));
+
+        (float Width, float Height)[] knights = { (404f, 372f), (364f, 330f), (220f, 327f) };
+        Assert.False(PortraitCombatMath.PrefersSingleRow(knights, 0.5391f,
+            PortraitCombatMath.FitSingleRow(3, knights, tall, 321f, heroRoomScale, intentBand).RoomScale));
+
+        (float Width, float Height)[] exoskeletons = { (172f, 168f), (172f, 168f), (172f, 168f), (172f, 168f) };
+        Assert.False(PortraitCombatMath.PrefersSingleRow(exoskeletons, 1.1938f,
+            PortraitCombatMath.FitSingleRow(4, exoskeletons, tall, 321f, heroRoomScale, intentBand).RoomScale));
+
+        (float Width, float Height)[] inklets = { (140f, 187f), (140f, 187f), (140f, 187f) };
+        Assert.False(PortraitCombatMath.PrefersSingleRow(inklets, 1.0725f,
+            PortraitCombatMath.FitSingleRow(3, inklets, tall, 321f, heroRoomScale, intentBand).RoomScale));
+
+        (float Width, float Height)[] scrolls = { (183f, 166f), (183f, 166f), (183f, 166f), (183f, 166f) };
+        Assert.False(PortraitCombatMath.PrefersSingleRow(scrolls, 1.2083f,
+            PortraitCombatMath.FitSingleRow(4, scrolls, tall, 321f, heroRoomScale, intentBand).RoomScale));
+
+        (float Width, float Height)[] slugs = { (232f, 164f), (232f, 164f), (232f, 164f) };
+        Assert.False(PortraitCombatMath.PrefersSingleRow(slugs, 1.2232f,
+            PortraitCombatMath.FitSingleRow(3, slugs, tall, 321f, heroRoomScale, intentBand).RoomScale));
+
+        // Two bodies never qualify (they use the pair table), however tall they are.
+        Assert.False(PortraitCombatMath.PrefersSingleRow(new (float, float)[] { (208f, 380f), (208f, 380f) }, 0.5f, 1f));
+    }
+
+    [Fact]
     public void UnplayableCardDimmingIsStrictlyNeutralGreyWithZeroColourCast()
     {
         var (r, g, b, a) = PortraitCombatMath.UnplayableBodyModulateRgba;
@@ -1099,5 +1204,36 @@ public class PortraitCombatMathTests
         Assert.True(fit.Scale < 1f);
         Assert.True(topAfter >= topLimit - 0.01f);
         Assert.True(bottomAfter <= bottomLimit + 0.01f);
+    }
+
+    [Fact]
+    public void BlockedHpTextStartsAfterTheShieldOnANarrowBar()
+    {
+        // The Underdocks eels: a narrow bar whose centred "12/29" starts under the shield drawn at its left end. The text
+        // moves right by exactly the overlap (shield right + gap less the text's left edge) and stays inside the bar.
+        float shift = PortraitCombatMath.BlockedHpLabelShift(
+            barRight: 120f, textLeft: 30f, textWidth: 60f, shieldRight: 40f, gap: 4f, edge: 4f);
+        Assert.Equal(14f, shift, 0.001f);
+        Assert.True(30f + shift + 60f <= 120f - 4f + 0.001f);
+
+        // A wide bar whose centred text already clears the shield (the hero) is left exactly as the game draws it.
+        Assert.Equal(0f, PortraitCombatMath.BlockedHpLabelShift(
+            barRight: 328f, textLeft: 134f, textWidth: 60f, shieldRight: 40f, gap: 4f, edge: 4f), 0.001f);
+
+        // No block: the shield edge sits at the bar's left corner, still clear of a centred text.
+        Assert.Equal(0f, PortraitCombatMath.BlockedHpLabelShift(
+            barRight: 328f, textLeft: 134f, textWidth: 60f, shieldRight: 20f, gap: 4f, edge: 4f), 0.001f);
+    }
+
+    [Fact]
+    public void BlockedHpTextNeverPassesTheBarsRightEnd()
+    {
+        // A bar too narrow for text and shield together: the shift is capped at the room the bar leaves, so the digits
+        // move as far clear of the shield as they can but never off the right end.
+        float shift = PortraitCombatMath.BlockedHpLabelShift(
+            barRight: 100f, textLeft: 30f, textWidth: 60f, shieldRight: 45f, gap: 4f, edge: 4f);
+        Assert.Equal(6f, shift, 0.001f);   // room = 100 - 4 - 90
+        Assert.Equal(0f, PortraitCombatMath.BlockedHpLabelShift(
+            barRight: 80f, textLeft: 30f, textWidth: 60f, shieldRight: 45f, gap: 4f, edge: 4f), 0.001f);
     }
 }

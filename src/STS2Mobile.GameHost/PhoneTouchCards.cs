@@ -54,6 +54,15 @@ internal sealed class PhoneTouchCards
     public static bool CardIsBeingDragged { get; private set; }
 
     /// <summary>
+    /// Whether the pointer's hover is a touch's: true from a finger's press until two frames after its release. The engine
+    /// leaves its emulated mouse where the finger was, so after a release the card under that point is hovered, and the game
+    /// reports it as its focused holder for a frame, with a full hand re-layout around it (the cancel snapshot: released over
+    /// another card, the row re-spaces and grows, then snaps back). The hand therefore ignores the game's focused holder
+    /// while this is set; the finger's own card still grows, through <see cref="PressedHolder"/>.
+    /// </summary>
+    public static bool HoverFromTouch { get; private set; }
+
+    /// <summary>
     /// The hand card under a finger that is down in play mode and has not been picked up yet (after
     /// <see cref="TouchCardMath.PickupSlop"/> it is dragging instead); the portrait hand grows this card in place under
     /// the finger. Null on release, after pickup and while the inspector is open.
@@ -229,6 +238,7 @@ internal sealed class PhoneTouchCards
     {
         if (_dragHolder != null) EndDrag();
         RestoreInspectShield();
+        HoverFromTouch = true;
         _down = true;
         _pickedUp = false;
         _released = false;
@@ -310,6 +320,11 @@ internal sealed class PhoneTouchCards
             ReleaseEverything();
             return;
         }
+
+        // Two frames after a release the engine's emulated mouse has settled on whatever sits under it; from then on a
+        // real pointer (desktop, or a mouse on a tablet) owns the hover again.
+        if (HoverFromTouch && !_down && Engine.GetProcessFrames() > _releaseFrame + 2)
+            HoverFromTouch = false;
 
         bool overlays = r.OverlayCount() > 0;
         bool playInProgress = r.CurrentCardPlay(hand) != null;
@@ -675,6 +690,7 @@ internal sealed class PhoneTouchCards
     {
         EndDrag();
         ResetGesture();
+        HoverFromTouch = false;
         RestoreInspectUpgrade();
         HandPickupGate.Disable();
         PhoneHoverTips.UnparkEndTurn();
