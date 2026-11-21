@@ -401,9 +401,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private double _handAddIntervalMsec;
     private bool _handDirty;
     private long _handLastPassFrame;
-    // The drawn frame the motion cap last granted its one step in: the cap may run again in the same frame (a focus or
-    // hover signal re-runs the pass) and the second run must not hand out a second step.
-    private long _capFrame = -1;
     private bool _lastInCardPlay;
     private ulong _lastPressedHolder;
     private PortraitCombatBands? _lastHandBands;
@@ -1154,7 +1151,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // never touched: it moved since the last pass.
             if (_stillness.IsStalled(holder, slotPosition))
                 refl.HolderSetTargetPosMethod?.Invoke(holder, [slotPosition]);
-            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive, frame);
+            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive);
             _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale),
                 isFocused ? 0f : slot.AngleDegrees);
 
@@ -1283,7 +1280,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// the angle may only turn toward the slot's.</para>
     /// </summary>
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
-        CombatReflection refl, bool interactive, long frame)
+        CombatReflection refl, bool interactive)
     {
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
@@ -1291,10 +1288,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             refl.HolderTargetScaleField?.SetValue(holder, new Vector2(slot.Scale, slot.Scale));
         }
         Vector2 previous = _stillness.PreviousPosition(holder, holder.Position);
-        // One step per drawn frame: a pass that runs again in the same frame (the focus/hover signals re-run it, so a native
-        // write that lands after the first pass is still corrected) may not hand out another step, only undo what moved.
-        float weight = frame == _capFrame ? 0f : Mathf.Clamp((float)hand.GetProcessDeltaTime() * 7f, 0f, 1f);
-        _capFrame = frame;
+        float weight = Mathf.Clamp((float)hand.GetProcessDeltaTime() * 7f, 0f, 1f);
         Vector2 toSlot = slotPosition - previous;
         float length = toSlot.Length();
         _diagnoseStep = holder.Position.DistanceTo(previous);
