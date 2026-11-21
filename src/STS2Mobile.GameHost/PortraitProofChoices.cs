@@ -127,16 +127,34 @@ internal static partial class PortraitProof
         await WaitFramesAsync(tree, 70);
         DismissFtues(tree, Sts2);
         await WaitFramesAsync(tree, 20);
+        // The shop's stock has two pages (cards on one, relics and potions on the other). Switch them with real taps on the
+        // native tabs, and report the page each step sees.
         List<Control> slots = ShopSlots(tree);
-        Control? cardSlot = slots.FirstOrDefault(s => s.GetType().Name == "NMerchantCard");
-        Control? relicSlot = slots.FirstOrDefault(s => s.GetType().Name == "NMerchantRelic");
-        Control? potionSlot = slots.FirstOrDefault(s => s.GetType().Name == "NMerchantPotion");
         await TouchStepAsync(tree, "choice-shop-open", DescribeShop(player, slots), results);
-        if (cardSlot != null && relicSlot != null)
+        await TapShopPageAsync(tree, items: true);
+        slots = ShopSlots(tree);
+        await TouchStepAsync(tree, "choice-shop-items-page", DescribeShop(player, slots), results);
+        await TapShopPageAsync(tree, items: false);
+        slots = ShopSlots(tree);
+        await TouchStepAsync(tree, "choice-shop-cards-page", DescribeShop(player, slots), results);
+
+        // A card: a tap selects it, on the page that shows cards.
+        Control? cardSlot = slots.FirstOrDefault(s => s.GetType().Name == "NMerchantCard");
+        if (cardSlot != null)
         {
             await TapAsync(tree, CentreOf(cardSlot));
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-shop-card-tap", DescribeShop(player, slots), results);
+        }
+
+        // Relics and potions: the other page, where they are shown.
+        await TapShopPageAsync(tree, items: true);
+        slots = ShopSlots(tree);
+        await TouchStepAsync(tree, "choice-shop-items-page-for-relics", DescribeShop(player, slots), results);
+        Control? relicSlot = slots.FirstOrDefault(s => s.GetType().Name == "NMerchantRelic");
+        Control? potionSlot = slots.FirstOrDefault(s => s.GetType().Name == "NMerchantPotion");
+        if (relicSlot != null)
+        {
             await TapAsync(tree, CentreOf(relicSlot));
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-shop-relic-tap", DescribeShop(player, slots), results);
@@ -267,6 +285,23 @@ internal static partial class PortraitProof
     /// <summary>The left edge of the screen, clear of the shop's cloth, slots and tabs: a tap there lets a selection go.</summary>
     private static Vector2 EmptySpot(SceneTree tree) => new(12f, tree.Root.GetVisibleRect().Size.Y / 2f);
 
+    /// <summary>
+    /// Switches the portrait shop's Cards/Items page with a real tap on its native tab, waiting for
+    /// <see cref="PortraitBetweenLayout.ShopPage" /> to follow; true when the page asked for is shown (false when the shop has
+    /// no pages, as the weird and Blitz shops do not).
+    /// </summary>
+    private static async Task<bool> TapShopPageAsync(SceneTree tree, bool items)
+    {
+        string name = items ? PortraitBetweenLayout.ShopItemsTabName : PortraitBetweenLayout.ShopCardsTabName;
+        Control? tab = Descendants(tree.Root).OfType<Control>().FirstOrDefault(c => c.Name == name && c.IsVisibleInTree());
+        if (tab == null) return false;
+        int page = items ? 1 : 0;
+        await TapAsync(tree, CentreOf(tab));
+        for (int frame = 0; frame < 90 && PortraitBetweenLayout.ShopPage != page; frame++) await WaitFramesAsync(tree, 1);
+        await WaitFramesAsync(tree, 20);
+        return PortraitBetweenLayout.ShopPage == page;
+    }
+
     private static Control? ConfirmOf(Control screen) =>
         Descendants(screen).OfType<Control>().FirstOrDefault(c => c.GetType().Name == "NConfirmButton" && c.IsVisibleInTree());
 
@@ -326,7 +361,8 @@ internal static partial class PortraitProof
     {
         Control? selected = PhoneSelectConfirm.SelectedOwner;
         string kinds = string.Join(",", slots.GroupBy(s => s.GetType().Name).Select(g => $"{g.Key}x{g.Count()}"));
-        return $"slots=[{kinds}] selected={selected?.GetType().Name ?? "none"} gold={Prop(player, "Gold")} deck={DeckCards(player).Count} " +
+        string page = PortraitBetweenLayout.ShopPage switch { 0 => "cards", 1 => "items", _ => "none" };
+        return $"page={page} slots=[{kinds}] selected={selected?.GetType().Name ?? "none"} gold={Prop(player, "Gold")} deck={DeckCards(player).Count} " +
             $"relics={RelicCount(player)} confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} clears={PhoneSelectConfirm.Clears}";
     }
 
