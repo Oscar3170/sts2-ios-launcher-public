@@ -886,6 +886,27 @@ internal sealed class PortraitOverlayLayout
         };
     }
 
+    /// <summary>
+    /// The open potion popup's Use or Discard button under this canvas point, if any. The popup is top level so it can be
+    /// drawn past the scrolling potion row; Godot's GUI picking skips top-level children (`Viewport::_gui_find_control_at_pos`),
+    /// so its buttons never receive the press. The header input forwards the press and release to the button it lands on.
+    /// </summary>
+    internal static Control? PotionActionAt(Vector2 point)
+    {
+        if (Instance is not { } layout || !SafeAreaCanvas.IsPortrait) return null;
+        foreach (ulong id in layout._potionPopups)
+        {
+            if (Live(id) is not Control popup || popup.GetType().FullName != PotionPopupTypeName) continue;
+            foreach (string name in new[] { "%UseButton", "%DiscardButton" })
+            {
+                if (popup.GetNodeOrNull<Control>(name) is { } button && button.IsVisibleInTree() &&
+                    button.GetGlobalRect().Grow(2f).HasPoint(point))
+                    return button;
+            }
+        }
+        return null;
+    }
+
     /// <summary>The original portrait fit: a larger popup just under the slot, moved inside the screen.</summary>
     private void FitPotionPopupBesideHolder(Control popup, Control parent, Vector2 canvas)
     {

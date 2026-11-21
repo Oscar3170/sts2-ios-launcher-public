@@ -33,6 +33,9 @@ internal sealed class PhoneHeaderSwipe
     private readonly Type? _tipSetType;
     private readonly FieldInfo? _tipBlocked;
     private readonly MethodInfo? _clearTips;
+    private readonly FieldInfo? _clickableEnabled;
+    private readonly MethodInfo? _pressHandler;
+    private readonly MethodInfo? _releaseHandler;
 
     private SceneTree? _tree;
     private ulong _potionRow;
@@ -42,6 +45,7 @@ internal sealed class PhoneHeaderSwipe
     private bool _swiping;
     private bool _horizontal;
     private ulong _row;
+    private ulong _popupButton;
     private Vector2 _start;
     private int _initial;
 
@@ -75,6 +79,9 @@ internal sealed class PhoneHeaderSwipe
             _tipSetType = game.GetType(TipSetTypeName);
             _tipBlocked = _tipSetType?.GetField("shouldBlockHoverTips", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             _clearTips = _tipSetType?.GetMethod("Clear", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+            _clickableEnabled = _clickableType?.GetField("_isEnabled", InstAll);
+            _pressHandler = _clickableType?.GetMethod("OnPressHandler", InstAll, null, Type.EmptyTypes, null);
+            _releaseHandler = _clickableType?.GetMethod("OnReleaseHandler", InstAll, null, Type.EmptyTypes, null);
         }
         catch (Exception error)
         {
@@ -90,7 +97,11 @@ internal sealed class PhoneHeaderSwipe
         if (_row != 0 && _row != _potionRow && _row != _relicRow) End();
     }
 
-    public void Clear() => End();
+    public void Clear()
+    {
+        _popupButton = 0;
+        End();
+    }
 
     public void Attach(SceneTree tree)
     {
@@ -103,6 +114,7 @@ internal sealed class PhoneHeaderSwipe
         if (_tree != null && GodotObject.IsInstanceValid(_tree.Root))
             _tree.Root.WindowInput -= OnWindowInput;
         _tree = null;
+        _popupButton = 0;
         End();
     }
 
@@ -121,16 +133,32 @@ internal sealed class PhoneHeaderSwipe
             switch (input)
             {
                 case InputEventScreenTouch touch when touch.Index == 0:
-                    if (touch.Pressed) Begin(touch.Position);
-                    else End();
+                    if (touch.Pressed)
+                    {
+                        PressPotionAction(touch.Position);
+                        Begin(touch.Position);
+                    }
+                    else
+                    {
+                        ReleasePotionAction();
+                        End();
+                    }
                     return;
                 case InputEventScreenDrag drag when drag.Index == 0:
                     Move(drag.Position);
                     return;
                 // The Linux host and the desktop editor send a mouse; the phone sends touches. Both describe one gesture.
                 case InputEventMouseButton button when button.ButtonIndex == MouseButton.Left:
-                    if (button.Pressed) Begin(button.Position);
-                    else End();
+                    if (button.Pressed)
+                    {
+                        PressPotionAction(button.Position);
+                        Begin(button.Position);
+                    }
+                    else
+                    {
+                        ReleasePotionAction();
+                        End();
+                    }
                     return;
                 case InputEventMouseMotion motion:
                     Move(motion.Position);
@@ -195,6 +223,45 @@ internal sealed class PhoneHeaderSwipe
             LastSwipeMsec = Time.GetTicksMsec();
             ClearTips();
             Scroll(row, Horizontal(row) ? -moved.X : -moved.Y);
+        }
+    }
+
+    /// <summary>
+    /// Forwards a press on an open potion popup's Use or Discard to that button. The popup is top level (drawn below the
+    /// relic band) and Godot does not offer top-level controls to the GUI, so without this its buttons are inert.
+    /// </summary>
+    private void PressPotionAction(Vector2 point)
+    {
+        Control? button = PortraitOverlayLayout.PotionActionAt(ToCanvas(point));
+        if (button == null || _pressHandler == null || _clickableEnabled?.GetValue(button) is false) return;
+        // Touch and its emulated mouse describe one press.
+        if (_popupButton == button.GetInstanceId()) return;
+        try
+        {
+            _pressHandler.Invoke(button, null);
+            _popupButton = button.GetInstanceId();
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr("Phone header swipe: potion action press: ", error.Message);
+        }
+    }
+
+    /// <summary>The release goes to the button the press landed on, as a mouse's would.</summary>
+    private void ReleasePotionAction()
+    {
+        if (_popupButton == 0) return;
+        ulong id = _popupButton;
+        _popupButton = 0;
+        if (GodotObject.InstanceFromId(id) is not Control button || !GodotObject.IsInstanceValid(button) || !button.IsInsideTree())
+            return;
+        try
+        {
+            _releaseHandler?.Invoke(button, null);
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr("Phone header swipe: potion action release: ", error.Message);
         }
     }
 
