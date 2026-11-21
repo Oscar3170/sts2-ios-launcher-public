@@ -952,7 +952,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // made the whole hand bounce.
         int effectiveCount = PortraitCombatMath.EffectiveCardCount(activeHolders.Count, holding);
         int heldIndex = holding && refl.HandDraggedIndexField?.GetValue(hand) is int dragged ? Math.Clamp(dragged, 0, activeHolders.Count) : -1;
-        int handCount = heldIndex >= 0 ? effectiveCount : Math.Max(activeHolders.Count, _handCountLock);
 
         // The card under a finger is the one that grows. The pickup gate suppresses the native hover/focus on a touch
         // press, so the touch pass's pressed holder comes first and the native focus is only the fallback (mouse,
@@ -1033,6 +1032,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             _handCountLock = 0;
             _handAddIntervalMsec = 0.0;
         }
+        int handCount = heldIndex >= 0 ? effectiveCount : Math.Max(activeHolders.Count, _handCountLock);
 
         // Everything below is reflective work per card, and the game only re-lays the hand out after an add, a focus, a
         // selection or a card-play change, all of which are signals or one cheap field. So the pass runs when one of those
