@@ -1029,6 +1029,11 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     _diagnoseFrames = 6;
                 }
             }
+            else if (startingBatch && _lastHandHolderCount == 0)
+            {
+                // BISECT EXPERIMENT: the committed (3443cb4) empty-hand fallback, restored to test whether its removal broke touch.
+                _handCountLock = Math.Clamp(refl.HandDrawCount(), 0, HandCardLimit);
+            }
             // Only a turn change may lock a draw's size (see the turn-number block above); any other batch, including one
             // that starts from an empty hand (a hand emptied by Exhaust and refilled, or a test's SetHand), lays out for the
             // count it actually holds, so a live count is never replaced by a guessed draw size.
