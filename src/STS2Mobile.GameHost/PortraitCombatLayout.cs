@@ -1323,7 +1323,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
         CombatReflection refl, bool interactive)
     {
-        if (interactive || !_handDrawBatch)
+        if (interactive || !_handLockStrict) // BISECT EXPERIMENT: turn draws only (was !_handDrawBatch)
             return;
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
