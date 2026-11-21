@@ -12,7 +12,7 @@ namespace STS2Mobile.GameHost;
 /// card selection), events, the shop, the rest site and the treasure room. Every edit is captured first so turning Portrait Mode
 /// off restores the desktop layout live.
 /// </summary>
-internal sealed class PortraitBetweenLayout
+internal sealed partial class PortraitBetweenLayout
 {
     public const string MapScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen";
     public const string ProceedButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NProceedButton";
@@ -21,6 +21,9 @@ internal sealed class PortraitBetweenLayout
     public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
     public const string MerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantInventory";
     public const string FakeMerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NFakeMerchantInventory";
+    public const string MerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom";
+    public const string BlitzMerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom";
+    public const string FakeMerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Events.Custom.NFakeMerchant";
     public const string EventLayoutTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NEventLayout";
     public const string MapFtueTypeName = "MegaCrit.Sts2.Core.Nodes.Ftue.NMapSelectFtue";
     public const string AncientLayoutTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NAncientEventLayout";
@@ -34,6 +37,7 @@ internal sealed class PortraitBetweenLayout
         MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
         MerchantInventoryTypeName, FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
         BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, AncientDialogueLineTypeName,
+        MerchantRoomTypeName, BlitzMerchantRoomTypeName, FakeMerchantRoomTypeName,
     };
 
     // Card grids in portrait: two cards to a row at 1.8, each card 432 units (150 points) wide. The grid's
@@ -53,12 +57,6 @@ internal sealed class PortraitBetweenLayout
     // The ancients' dialogue lines are 800 wide in a 1000 wide column; in portrait they take the column's width.
     private const float AncientDialogueWiden = 200f;
 
-    // The shop's slot panel is 1747 wide, but its slots sit between about x 300 and 1600 (panel-local) from y 150.
-    private const float ShopContentLeft = 210f;
-    private const float ShopContentRight = 1580f;
-    private const float ShopContentTop = 150f;
-    private const float ShopOpenY = 80f;
-
     // Event art keeps its subject left of centre on the desktop; this brings it to the middle of the portrait canvas.
     private const float EventArtShiftX = 320f;
     private const float EventArtCentreY = 44f;
@@ -76,10 +74,6 @@ internal sealed class PortraitBetweenLayout
     private const int EventTextFontSize = 32;
     private const float EventBottomMargin = 60f;
     private const float EventMaxLift = 400f;
-    private const float ShopItemPadWidth = 112f;
-    private const float ShopItemPadHeight = 108f;
-    // A shop price's number on the screen, in canvas units: 32 is 11 points on a 375 point wide phone.
-    private const float ShopPriceUnits = 32f;
     private const float RestChoicesMaxScale = 1.35f;
     private const float RestChoicesMinScale = 0.6f;
     private const float RestChoicesPivotY = 80f;
@@ -113,7 +107,6 @@ internal sealed class PortraitBetweenLayout
     private readonly HashSet<ulong> _liftedAncientContents = new();
     private readonly HashSet<ulong> _liftedBanners = new();
     private readonly HashSet<ulong> _shops = new();
-    private readonly HashSet<ulong> _fakeShops = new();
     private readonly HashSet<ulong> _hitPadHolders = new();
     private readonly Dictionary<ulong, (ulong First, int Count)> _mapPointLayouts = new();
     private readonly HashSet<ulong> _scaledMapPoints = new();
@@ -175,8 +168,13 @@ internal sealed class PortraitBetweenLayout
                 UpdateShopPortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
                 break;
             case FakeMerchantInventoryTypeName:
-                LayoutMerchantInventoryPortrait(control, capHeight, canvasWidth);
-                _fakeShops.Add(control.GetInstanceId());
+                _shops.Add(control.GetInstanceId());
+                UpdateShopPortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
+                break;
+            case MerchantRoomTypeName:
+            case BlitzMerchantRoomTypeName:
+            case FakeMerchantRoomTypeName:
+                ApplyShopRoom(control, typeName, canvasWidth, canvasHeight);
                 break;
             case EventLayoutTypeName:
                 LayoutEventPortrait(control, capHeight, canvasHeight, canvasWidth);
@@ -245,10 +243,6 @@ internal sealed class PortraitBetweenLayout
         foreach (ulong id in _shops)
             if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop) && shop.IsVisibleInTree())
                 UpdateShopPortrait(shop, capHeight, canvas);
-        foreach (ulong id in _fakeShops)
-            if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop) && shop.IsInsideTree() &&
-                shop.GetNodeOrNull<Control>("%SlotsContainer") is { } slots)
-                KeepClosedShopOutOfSight(shop, slots);
     }
 
     public void RestoreLandscape()
@@ -291,7 +285,8 @@ internal sealed class PortraitBetweenLayout
                 PhoneHitArea.Remove(target);
         _hitAreaTargets.Clear();
         RestoreBanners(_liftedBanners);
-        foreach (ulong id in _shops.Concat(_fakeShops))
+        RestoreShopRoomsLandscape();
+        foreach (ulong id in _shops)
             if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop))
                 RestoreShopLandscape(shop);
         foreach (ulong id in _liftedAncientContents)
@@ -353,8 +348,7 @@ internal sealed class PortraitBetweenLayout
         _liftedAncientContents.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _liftedBanners.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _shops.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _fakeShops.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        foreach (ulong id in _shopModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _shopModes.Remove(id);
+        PruneShopInstances();
         _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _scaledMapPoints.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _events.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -630,7 +624,7 @@ internal sealed class PortraitBetweenLayout
         float lift = BannerLift(canvas, capHeight);
         LiftBanner(screen.GetNodeOrNull<Control>("UI/Banner"), canvas, lift, _liftedBanners);
         float bannerBottom = centreY - BannerBottomOffset - lift;
-        // Choose and Skip are 44 points tall in portrait (PortraitOverlayLayout grows them).
+        // The alternatives are 44 points tall in portrait (PortraitOverlayLayout grows them).
         float altHeight = PortraitBands.MinTarget;
         float bottomLimit = canvas.Y - 120f - altHeight - 30f;
         int rows = holders.Count <= 2 ? 1 : (holders.Count + 1) / 2;
@@ -916,225 +910,6 @@ internal sealed class PortraitBetweenLayout
         float overflow = rect.End.X - (canvas.X - 16f);
         if (overflow > 0.5f) panel.Position -= new Vector2(overflow, 0f);
         else if (rect.Position.X < 16f) panel.Position += new Vector2(16f - rect.Position.X, 0f);
-    }
-
-    // ---- Shop inventory ------------------------------------------------------------------------------------------------
-
-    // The shop in rows. In the panel's own units a card slot is drawn at 0.65: 195 x 274 about its origin with its
-    // price under it to 181 below the origin. A relic's icon reaches 52 above its origin and its price 69 below (a potion's
-    // less); their touch boxes are the icon's size (the game sets them so), about 83 units, so six stand in a row of 1048 canvas
-    // units. The slots keep the game's 0.65: it tweens them back to that after a touch.
-    private const float ShopCardWidth = 300f * 0.65f;
-    private const float ShopCardHalfHeight = 211f * 0.65f;
-    private const float ShopCardPriceBottom = 278f * 0.65f;
-    private const float ShopCardGapX = 12f;
-    private const float ShopRowGap = 16f;
-    private const float ShopSmallItemTop = 56f;
-    private const float ShopSmallRowHeight = ShopSmallItemTop + 69f + ShopRowGap;
-    private const float ShopRemovalLift = 10f;
-    private const float ShopSideMargin = 16f;
-    private const float ShopBottomMargin = 110f;
-    // The game slides the closed panel to y -1000, which leaves the bottom of the taller portrait panel on the screen.
-    private const float ShopClosedY = -1000f;
-    private const float ShopHiddenY = -3000f;
-    private const float ShopDialogueLeftReach = 182f;
-    private const float ShopDialogueRightReach = 98f;
-
-    private readonly Dictionary<ulong, (bool Rows, Vector2 Canvas)> _shopModes = new();
-
-    /// <summary>
-    /// The shop in portrait, laid out again whenever it changes mode or the canvas changes size. A blitz shop keeps the game's
-    /// panel scaled to the width (its slots are placed for a wide screen); the standard one stands in rows: three character
-    /// cards; two more and card removal; the relics and potions in one row of six; and the two colorless cards in the middle of
-    /// the last row, where the back button keeps the bottom left corner. The panel is drawn as large as the width and the
-    /// height allow (about 1.63 on an iPhone 11 Pro: cards 110 points wide, twice the size they had). While the shop is closed
-    /// the panel waits far enough up to be out of sight.
-    /// </summary>
-    private void UpdateShopPortrait(Control inventory, float capHeight, Vector2 canvas)
-    {
-        if (inventory.GetNodeOrNull<Control>("%SlotsContainer") is not { } slots) return;
-        bool blitz = slots.GetNodeOrNull<Control>("BlitzSlots") is { Visible: true };
-        ulong id = inventory.GetInstanceId();
-        bool known = _shopModes.TryGetValue(id, out (bool Rows, Vector2 Canvas) mode);
-        if (!known || mode.Rows == blitz || mode.Canvas != canvas)
-        {
-            if (blitz)
-            {
-                RestoreShopItems(slots);
-                LayoutMerchantInventoryPortrait(inventory, capHeight, canvas.X);
-            }
-            else
-            {
-                LayoutShopRows(slots, capHeight, canvas);
-            }
-            _shopModes[id] = (!blitz, canvas);
-        }
-
-        KeepClosedShopOutOfSight(inventory, slots);
-
-        // The merchant's speech bubble stands at a random x between 450 and 1450 (a desktop's width), so in portrait it can be
-        // off the screen; its text box reaches 182 units left of that point and 98 right.
-        if (inventory.GetNodeOrNull<Node2D>("%Dialogue") is { } dialogue)
-        {
-            float x = Math.Clamp(dialogue.Position.X, ShopDialogueLeftReach + ShopSideMargin, canvas.X - ShopDialogueRightReach - ShopSideMargin);
-            if (Math.Abs(x - dialogue.Position.X) > 0.5f) dialogue.Position = new Vector2(x, dialogue.Position.Y);
-        }
-    }
-
-    /// <summary>
-    /// The game slides a closed shop's panel to y -1000, which leaves the bottom of the taller portrait panel on the screen;
-    /// once it is closed and still, it waits further up. The fake merchant's panel (a subclass) too.
-    /// </summary>
-    private static void KeepClosedShopOutOfSight(Control inventory, Control slots)
-    {
-        if (slots.Position.Y <= ShopClosedY - 1f || slots.Position.Y >= ShopClosedY + 1f) return;
-        if (inventory.GetType().GetProperty("IsOpen")?.GetValue(inventory) is true) return;
-        for (Type? type = inventory.GetType(); type != null; type = type.BaseType)
-        {
-            if (type.GetField("_inventoryTween", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is not { } field) continue;
-            if (field.GetValue(inventory) is Tween { } tween && tween.IsValid() && tween.IsRunning()) return;
-            break;
-        }
-        slots.Position = new Vector2(slots.Position.X, ShopHiddenY);
-    }
-
-    private void LayoutShopRows(Control slots, float capHeight, Vector2 canvas)
-    {
-        PortraitControlSnapshot snap = Capture(slots, captureVisible: false);
-        float width = snap.InitialOffsetRight - snap.InitialOffsetLeft;
-        float cx = (ShopContentLeft + ShopContentRight) / 2f;
-        float top = ShopContentTop;
-        float cardRow = ShopCardHalfHeight + ShopCardPriceBottom + ShopRowGap;
-        float contentHeight = 2f * cardRow + ShopSmallRowHeight + ShopCardHalfHeight + ShopCardPriceBottom;
-        // Under the whole relic strip: it stays in view over the shop, and its second row (ten relics or more) covered the
-        // titles of the first row of cards.
-        float visualTop = capHeight + PortraitBands.RunContentTop + 8f;
-        float byWidth = (canvas.X - 2f * ShopSideMargin) / (3f * ShopCardWidth + 2f * ShopCardGapX);
-        float byHeight = (canvas.Y - ShopBottomMargin - visualTop) / contentHeight;
-        float scale = Math.Max(0.5f, Math.Min(byWidth, byHeight));
-
-        slots.OffsetLeft = -cx;
-        slots.OffsetRight = -cx + width;
-        slots.PivotOffset = new Vector2(cx, PortraitBetweenMath.PivotForVisualTop(ShopOpenY, top, visualTop, scale));
-        slots.Scale = new Vector2(scale, scale);
-
-        float pitch = ShopCardWidth + ShopCardGapX;
-        float row0 = top + ShopCardHalfHeight;
-        float row1 = row0 + cardRow;
-        float smallY = top + 2f * cardRow + ShopSmallItemTop;
-        float row3 = top + 2f * cardRow + ShopSmallRowHeight + ShopCardHalfHeight;
-        var places = new List<(Control Item, Vector2 At)>();
-        List<Control> Items(string group) =>
-            slots.GetNodeOrNull<Control>(group)?.GetChildren().OfType<Control>().ToList() ?? new List<Control>();
-        List<Control> character = Items("CharacterCards");
-        for (int i = 0; i < character.Count; i++)
-            places.Add((character[i], i < 3 ? new Vector2(cx + (i - 1) * pitch, row0) : new Vector2(cx + (i - 4) * pitch, row1)));
-        if (slots.GetNodeOrNull<Control>("MerchantCardRemoval") is { } removal)
-            places.Add((removal, new Vector2(cx + pitch, row1 - ShopRemovalLift)));
-        List<Control> colorless = Items("ColorlessCards");
-        for (int i = 0; i < colorless.Count; i++)
-            places.Add((colorless[i], new Vector2(cx + (i - (colorless.Count - 1) / 2f) * pitch, row3)));
-        List<Control> small = Items("Relics").Concat(Items("Potions")).ToList();
-        float smallPitch = (canvas.X - 2f * ShopSideMargin) / scale / Math.Max(6, small.Count);
-        for (int i = 0; i < small.Count; i++)
-            places.Add((small[i], new Vector2(cx + (i - (small.Count - 1) / 2f) * smallPitch, smallY)));
-
-        foreach ((Control item, Vector2 at) in places)
-        {
-            Capture(item, captureVisible: false);
-            Vector2 groupAt = item.GetParent() is Control group && group != slots ? group.Position : Vector2.Zero;
-            item.Position = at - groupAt;
-        }
-        float padWidth = Math.Min(PortraitBands.MinTarget, smallPitch * scale - 6f);
-        foreach (Control item in small)
-            if (item.GetNodeOrNull<Control>("Hitbox") is { } hitbox)
-                EnsureHitPad(hitbox, padWidth, PortraitBands.MinTarget);
-        foreach (Node cost in slots.FindChildren("Cost", "HBoxContainer", recursive: true, owned: false))
-            EnlargeShopPrice((Control)cost);
-        GD.Print($"Portrait between layout: shop in rows at {scale:F2} (width allows {byWidth:F2}, height {byHeight:F2}), {places.Count} items.");
-    }
-
-    /// <summary>Puts the shop's items back where the scene has them (the blitz shop, and landscape through the snapshots).</summary>
-    private void RestoreShopItems(Control slots)
-    {
-        foreach (string group in new[] { "CharacterCards", "ColorlessCards", "Relics", "Potions" })
-            foreach (Control item in slots.GetNodeOrNull<Control>(group)?.GetChildren().OfType<Control>() ?? Enumerable.Empty<Control>())
-                if (_snapshots.TryGetValue(item.GetInstanceId(), out PortraitControlSnapshot? snap)) snap.Restore(item);
-        if (slots.GetNodeOrNull<Control>("MerchantCardRemoval") is { } removal &&
-            _snapshots.TryGetValue(removal.GetInstanceId(), out PortraitControlSnapshot? removalSnap))
-            removalSnap.Restore(removal);
-    }
-
-    /// <summary>
-    /// After the snapshots put the panel back, its height is the game's again: open at 80, closed at -1000 (the snapshot holds
-    /// the place it had when it was first laid out, which may be the other one).
-    /// </summary>
-    private void RestoreShopLandscape(Control inventory)
-    {
-        _shopModes.Remove(inventory.GetInstanceId());
-        if (inventory.GetNodeOrNull<Control>("%SlotsContainer") is not { } slots) return;
-        bool open = inventory.GetType().GetProperty("IsOpen")?.GetValue(inventory) is true;
-        bool sliding = inventory.GetType().GetField("_inventoryTween", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(inventory) is Tween { } tween &&
-                       tween.IsValid() && tween.IsRunning();
-        if (!sliding) slots.Position = new Vector2(slots.Position.X, open ? ShopOpenY : ShopClosedY);
-    }
-
-    private void LayoutMerchantInventoryPortrait(Control inventory, float capHeight, float canvasWidth)
-    {
-        if (inventory.GetNodeOrNull<Control>("%SlotsContainer") is not { } slots) return;
-        PortraitControlSnapshot snap = Capture(slots, captureVisible: false);
-        float width = snap.InitialOffsetRight - snap.InitialOffsetLeft;
-        float scale = PortraitBetweenMath.FitScale(ShopContentRight - ShopContentLeft, canvasWidth - 20f);
-        float contentCentre = (ShopContentLeft + ShopContentRight) / 2f;
-        float visualTop = capHeight + PortraitBands.RunContentTop + 8f;
-        // The game slides the panel's y between -1000 and 80; only x follows the anchors, so centre the content with offsets
-        // and lift it under the top bar with the pivot.
-        slots.OffsetLeft = -contentCentre;
-        slots.OffsetRight = -contentCentre + width;
-        slots.PivotOffset = new Vector2(contentCentre, PortraitBetweenMath.PivotForVisualTop(ShopOpenY, ShopContentTop, visualTop, scale));
-        slots.Scale = new Vector2(scale, scale);
-
-        // Relics and potions are three to a row, 116 units apart on the canvas with 111 between the two rows, and their
-        // hit boxes are 97 and 56 units: each gets the largest hit area that cannot reach its neighbours.
-        foreach (string group in new[] { "Relics", "Potions" })
-        {
-            if (slots.GetNodeOrNull<Control>(group) is not { } items) continue;
-            foreach (Control item in items.GetChildren().OfType<Control>())
-                if (item.GetNodeOrNull<Control>("Hitbox") is { } hitbox)
-                    EnsureHitPad(hitbox, ShopItemPadWidth, ShopItemPadHeight);
-        }
-
-        foreach (Node cost in slots.FindChildren("Cost", "HBoxContainer", recursive: true, owned: false))
-            EnlargeShopPrice((Control)cost);
-    }
-
-    /// <summary>
-    /// A shop price is a gold icon and a 39 unit number in a slot drawn at 0.65, in a shop scaled down to the screen's width:
-    /// 6.8 points. In portrait the number is set to about 11 points on the screen whatever the scales, and the icon
-    /// grows with it. The price row is centred under its item, and the items are far enough apart for the wider row.
-    /// </summary>
-    private void EnlargeShopPrice(Control cost)
-    {
-        if (cost.GetNodeOrNull<Label>("CostLabel") is not { } label || !label.IsInsideTree()) return;
-        float scale = label.GetGlobalTransformWithCanvas().Scale.Y;
-        if (scale < 0.01f) return;
-        int gameFont = GameLabelFontSize(label);
-        int font = (int)MathF.Ceiling(ShopPriceUnits / scale);
-        if (font <= gameFont) return;
-        SetLabelFontSize(label, font);
-        foreach (string limit in new[] { "MinFontSize", "MaxFontSize" })
-        {
-            Dictionary<ulong, int> kept = limit == "MinFontSize" ? _labelMinFontSizes : _labelMaxFontSizes;
-            ulong id = label.GetInstanceId();
-            if (label.Get(limit).VariantType != Variant.Type.Int) continue;
-            if (!kept.ContainsKey(id)) kept[id] = label.Get(limit).AsInt32();
-            label.Set(limit, font);
-        }
-        foreach (TextureRect icon in cost.GetChildren().OfType<TextureRect>())
-        {
-            PortraitControlSnapshot snap = Capture(icon, captureVisible: false);
-            icon.CustomMinimumSize = snap.InitialCustomMinimumSize * ((float)font / gameFont);
-        }
     }
 
     /// <summary>Sets a label's font size in portrait, keeping the game's own to put back in landscape.</summary>

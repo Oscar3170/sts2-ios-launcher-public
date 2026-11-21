@@ -13,10 +13,10 @@ namespace STS2Mobile.GameHost;
 /// Portrait fixes for in-run overlays not covered elsewhere: tutorial popups kept inside the screen, card selection
 /// previews scaled to the screen width, the ancients' art centred, and the Crystal Sphere minigame stacked as sphere over controls. Every anchored edit is
 /// captured first so turning Portrait Mode off restores the desktop layout live.
-/// <para>Choices sized for a finger: the Choose and Skip buttons of every choice screen at 44 points tall, the choose a
-/// card screen laid out two cards to a row as the card reward is, the relic choice drawn larger, the potion popup with 44 point
-/// buttons and kept inside the screen, and a 44 point touch area for the card inspect screen's upgrade tickbox and the card
-/// grids' confirm button. Portrait only, and all of it is put back when Portrait Mode is turned off.</para>
+/// <para>Choices sized for a finger: the Skip button and the card reward's alternatives of every choice screen at 44 points
+/// tall, the choose a card screen laid out two cards to a row as the card reward is, the relic choice drawn larger, the potion
+/// popup with 44 point buttons and kept inside the screen, and a 44 point touch area for the card inspect screen's upgrade
+/// tickbox and the card grids' confirm button. Portrait only, and all of it is put back when Portrait Mode is turned off.</para>
 /// </summary>
 internal sealed class PortraitOverlayLayout
 {
@@ -356,8 +356,8 @@ internal sealed class PortraitOverlayLayout
     private const string ConfirmButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NConfirmButton";
     private const BindingFlags InstAll = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
-    // The Choose and Skip buttons: 276 x 73 in the game, 44 points tall here with the picture kept in proportion where the row
-    // has room (two side by side just fit the screen), and the text grown with it up to this much.
+    // The Skip button and the card reward's alternatives: 276 x 73 in the game, 44 points tall here with the picture kept in
+    // proportion where the row has room, and the text grown with it up to this much.
     private static readonly Vector2 ChoiceButtonBaseSize = new(276f, 73f);
     private const float ChoiceSideMargin = 24f;
     private const float ChoiceMaxFontGrowth = 1.5f;
@@ -419,49 +419,6 @@ internal sealed class PortraitOverlayLayout
     internal static PortraitOverlayLayout? Instance { get; private set; }
 
     public PortraitOverlayLayout() => Instance = this;
-
-    /// <summary>
-    /// Where the Choose and Skip buttons of a choice screen go in portrait: the middle of their row, measured from the middle of
-    /// the screen (the buttons are anchored there), and the row's width. Null in landscape and for screens that keep the game's
-    /// own place (<see cref="PhoneChoiceConfirm"/> then uses where the game put Skip).
-    /// </summary>
-    internal static (Vector2 Centre, float Width)? ChoiceButtonRow(Control screen)
-    {
-        if (Instance is not { _choicesFailed: false } layout || !SafeAreaCanvas.IsPortrait) return null;
-        ulong id = screen.GetInstanceId();
-        if (!layout._buttonRows.ContainsKey(id))
-        {
-            // Asked before this pass has seen the screen (it is only now entering the tree): lay it out at once.
-            try
-            {
-                layout.LayoutChoiceScreen(screen, CanvasOf(screen));
-            }
-            catch (Exception error)
-            {
-                layout.FailChoices(error);
-                return null;
-            }
-        }
-        return layout._buttonRows.TryGetValue(id, out (Vector2 Centre, float Width) row) ? row : null;
-    }
-
-    /// <summary>
-    /// Gives a Choose or Skip button its portrait size now, before the game's <c>_Ready</c> reads where it stands, and returns
-    /// that size; null in landscape.
-    /// </summary>
-    internal static Vector2? GrowChoiceButtonNow(Control button)
-    {
-        if (Instance is not { _choicesFailed: false } layout || !SafeAreaCanvas.IsPortrait) return null;
-        try
-        {
-            return layout.GrowChoiceButton(button, CanvasOf(button));
-        }
-        catch (Exception error)
-        {
-            layout.FailChoices(error);
-            return null;
-        }
-    }
 
     private void TrackChoice(Control control, string? typeName)
     {
@@ -578,14 +535,14 @@ internal sealed class PortraitOverlayLayout
         return Capture(control);
     }
 
-    // ---- Choose and Skip ---------------------------------------------------------------------------------------------------
+    // ---- Skip and the card reward's alternatives ---------------------------------------------------------------------------
 
     /// <summary>
-    /// The Choose and Skip buttons (the card reward's alternatives, the other choice screens' Skip and the Choose button the
-    /// phone adds) are 96 x 25 points in the game. In portrait each is 44 points tall and as wide as its picture then is, less
-    /// when its row has no room for that: the picture keeps its shape, so the button is then taller than its picture. The game
-    /// animates the button's scale (hover and press), so the button is given a larger minimum size, not a scale; the picture
-    /// follows the size by its anchors, and the text is given a larger font limit.
+    /// The choice buttons (the card reward's alternatives and the choice screens' Skip) are 96 x 25 points in the game. In
+    /// portrait each is 44 points tall and as wide as its picture then is, less when its row has no room for that: the picture
+    /// keeps its shape, so the button is then taller than its picture. The game animates the button's scale (hover and press),
+    /// so the button is given a larger minimum size, not a scale; the picture follows the size by its anchors, and the text is
+    /// given a larger font limit.
     /// </summary>
     private Vector2 GrowChoiceButton(Control button, Vector2 canvas)
     {
@@ -634,11 +591,10 @@ internal sealed class PortraitOverlayLayout
         }
         else
         {
-            // Beside the other of the pair (Choose and Skip), in the row its screen gives them.
-            float row = parent != null && _buttonRows.TryGetValue(parent.GetInstanceId(), out (Vector2 Centre, float Width) given)
+            // Skip alone in the row its screen gives it (its parent is the screen, not a container).
+            room = parent != null && _buttonRows.TryGetValue(parent.GetInstanceId(), out (Vector2 Centre, float Width) given)
                 ? given.Width
                 : canvas.X / scaleX - 2f * ChoiceSideMargin;
-            room = (row - PhoneChoiceConfirm.ButtonGap) / 2f;
         }
         width = Math.Max(baseSize.X, Math.Min(width, room));
         return new Vector2(MathF.Floor(width), MathF.Round(height));
@@ -675,6 +631,24 @@ internal sealed class PortraitOverlayLayout
 
     // ---- Choose a card and choose a relic --------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Skip stands in the middle of its screen's portrait row, at the size a finger needs. It is placed at once when the screen
+    /// enters the tree, before the game's <c>_Ready</c> reads where it stands: the game slides it in to that place.
+    /// </summary>
+    private void PlaceSkip(Control screen, Vector2 centre, Vector2 canvas)
+    {
+        if (screen.GetNodeOrNull<Control>("SkipButton") is not { } skip) return;
+        Vector2 size = GrowChoiceButton(skip, canvas);
+        float left = centre.X - size.X / 2f, top = centre.Y - size.Y / 2f;
+        if (Math.Abs(skip.OffsetLeft - left) < 0.25f && Math.Abs(skip.OffsetTop - top) < 0.25f &&
+            Math.Abs(skip.OffsetRight - (left + size.X)) < 0.25f && Math.Abs(skip.OffsetBottom - (top + size.Y)) < 0.25f)
+            return;
+        skip.OffsetLeft = left;
+        skip.OffsetTop = top;
+        skip.OffsetRight = left + size.X;
+        skip.OffsetBottom = top + size.Y;
+    }
+
     private void LayoutChoiceScreen(Control screen, Vector2 canvas)
     {
         string? typeName = screen.GetType().FullName;
@@ -685,13 +659,13 @@ internal sealed class PortraitOverlayLayout
     /// <summary>
     /// The choose a card screen puts its cards in one row at 0.8 of their size, 340 units apart: three cards are small on the
     /// tall screen and four run off it. In portrait they stand as the card reward's do (two to a row, an odd last card centred,
-    /// up to 1.2 of their size) under the banner, with Choose and Skip under them. In a fight the peek button keeps the bottom
-    /// left corner, so when the buttons come down to it they take the rest of that row.
+    /// up to 1.2 of their size) under the banner, with Skip in the row under them. In a fight the peek button keeps the bottom
+    /// left corner, so when the row comes down to it it takes the rest of that row.
     /// </summary>
     private void LayoutChooseCard(Control screen, Vector2 canvas)
     {
-        // Without the phone's Choose button the game's own layout stays: its Skip button is not placed by anyone here.
-        if (!PhoneChoiceConfirm.Active || screen.GetNodeOrNull<Control>("CardRow") is not { } row) return;
+        // Without the phone's selection pass the game's own layout stays: its Skip button is not placed by anyone here.
+        if (!PhoneSelectConfirm.Installed || screen.GetNodeOrNull<Control>("CardRow") is not { } row) return;
         ulong screenId = screen.GetInstanceId();
         List<Control> holders = row.GetChildren().OfType<Control>().Where(h => !h.IsQueuedForDeletion()).ToList();
         int count = holders.Count > 0 ? holders.Count : CountOf(screen, "_cards");
@@ -731,6 +705,7 @@ internal sealed class PortraitOverlayLayout
         float left = besidePeek ? PeekSideMargin + PeekSize + ChoiceSideMargin : ChoiceSideMargin;
         float right = size.X - ChoiceSideMargin;
         _buttonRows[screenId] = (new Vector2((left + right) / 2f - centre.X, buttonsTop + PortraitBands.MinTarget / 2f - centre.Y), right - left);
+        PlaceSkip(screen, _buttonRows[screenId].Centre, canvas);
 
         if (holders.Count == 0) return;
         // A card keeps its slot: the game moves a hovered card to the end of the row, so the row's order is not the cards'.
@@ -808,12 +783,12 @@ internal sealed class PortraitOverlayLayout
 
     /// <summary>
     /// The relic choice shows its relics 47 points across in one row in the middle of the screen. In portrait the row is drawn
-    /// larger (up to 1.6 times, less when more relics are offered) about the middle, and Choose and Skip keep their distance
-    /// under it, where the picked relic's tip opens.
+    /// larger (up to 1.6 times, less when more relics are offered) about the middle, and Skip keeps its distance under it,
+    /// where the picked relic's tip opens.
     /// </summary>
     private void LayoutChooseRelic(Control screen, Vector2 canvas)
     {
-        if (!PhoneChoiceConfirm.Active || screen.GetNodeOrNull<Control>("RelicRow") is not { } row) return;
+        if (!PhoneSelectConfirm.Installed || screen.GetNodeOrNull<Control>("RelicRow") is not { } row) return;
         int count = row.GetChildren().OfType<Control>().Count(h => !h.IsQueuedForDeletion());
         if (count == 0) count = CountOf(screen, "_relics");
         if (count <= 0) return;
@@ -835,6 +810,7 @@ internal sealed class PortraitOverlayLayout
         float relicsBottom = snap.InitialOffsetTop + (RelicHolderSize + drawn) / 2f * rowScale;
         ulong screenId = screen.GetInstanceId();
         _buttonRows[screenId] = (new Vector2(0f, relicsBottom + RelicTipRoom + PortraitBands.MinTarget / 2f), size.X - 2f * ChoiceSideMargin);
+        PlaceSkip(screen, _buttonRows[screenId].Centre, canvas);
         if (_logged.Add(screenId))
             GD.Print($"Portrait overlay: relic choice laid out, {count} relics at {rowScale:F2} of the game's size.");
     }

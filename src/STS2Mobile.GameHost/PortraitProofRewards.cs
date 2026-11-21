@@ -12,8 +12,8 @@ namespace STS2Mobile.GameHost;
 /// <c>touch-rewards</c>, with real touch events: a long press on Ascender's Bane and
 /// whether every tip is inside the screen; how far the other hand cards move while one card is pressed and after it is let go; a
 /// fight ended by Strikes dragged onto the enemies, with a potion, a relic and a second card reward added, and the screen that
-/// follows; a card reward picked by a tap and then Choose (a tap first, then a tap on another card, then Choose), and a second
-/// card reward skipped. Portrait only: landscape is the game's own (<c>stock-landscape</c>).
+/// follows; a card reward picked by a tap and then a second tap (a tap first, then a tap on another card, then a second tap), and
+/// a second card reward skipped. Portrait only: landscape is the game's own (<c>stock-landscape</c>).
 /// </summary>
 internal static partial class PortraitProof
 {
@@ -106,7 +106,7 @@ internal static partial class PortraitProof
         await WaitFramesAsync(tree, 40);
         await TouchStepAsync(tree, "touch-rewards-list", DescribeRewardScreens(tree), results);
 
-        // The first card reward: a tap selects, a tap on another card moves the selection, Choose takes it.
+        // The first card reward: a tap selects, a tap on another card moves the selection, a second tap on the card takes it.
         int deckBefore = DeckCards(player).Count;
         if (rewards != null && RewardButtons(rewards).FirstOrDefault(b => RewardKind(b) == "CardReward") is { } cardButton)
         {
@@ -130,9 +130,10 @@ internal static partial class PortraitProof
                 await WaitFramesAsync(tree, 30);
                 await TouchStepAsync(tree, "touch-card-select-third", DescribeCardScreen(FindScreen(tree, "NCardRewardSelectionScreen"), player), results);
             }
-            if (ChooseButton(FindScreen(tree, "NCardRewardSelectionScreen")) is { } choose)
+            Control? picked = cards.Count > 2 ? cards[2] : cards.FirstOrDefault();
+            if (picked != null && GodotObject.IsInstanceValid(picked))
             {
-                await TapAsync(tree, CentreOf(choose));
+                await TapAgainAsync(tree, CentreOf(picked));
                 await WaitFramesAsync(tree, 70);
             }
             await TouchStepAsync(tree, "touch-card-chosen", $"deck={deckBefore}->{DeckCards(player).Count} {DescribeRewardScreens(tree)}", results);
@@ -147,7 +148,7 @@ internal static partial class PortraitProof
             Control? secondScreen = FindScreen(tree, "NCardRewardSelectionScreen");
             await TouchStepAsync(tree, "touch-card-reward-second", DescribeCardScreen(secondScreen, player), results);
             Control? skip = secondScreen == null ? null : Descendants(secondScreen).OfType<Control>()
-                .FirstOrDefault(c => c.GetType().Name == "NCardRewardAlternativeButton" && c.Name != PhoneCardRewardChoice.ChooseButtonName);
+                .FirstOrDefault(c => c.GetType().Name == "NCardRewardAlternativeButton");
             int deckBeforeSkip = DeckCards(player).Count;
             if (skip != null)
             {
@@ -246,23 +247,20 @@ internal static partial class PortraitProof
         cardScreen.GetNodeOrNull<Control>("UI/CardRow")?.GetChildren().OfType<Control>().Where(c => !c.IsQueuedForDeletion())
             .OrderBy(c => PhoneCardRewardChoice.OptionIndexOf(cardScreen, c)).ToList() ?? [];
 
-    private static Control? ChooseButton(Control? cardScreen) =>
-        cardScreen == null ? null : Descendants(cardScreen).OfType<Control>().FirstOrDefault(c => c.Name == PhoneCardRewardChoice.ChooseButtonName);
-
     private static string DescribeCardScreen(Control? cardScreen, object player)
     {
         if (cardScreen == null) return $"card-screen=closed deck={DeckCards(player).Count}";
-        Control? choose = ChooseButton(cardScreen);
-        string chooseText = choose == null ? "none" : $"enabled={choose.GetType().GetProperty("IsEnabled")?.GetValue(choose)} rect={CanvasRect(choose)}";
         string alternatives = cardScreen.GetNodeOrNull<Control>("UI/RewardAlternatives") is { } alts
             ? $"{alts.GetType().Name}[{string.Join(",", alts.GetChildren().OfType<Control>().Select(c => $"{c.Name}:{CanvasRect(c)}"))}]"
             : "none";
         List<Control> cards = RewardCards(cardScreen);
-        int outlined = cards.FindIndex(c => c.GetNodeOrNull<Node>("PhoneSelectedOutline") is { } o && !o.IsQueuedForDeletion());
+        int outlined = cards.FindIndex(c => c.GetNodeOrNull<Node>(PhoneSelectConfirm.OutlineName) is { } o && !o.IsQueuedForDeletion());
         string names = string.Join(",", cards.Select(c => c.GetType().GetProperty("CardModel")?.GetValue(c)?.GetType().Name ?? "?"));
         // Each card's place in its row, in the game's option order: equal before and after a tap when no card moved.
         string slots = string.Join(";", cards.Select(c => $"{c.Position.X:F0},{c.Position.Y:F0}"));
-        return $"card-screen=open cards={cards.Count}[{names}] slots=[{slots}] selected={PhoneCardRewardChoice.SelectedIndex(cardScreen)} outlined={outlined} choose[{chooseText}] alternatives={alternatives} deck={DeckCards(player).Count}";
+        return $"card-screen=open cards={cards.Count}[{names}] slots=[{slots}] selected={PhoneCardRewardChoice.SelectedIndex(cardScreen)} " +
+            $"outlined={outlined} confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} " +
+            $"clears={PhoneSelectConfirm.Clears} alternatives={alternatives} deck={DeckCards(player).Count}";
     }
 
     /// <summary>A game object made with the constructor these arguments fit, its optional parameters left at their defaults.</summary>

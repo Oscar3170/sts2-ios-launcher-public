@@ -9,12 +9,13 @@ using MegaCrit.Sts2.Core.Nodes;
 namespace STS2Mobile.GameHost;
 
 /// <summary>
-/// <c>touch-choices</c> (no single tap takes a card or relic, the shop needs a confirm), with
-/// real touch events: in a fight, choose a card (where the peek button sits against the first card; card 1 tapped, card 3 tapped,
-/// Choose), a combat pile grid that takes one card (a tap, a tap on another, the game's confirm), and a relic choice; then the shop
-/// (a tap selects, a tap elsewhere lets go, a second tap buys), the treasure chest's relic (a tap, then Choose), and the Spiraling
-/// Whirlpool event's last page (where text was cut off). Each step logs whether anything was taken. Portrait only: landscape is
-/// the game's own (<c>stock-landscape</c>). It starts a run, so it is for the simulator only.
+/// <c>touch-choices</c> (no single tap takes a card or relic, the shop needs a second tap), with real touch events: in a fight,
+/// choose a card (where the peek button sits against the first card; card 1 tapped, card 3 tapped, card 3 tapped again to take
+/// it), a combat pile grid that takes one card (a tap, a tap on another, the game's confirm), and a relic choice; then the shop
+/// (a tap selects, a tap elsewhere lets go, a hold inspects without buying, a swipe buys nothing, a second tap buys), the
+/// treasure chest's relic (a tap, then a second tap), and the Spiraling Whirlpool event's last page (where text was cut off).
+/// Each step logs whether anything was taken. Portrait only: landscape is the game's own (<c>stock-landscape</c>). It starts a
+/// run, so it is for the simulator only.
 /// </summary>
 internal static partial class PortraitProof
 {
@@ -34,7 +35,7 @@ internal static partial class PortraitProof
         object overlays = StaticProp(GameType(ScreensNs + "Overlays.NOverlayStack"), "Instance")!;
         IList deck = DeckCards(player);
 
-        // Choose a card, in a fight (the peek button shows): a tap selects, a tap on another moves it, Choose takes it.
+        // Choose a card, in a fight (the peek button shows): a tap selects, a tap on another moves it, a second tap takes it.
         object chooseScreen = CallStatic(GameType(cs + "NChooseACardSelectionScreen"), "ShowScreen",
             TypedList("MegaCrit.Sts2.Core.Models.CardModel", deck.Cast<object>().Skip(4).Take(3)), true)!;
         Task chooseTask = (Task)Call(chooseScreen, "CardsSelected")!;
@@ -51,7 +52,7 @@ internal static partial class PortraitProof
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-card-third", DescribeChoice(screen, cards, chooseTask), results);
             string expectedCard = CardName(cards[2]);
-            if (ChooseOf(screen) is { } choose) await TapAsync(tree, CentreOf(choose));
+            await TapAgainAsync(tree, CentreOf(cards[2]));
             await WaitFramesAsync(tree, 60);
             await TouchStepAsync(tree, "choice-card-chosen", $"expected={expectedCard} {DescribeTask(chooseTask)} open={GodotObject.IsInstanceValid(screen) && screen.IsInsideTree()}", results);
         }
@@ -88,7 +89,7 @@ internal static partial class PortraitProof
         Call(overlays, "Clear");
         await WaitFramesAsync(tree, 20);
 
-        // A relic choice: a tap selects, a tap on another moves it, Choose takes it.
+        // A relic choice: a tap selects, a tap on another moves it, a second tap takes it.
         var relicScreen = (Control)CallStatic(GameType(ScreensNs + "NChooseARelicSelection"), "ShowScreen",
             TypedList("MegaCrit.Sts2.Core.Models.RelicModel", ModelDbList("AllRelics").Skip(10).Take(3).Select(r => Call(r, "ToMutable")!)))!;
         Task relicTask = (Task)Call(relicScreen, "RelicsSelected")!;
@@ -104,7 +105,7 @@ internal static partial class PortraitProof
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-relic-third", DescribeChoice(relicScreen, relics, relicTask), results);
             string expected = RelicName(relics[2]);
-            if (ChooseOf(relicScreen) is { } choose) await TapAsync(tree, CentreOf(choose));
+            await TapAgainAsync(tree, CentreOf(relics[2]));
             await WaitFramesAsync(tree, 60);
             await TouchStepAsync(tree, "choice-relic-chosen", $"expected={expected} {DescribeTask(relicTask)}", results);
         }
@@ -115,7 +116,8 @@ internal static partial class PortraitProof
         Call(overlays, "Clear");
         await WaitFramesAsync(tree, 20);
 
-        // The shop: a tap selects, a tap elsewhere lets go, a second tap on the same item buys it.
+        // The shop: a tap selects, a tap elsewhere lets go, a second tap on the same item buys it. A hold opens the item's
+        // inspection without buying, and a swipe buys nothing.
         player.GetType().GetProperty("Gold")!.SetValue(player, 999);
         await RunConsoleCmdAsync(Sts2, "RoomConsoleCmd", player, ["Shop"]);
         await WaitFramesAsync(tree, 120);
@@ -138,15 +140,35 @@ internal static partial class PortraitProof
             await TapAsync(tree, CentreOf(relicSlot));
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-shop-relic-tap", DescribeShop(player, slots), results);
+            // Held still: the relic's own inspection opens, and nothing is bought. The inspect screen is closed as a player does.
+            object gold = Prop(player, "Gold")!;
+            await HoldAsync(tree, CentreOf(relicSlot));
+            await WaitFramesAsync(tree, 30);
+            await TouchStepAsync(tree, "choice-shop-relic-hold",
+                $"gold={gold}->{Prop(player, "Gold")} inspect={(InspectRelicOpen(game) ? "open" : "closed")} {DescribeShop(player, slots)}", results);
+            if (InspectRelicOpen(game)) Call(Call(game, "GetInspectRelicScreen")!, "Close");
+            await WaitFramesAsync(tree, 30);
+            // Dragged well past the slop: a swipe buys nothing.
+            Vector2 from = CentreOf(relicSlot);
+            await SwipeAsync(tree, from, from + new Vector2(0f, -220f), 5);
+            await WaitFramesAsync(tree, 30);
+            await TouchStepAsync(tree, "choice-shop-relic-swipe", $"gold={gold}->{Prop(player, "Gold")} {DescribeShop(player, slots)}", results);
+            // A tap elsewhere lets the selection go; the next tap selects again and only the one after buys.
+            await TapAsync(tree, EmptySpot(tree));
+            await WaitFramesAsync(tree, 30);
+            await TouchStepAsync(tree, "choice-shop-relic-let-go", $"gold={gold}->{Prop(player, "Gold")} {DescribeShop(player, slots)}", results);
             await TapAsync(tree, CentreOf(relicSlot));
+            await WaitFramesAsync(tree, 30);
+            await TouchStepAsync(tree, "choice-shop-relic-tapped-again", DescribeShop(player, slots), results);
+            await TapAgainAsync(tree, CentreOf(relicSlot));
             await WaitFramesAsync(tree, 60);
-            await TouchStepAsync(tree, "choice-shop-relic-bought", DescribeShop(player, slots), results);
+            await TouchStepAsync(tree, "choice-shop-relic-bought", $"gold={gold}->{Prop(player, "Gold")} {DescribeShop(player, slots)}", results);
         }
         if (potionSlot != null)
         {
             await TapAsync(tree, CentreOf(potionSlot));
             await WaitFramesAsync(tree, 30);
-            await TapAsync(tree, new Vector2(tree.Root.GetVisibleRect().Size.X / 2f, tree.Root.GetVisibleRect().Size.Y - 60f));
+            await TapAsync(tree, EmptySpot(tree));
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-shop-potion-let-go", DescribeShop(player, slots), results);
             await TapAsync(tree, CentreOf(potionSlot));
@@ -156,7 +178,7 @@ internal static partial class PortraitProof
         Call(overlays, "Clear");
         await WaitFramesAsync(tree, 20);
 
-        // The treasure chest: a tap on the relic selects it, Choose takes it.
+        // The treasure chest: a tap on the relic selects it, a second tap takes it.
         await RunConsoleCmdAsync(Sts2, "RoomConsoleCmd", player, ["Treasure"]);
         await WaitFramesAsync(tree, 120);
         Node? room = Descendants(tree.Root).FirstOrDefault(n => n.GetType().Name == "NTreasureRoom");
@@ -173,7 +195,7 @@ internal static partial class PortraitProof
             await TapAsync(tree, CentreOf(chestRelics[0]));
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-treasure-tap", DescribeTreasure(collection, chestRelics, player, relicsBefore), results);
-            if (ChooseOf(collection) is { } choose) await TapAsync(tree, CentreOf(choose));
+            await TapAgainAsync(tree, CentreOf(chestRelics[0]));
             await WaitFramesAsync(tree, 90);
             await TouchStepAsync(tree, "choice-treasure-chosen", DescribeTreasure(collection, chestRelics, player, relicsBefore), results);
         }
@@ -209,8 +231,41 @@ internal static partial class PortraitProof
         Descendants(screen).OfType<Control>().Where(c => c.GetType().Name == "NGridCardHolder" && c.IsVisibleInTree())
             .OrderBy(c => c.GetGlobalRect().Position.Y).ThenBy(c => c.GetGlobalRect().Position.X).ToList();
 
-    private static Control? ChooseOf(Control screen) =>
-        Descendants(screen).OfType<Control>().FirstOrDefault(c => c.Name == PhoneCardRewardChoice.ChooseButtonName);
+    /// <summary>A second tap on the selected item: press, two frames, release, so it stays well under the hold time.</summary>
+    private static async Task TapAgainAsync(SceneTree tree, Vector2 canvasPos)
+    {
+        SendTouch(tree, canvasPos, pressed: true);
+        await WaitFramesAsync(tree, 2);
+        SendTouch(tree, canvasPos, pressed: false);
+    }
+
+    /// <summary>A press held still past the hold time, then released: it must inspect the item and never confirm it.</summary>
+    private static async Task HoldAsync(SceneTree tree, Vector2 canvasPos)
+    {
+        SendTouch(tree, canvasPos, pressed: true);
+        await WaitMsecAsync(tree, (ulong)(STS2Mobile.Platform.SelectConfirmMath.HoldSeconds * 1000) + 150);
+        SendTouch(tree, canvasPos, pressed: false);
+    }
+
+    /// <summary>A swipe that starts on an item and moves well past the confirm slop: it must buy or take nothing.</summary>
+    private static async Task SwipeAsync(SceneTree tree, Vector2 from, Vector2 to, int steps)
+    {
+        SendTouch(tree, from, pressed: true);
+        Vector2 previous = from;
+        for (int step = 1; step <= steps; step++)
+        {
+            Vector2 point = from.Lerp(to, (float)step / steps);
+            SendTouchDrag(tree, point, previous);
+            previous = point;
+            await WaitFramesAsync(tree, 2);
+        }
+        SendTouch(tree, to, pressed: false);
+    }
+
+    private static bool InspectRelicOpen(NGame game) => Call(game, "GetInspectRelicScreen") is CanvasItem screen && screen.Visible;
+
+    /// <summary>The left edge of the screen, clear of the shop's cloth, slots and tabs: a tap there lets a selection go.</summary>
+    private static Vector2 EmptySpot(SceneTree tree) => new(12f, tree.Root.GetVisibleRect().Size.Y / 2f);
 
     private static Control? ConfirmOf(Control screen) =>
         Descendants(screen).OfType<Control>().FirstOrDefault(c => c.GetType().Name == "NConfirmButton" && c.IsVisibleInTree());
@@ -231,11 +286,10 @@ internal static partial class PortraitProof
 
     private static string DescribeChoice(Control screen, List<Control> items, Task task)
     {
-        int outlined = items.FindIndex(i => i.GetNodeOrNull<Node>("PhoneSelectedOutline") is { } o && !o.IsQueuedForDeletion());
-        Control? choose = ChooseOf(screen);
-        string chooseText = choose == null ? "none" : $"visible={choose.IsVisibleInTree()} enabled={choose.GetType().GetProperty("IsEnabled")?.GetValue(choose)} rect={CanvasRect(choose)}";
+        int outlined = items.FindIndex(i => i.GetNodeOrNull<Node>(PhoneSelectConfirm.OutlineName) is { } o && !o.IsQueuedForDeletion());
         string skip = screen.GetNodeOrNull<Control>("SkipButton") is { } s ? $"{(s.Visible ? "" : "hidden ")}{CanvasRect(s)}" : "none";
-        return $"items={items.Count} outlined={outlined} selected={PhoneChoiceConfirm.SelectedName(screen) ?? "none"} {DescribeTask(task)} choose[{chooseText}] skip={skip}";
+        return $"items={items.Count} outlined={outlined} selected={PhoneSelectConfirm.SelectedName ?? "none"} " +
+            $"confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} clears={PhoneSelectConfirm.Clears} {DescribeTask(task)} skip={skip}";
     }
 
     private static string DescribePeek(Control screen, List<Control> items)
@@ -270,18 +324,18 @@ internal static partial class PortraitProof
 
     private static string DescribeShop(object player, List<Control> slots)
     {
-        Control? selected = PhoneChoiceConfirm.SelectedSlot();
+        Control? selected = PhoneSelectConfirm.SelectedOwner;
         string kinds = string.Join(",", slots.GroupBy(s => s.GetType().Name).Select(g => $"{g.Key}x{g.Count()}"));
-        return $"slots=[{kinds}] selected={selected?.GetType().Name ?? "none"} gold={Prop(player, "Gold")} deck={DeckCards(player).Count} relics={RelicCount(player)}";
+        return $"slots=[{kinds}] selected={selected?.GetType().Name ?? "none"} gold={Prop(player, "Gold")} deck={DeckCards(player).Count} " +
+            $"relics={RelicCount(player)} confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} clears={PhoneSelectConfirm.Clears}";
     }
 
     private static string DescribeTreasure(Control? collection, List<Control> holders, object player, int relicsBefore)
     {
         if (collection == null) return "collection=none";
-        int outlined = holders.FindIndex(i => i.GetNodeOrNull<Node>("PhoneSelectedOutline") is { } o && !o.IsQueuedForDeletion());
-        Control? choose = ChooseOf(collection);
-        string chooseText = choose == null ? "none" : $"visible={choose.IsVisibleInTree()} enabled={choose.GetType().GetProperty("IsEnabled")?.GetValue(choose)} rect={CanvasRect(choose)}";
-        return $"relics-on-offer={holders.Count} outlined={outlined} relics={relicsBefore}->{RelicCount(player)} choose[{chooseText}]";
+        int outlined = holders.FindIndex(i => i.GetNodeOrNull<Node>(PhoneSelectConfirm.OutlineName) is { } o && !o.IsQueuedForDeletion());
+        return $"relics-on-offer={holders.Count} outlined={outlined} selected={PhoneSelectConfirm.SelectedName ?? "none"} " +
+            $"relics={relicsBefore}->{RelicCount(player)} confirms={PhoneSelectConfirm.Confirms} clears={PhoneSelectConfirm.Clears}";
     }
 
     private static Control? EventOption(SceneTree tree, string text) =>

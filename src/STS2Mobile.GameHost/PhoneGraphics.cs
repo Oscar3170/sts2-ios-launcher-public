@@ -32,6 +32,7 @@ public sealed partial class PhoneGraphics : Node
     private readonly PhoneTouchCards _touchCards = new();
     private readonly PhoneTouchScroll _touchScroll = new();
     private readonly PhoneHoverTips _hoverTips = new();
+    private readonly PhoneSelectConfirm _selectConfirm = new();
     private readonly PhoneCardRewardChoice _cardRewardChoice = new();
     private readonly PhoneRewardTapGuard _rewardTapGuard = new();
     private readonly PhoneChoiceConfirm _choiceConfirm = new();
@@ -84,11 +85,10 @@ public sealed partial class PhoneGraphics : Node
         GetTree().ProcessFrame -= OnTouchFrame;
     }
 
-    // Hand cards under a finger and hover tips kept on screen; cards, relics and shop items taken only after a
-    // confirm (Choose, the game's own confirm, or a second tap in the shop). Portrait only: in landscape the game plays as it
-    // does on a desktop, with a touch as the mouse. The three screen passes below still run in landscape,
-    // where they do nothing unless a screen opened in portrait is still open: such a screen keeps its confirm until it closes,
-    // so turning Portrait Mode off over an open choice leaves it working.
+    // Hand cards under a finger and hover tips kept on screen; cards, relics and shop items taken only after a confirm (a second
+    // tap, or the game's own confirm). Portrait only: in landscape the game plays as it does on a desktop, with a touch as the
+    // mouse. The screen passes below still run in landscape, where a card reward opened in portrait hands its source back to the
+    // game, so turning Portrait Mode off over an open screen leaves it working as the game does.
     private void OnTouchFrame()
     {
         if (!_gameRunning) return;
@@ -100,6 +100,7 @@ public sealed partial class PhoneGraphics : Node
         }
         _cardRewardChoice.OnProcessFrame();
         _rewardTapGuard.OnProcessFrame();
+        _selectConfirm.OnProcessFrame();
         _choiceConfirm.OnProcessFrame();
     }
 
@@ -165,7 +166,7 @@ public sealed partial class PhoneGraphics : Node
 
     private void OnWindowInput(InputEvent input)
     {
-        _choiceConfirm.OnWindowInput(input);
+        _selectConfirm.OnWindowInput(input);
         if (input is InputEventScreenTouch touch)
         {
             if (touch.Pressed) _touches.Add(touch.Index);
@@ -177,12 +178,13 @@ public sealed partial class PhoneGraphics : Node
 
     private void OnNodeAdded(Node node)
     {
-        // Choice screens, reward lists and shop slots get the tap-then-confirm behaviour only in portrait (see AdoptOpenScreens
-        // for the ones already open when Portrait Mode is turned on).
+        // Choice screens, reward lists and shop slots get the two-tap behaviour only in portrait (see AdoptOpenScreens for the
+        // ones already open when Portrait Mode is turned on).
         if (SafeAreaCanvas.IsPortrait)
         {
             _cardRewardChoice.OnNodeAdded(node);
             _rewardTapGuard.OnNodeAdded(node);
+            _selectConfirm.OnNodeAdded(node);
             _choiceConfirm.OnNodeAdded(node);
         }
         if (node is NSettingsScreen screen)
@@ -206,6 +208,7 @@ public sealed partial class PhoneGraphics : Node
             _choiceConfirm.OnNodeAdded(node);
             foreach (Node child in node.GetChildren()) pending.Push(child);
         }
+        _selectConfirm.AdoptOpenScreens();
     }
 
     private void AddRows(NSettingsScreen screen)

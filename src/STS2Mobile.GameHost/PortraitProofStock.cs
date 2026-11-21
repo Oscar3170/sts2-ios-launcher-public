@@ -12,11 +12,10 @@ namespace STS2Mobile.GameHost;
 /// Landscape plays as the regular game does, apart from touch working. With real touch events:
 /// <list type="bullet">
 /// <item><c>stock-landscape</c>: Portrait Mode never on. A tap on a hand card opens no inspect screen; choose a card, a relic
-/// choice, a card reward and a shop item are each taken by one tap, with no Choose button; and the phone's touch helpers track
-/// nothing.</item>
-/// <item><c>switch-mid-choice</c>: a card reward opened in portrait keeps its Choose button when Portrait Mode is turned off
-/// over it, and Choose still takes the card; the next card reward, opened in landscape, is one tap; and one opened in landscape
-/// gets its Choose button when Portrait Mode is turned on over it.</item>
+/// choice, a card reward and a shop item are each taken by one tap; and the phone's touch helpers track nothing.</item>
+/// <item><c>switch-mid-choice</c>: a card reward opened in portrait selects on a tap and takes on a second tap; Portrait Mode
+/// turned off over it lets the selection go and the screen answers as the game does, one tap to the card; the next card reward,
+/// opened in landscape, is one tap; and one opened in landscape gets the two taps when Portrait Mode is turned on over it.</item>
 /// </list>
 /// Both start a run, so they are for the simulator only.
 /// </summary>
@@ -52,7 +51,7 @@ internal static partial class PortraitProof
             handNode.GetType().GetMethod("CancelAllCardPlay", AnyInstance, null, Type.EmptyTypes, null)?.Invoke(handNode, null);
         await WaitFramesAsync(tree, 30);
 
-        // Choose a card: one tap takes it, and there is no Choose button.
+        // Choose a card: one tap takes it.
         object chooseScreen = CallStatic(GameType(cs + "NChooseACardSelectionScreen"), "ShowScreen",
             TypedList("MegaCrit.Sts2.Core.Models.CardModel", deck.Cast<object>().Skip(4).Take(3)), true)!;
         Task chooseTask = (Task)Call(chooseScreen, "CardsSelected")!;
@@ -157,7 +156,8 @@ internal static partial class PortraitProof
         DismissFtues(tree, Sts2);
         await WaitFramesAsync(tree, 40);
 
-        // Opened in portrait: a tap selects. Portrait Mode off over it: the screen still waits for Choose, and Choose takes.
+        // Opened in portrait: a tap selects. Portrait Mode off over it: the selection is let go and the screen answers as the
+        // game does, so one tap takes the card.
         Control? cardScreen = await OpenCardRewardAsync(tree, rewards);
         if (cardScreen != null && RewardCards(cardScreen) is { Count: > 0 } first)
         {
@@ -168,16 +168,16 @@ internal static partial class PortraitProof
         await TogglePortraitMidRunAsync(tree, Sts2, portrait: false);
         await WaitFramesAsync(tree, 60);
         cardScreen = FindScreen(tree, "NCardRewardSelectionScreen");
-        await TouchStepAsync(tree, "switch-landscape-still-choose", DescribeCardScreen(cardScreen, player), results);
+        await TouchStepAsync(tree, "switch-landscape-cleared", DescribeCardScreen(cardScreen, player), results);
         int deckBefore = DeckCards(player).Count;
-        if (ChooseButton(cardScreen) is { } choose)
+        if (cardScreen != null && RewardCards(cardScreen) is { Count: > 0 } selected && GodotObject.IsInstanceValid(selected[0]))
         {
-            await TapAsync(tree, CentreOf(choose));
+            await TapAsync(tree, CentreOf(selected[0]));
             await WaitFramesAsync(tree, 70);
         }
-        await TouchStepAsync(tree, "switch-landscape-chosen", $"deck={deckBefore}->{DeckCards(player).Count} {DescribeRewardScreens(tree)}", results);
+        await TouchStepAsync(tree, "switch-landscape-taken", $"deck={deckBefore}->{DeckCards(player).Count} {DescribeRewardScreens(tree)}", results);
 
-        // Opened in landscape: no Choose button, and one tap takes the card.
+        // Opened in landscape: one tap takes the card.
         cardScreen = await OpenCardRewardAsync(tree, FindScreen(tree, "NRewardsScreen"));
         await TouchStepAsync(tree, "switch-landscape-next-open", DescribeCardScreen(cardScreen, player), results);
         deckBefore = DeckCards(player).Count;
@@ -188,7 +188,7 @@ internal static partial class PortraitProof
         }
         await TouchStepAsync(tree, "switch-landscape-next-tap", $"deck={deckBefore}->{DeckCards(player).Count} {DescribeRewardScreens(tree)}", results);
 
-        // Opened in landscape, Portrait Mode on over it: the open screen gets Choose, a tap selects and Choose takes.
+        // Opened in landscape, Portrait Mode on over it: the open screen gets the two taps, the first selects, the second takes.
         cardScreen = await OpenCardRewardAsync(tree, FindScreen(tree, "NRewardsScreen"));
         await TogglePortraitMidRunAsync(tree, Sts2, portrait: true);
         await WaitFramesAsync(tree, 60);
@@ -201,11 +201,9 @@ internal static partial class PortraitProof
             await WaitFramesAsync(tree, 30);
         }
         await TouchStepAsync(tree, "switch-portrait-over-selected", DescribeCardScreen(FindScreen(tree, "NCardRewardSelectionScreen"), player), results);
-        if (ChooseButton(FindScreen(tree, "NCardRewardSelectionScreen")) is { } chooseOver)
-        {
-            await TapAsync(tree, CentreOf(chooseOver));
-            await WaitFramesAsync(tree, 70);
-        }
+        if (FindScreen(tree, "NCardRewardSelectionScreen") is { } open && RewardCards(open) is { Count: > 0 } again)
+            await TapAgainAsync(tree, CentreOf(again[0]));
+        await WaitFramesAsync(tree, 70);
         await TouchStepAsync(tree, "switch-portrait-over-chosen", $"deck={deckBefore}->{DeckCards(player).Count} {DescribeRewardScreens(tree)} {DescribeTouchHelpers()}", results);
 
         GD.Print("Switch mid choice results: " + string.Join("; ", results));
@@ -313,5 +311,6 @@ internal static partial class PortraitProof
 
     /// <summary>What the phone's touch helpers track now: all zero in a launch that stayed in landscape.</summary>
     private static string DescribeTouchHelpers() =>
-        $"phone-inspects={PhoneTouchCards.InspectsOpened} card-reward={PhoneCardRewardChoice.TrackedForProof()} tap-guard={PhoneRewardTapGuard.TrackedForProof()} choice-confirm={PhoneChoiceConfirm.TrackedForProof()}";
+        $"phone-inspects={PhoneTouchCards.InspectsOpened} card-reward={PhoneCardRewardChoice.TrackedForProof()} " +
+        $"tap-guard={PhoneRewardTapGuard.TrackedForProof()} select={PhoneSelectConfirm.TrackedForProof()} grids={PhoneChoiceConfirm.TrackedForProof()}";
 }
