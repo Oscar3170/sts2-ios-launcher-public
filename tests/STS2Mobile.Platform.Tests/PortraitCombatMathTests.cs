@@ -1207,33 +1207,59 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void BlockedHpTextStartsAfterTheShieldOnANarrowBar()
+    public void BlockedHpTextShiftsFirstAndShrinksOnlyWhenTheBarIsTooNarrow()
     {
-        // The Underdocks eels: a narrow bar whose centred "12/29" starts under the shield drawn at its left end. The text
-        // moves right by exactly the overlap (shield right + gap less the text's left edge) and stays inside the bar.
-        float shift = PortraitCombatMath.BlockedHpLabelShift(
-            barRight: 120f, textLeft: 30f, textWidth: 60f, shieldRight: 40f, gap: 4f, edge: 4f);
-        Assert.Equal(14f, shift, 0.001f);
-        Assert.True(30f + shift + 60f <= 120f - 4f + 0.001f);
+        // The hero's "9999/9999" (drawn ink 207 wide) with a shield whose drawn right edge is 45 past the bar's left. A
+        // bar 265 wide takes the shift alone: the digits start 4 after the shield and end 4 before the bar's end.
+        PortraitCombatMath.HpTextBlockFit roomy = PortraitCombatMath.FitHpTextBesideBlock(
+            inkLeft: (265f - 207f) * 0.5f, inkWidth: 207f, pivotX: 0f, shieldRight: 45f, barRight: 265f, gap: 4f,
+            minScale: 0.50f);
+        Assert.Equal(1f, roomy.Scale, 0.001f);
+        Assert.Equal(20f, roomy.Shift, 0.01f);
+        Assert.Equal(49f, (265f - 207f) * 0.5f + roomy.Shift, 0.01f);
+        Assert.True((265f - 207f) * 0.5f + roomy.Shift + 207f <= 265f - 4f + 0.01f);
 
-        // A wide bar whose centred text already clears the shield (the hero) is left exactly as the game draws it.
-        Assert.Equal(0f, PortraitCombatMath.BlockedHpLabelShift(
-            barRight: 328f, textLeft: 134f, textWidth: 60f, shieldRight: 40f, gap: 4f, edge: 4f), 0.001f);
+        // A 207-wide bar cannot take the shift: the digits scale by what the gap and the bar leave, and still land 4
+        // after the shield and 4 before the bar's end.
+        PortraitCombatMath.HpTextBlockFit exact = PortraitCombatMath.FitHpTextBesideBlock(
+            inkLeft: 0f, inkWidth: 207f, pivotX: 0f, shieldRight: 45f, barRight: 207f, gap: 4f, minScale: 0.50f);
+        Assert.Equal(154f / 207f, exact.Scale, 0.001f);
+        Assert.Equal(49f, exact.Shift, 0.01f);
+        Assert.Equal(207f - 4f, 49f + 207f * exact.Scale, 0.01f);
 
-        // No block: the shield edge sits at the bar's left corner, still clear of a centred text.
-        Assert.Equal(0f, PortraitCombatMath.BlockedHpLabelShift(
-            barRight: 328f, textLeft: 134f, textWidth: 60f, shieldRight: 20f, gap: 4f, edge: 4f), 0.001f);
+        // The Kin's 176-wide bar needs 0.62, which is above the 0.50 floor: it fits, the ink still ends 4 before the bar.
+        PortraitCombatMath.HpTextBlockFit kin = PortraitCombatMath.FitHpTextBesideBlock(
+            inkLeft: (176f - 207f) * 0.5f, inkWidth: 207f, pivotX: 0f, shieldRight: 45f, barRight: 176f, gap: 4f,
+            minScale: 0.50f);
+        Assert.Equal(123f / 207f, kin.Scale, 0.001f);
+        float kinInkLeft = (176f - 207f) * 0.5f * kin.Scale + kin.Shift;
+        Assert.Equal(49f, kinInkLeft, 0.01f);
+        Assert.Equal(176f - 4f, kinInkLeft + 207f * kin.Scale, 0.01f);
+
+        // Only a bar narrower than the 0.50 floor still overflows, and that is what the caller reports.
+        PortraitCombatMath.HpTextBlockFit floored = PortraitCombatMath.FitHpTextBesideBlock(
+            inkLeft: (100f - 207f) * 0.5f, inkWidth: 207f, pivotX: 0f, shieldRight: 45f, barRight: 100f, gap: 4f,
+            minScale: 0.50f);
+        Assert.Equal(0.50f, floored.Scale, 0.001f);
+        Assert.True((100f - 207f) * 0.5f * floored.Scale + floored.Shift + 207f * floored.Scale > 100f - 4f);
     }
 
     [Fact]
-    public void BlockedHpTextNeverPassesTheBarsRightEnd()
+    public void BlockedHpTextShrinksExactlyToFitTheThinGardenerBar()
     {
-        // A bar too narrow for text and shield together: the shift is capped at the room the bar leaves, so the digits
-        // move as far clear of the shield as they can but never off the right end.
-        float shift = PortraitCombatMath.BlockedHpLabelShift(
-            barRight: 100f, textLeft: 30f, textWidth: 60f, shieldRight: 45f, gap: 4f, edge: 4f);
-        Assert.Equal(6f, shift, 0.001f);   // room = 100 - 4 - 90
-        Assert.Equal(0f, PortraitCombatMath.BlockedHpLabelShift(
-            barRight: 80f, textLeft: 30f, textWidth: 60f, shieldRight: 45f, gap: 4f, edge: 4f), 0.001f);
+        // The Underdocks' Phantasmal Gardener: a 172-wide bar whose 160-wide ink must sit beside a 51-wide shield band.
+        // The scale lands just above the floor, the digits start 4 after the shield and end 4 before the bar's end.
+        PortraitCombatMath.HpTextBlockFit fit = PortraitCombatMath.FitHpTextBesideBlock(
+            inkLeft: (172f - 160f) * 0.5f, inkWidth: 160f, pivotX: 0f, shieldRight: 51f, barRight: 172f, gap: 4f,
+            minScale: 0.70f);
+        Assert.InRange(fit.Scale, 0.70f, 0.71f);
+        float inkLeft = (172f - 160f) * 0.5f * fit.Scale + fit.Shift;
+        Assert.Equal(55f, inkLeft, 0.01f);
+        Assert.True(inkLeft + 160f * fit.Scale <= 172f - 4f + 0.01f);
+
+        // A wide bar whose centred text already clears the shield is left exactly as the game draws it.
+        PortraitCombatMath.HpTextBlockFit wide = PortraitCombatMath.FitHpTextBesideBlock(
+            inkLeft: 134f, inkWidth: 160f, pivotX: 0f, shieldRight: 40f, barRight: 400f, gap: 4f, minScale: 0.70f);
+        Assert.Equal(new PortraitCombatMath.HpTextBlockFit(0f, 1f), wide);
     }
 }

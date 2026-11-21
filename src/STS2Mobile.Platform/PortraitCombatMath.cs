@@ -1264,26 +1264,31 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// How far a bar's centred HP text must move right to start after the block shield drawn at the bar's left end. The
-    /// shield's right edge plus <paramref name="gap"/> is where the text has to start; the shift is what is left of that
-    /// over the text's own left edge, and it is capped so the text's right edge never passes the bar's right end less
-    /// <paramref name="edge"/>. Zero when the text already clears the shield (a wide bar, or no block at all), so a bar
-    /// the game already draws cleanly is left exactly as it is.
+    /// The shift and uniform scale that put a block-shielded bar's HP digits beside the shield: the drawn ink has to start
+    /// <paramref name="gap"/> after the shield's drawn right edge and end <paramref name="gap"/> before the bar's right
+    /// end. The digits are moved first, and scaled about <paramref name="pivotX"/> only by what the move cannot cover,
+    /// never below <paramref name="minScale"/> — a bar too narrow even for that keeps the floor and overflows, which the
+    /// caller reports. Zero shift and scale 1 when the text already clears the shield (a wide bar, or no block).
     /// </summary>
+    public readonly record struct HpTextBlockFit(float Shift, float Scale);
+
+    /// <param name="inkLeft">The drawn text's left edge at its native scale, canvas units (outline included).</param>
+    /// <param name="inkWidth">The drawn text's width at its native scale, canvas units (outline included).</param>
+    /// <param name="pivotX">The label's own pivot on the canvas: the point a uniform scale grows it from.</param>
+    /// <param name="shieldRight">The block shield's drawn right edge, canvas units.</param>
     /// <param name="barRight">The bar frame's right edge, canvas units.</param>
-    /// <param name="textLeft">The centred text's left edge before any shift, canvas units.</param>
-    /// <param name="textWidth">The drawn text's width, canvas units.</param>
-    /// <param name="shieldRight">The block shield's right edge, canvas units.</param>
-    /// <param name="gap">The clearance the text keeps after the shield.</param>
-    /// <param name="edge">The margin the text keeps inside the bar's right end.</param>
-    public static float BlockedHpLabelShift(float barRight, float textLeft, float textWidth, float shieldRight,
-        float gap, float edge)
+    /// <param name="gap">The clearance the text keeps after the shield and before the bar's right end.</param>
+    /// <param name="minScale">The smallest the digits may shrink to (the legibility floor).</param>
+    public static HpTextBlockFit FitHpTextBesideBlock(float inkLeft, float inkWidth, float pivotX, float shieldRight,
+        float barRight, float gap, float minScale)
     {
-        float needed = shieldRight + gap - textLeft;
-        if (needed <= 0f)
-            return 0f;
-        float room = barRight - edge - (textLeft + textWidth);
-        return Math.Clamp(needed, 0f, MathF.Max(0f, room));
+        if (inkWidth <= 1f || shieldRight + gap <= inkLeft)
+            return new HpTextBlockFit(0f, 1f);
+        float available = MathF.Max(0f, barRight - gap - (shieldRight + gap));
+        float scale = Math.Clamp(available / inkWidth, MathF.Max(0.01f, minScale), 1f);
+        // The scale grows the ink from the label's pivot; the shift then moves all of it to the shield's clearance.
+        float leftAtScale = pivotX + (inkLeft - pivotX) * scale;
+        return new HpTextBlockFit(shieldRight + gap - leftAtScale, scale);
     }
 
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;

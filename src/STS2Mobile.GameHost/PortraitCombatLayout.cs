@@ -307,8 +307,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     // points at 1.33, 22 units at 1.45, and power amounts are set in 24 units.
     private const float StateDisplayCanvasScale = 1.33f;
     private const float IntentCanvasScale = 1.45f;
-    // The clearance the HP text keeps after the block shield and inside the bar's right end.
+    // The clearance the HP text keeps after the block shield and inside the bar's right end, and the smallest the digits
+    // may shrink to when a bar is too narrow for the shield and the text together. The floor is low because the rule is
+    // hard (the digits never pass the bar's end): the worst real case is the fixture's 4/4-digit hero HP on a 176 bar,
+    // which needs 0.62, while real HP numbers are far shorter.
     private const float HpTextClearance = 4f;
+    private const float HpTextMinScale = 0.50f;
     // The health display's own HUD box (the bar plus the HP value under it, the box the stage checks measure) is this
     // tall, so a bar band placed BarBandClearance under a creature's foot line ends this far below those feet.
     private const float EnemyHudBoxHeight = 41.23f;
@@ -1294,6 +1298,17 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _diagnoseStep = holder.Position.DistanceTo(previous);
         _diagnoseWeight = weight;
         _diagnoseAllowed = length * weight + 1f;
+        if (length <= 2f)
+        {
+            // The card was drawn at its slot: nothing the game wrote this frame may move it, whatever the frame was — its
+            // place, its tilt and its size all stay where the last pass left them. This is the settled card a release, an add
+            // or a focus nudges with the first step of a native retarget, and it was the only motion a still hand showed on
+            // the phone.
+            holder.Position = previous;
+            holder.RotationDegrees = _stillness.PreviousRotation(holder, holder.RotationDegrees);
+            holder.Scale = new Vector2(slot.Scale, slot.Scale);
+            return;
+        }
         if (interactive || !_turnDrawBatch)
         {
             // The always-on rule: a step longer than one native step is shortened, in whatever direction it took.
@@ -1302,17 +1317,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 holder.Position = previous + (holder.Position - previous) * (_diagnoseAllowed / step);
             return;
         }
-        if (length <= 2f)
-        {
-            holder.Position = previous;
-        }
-        else
-        {
-            Vector2 direction = toSlot / length;
-            float along = (holder.Position - previous).Dot(direction);
-            float most = length * weight + 1f;
-            holder.Position = previous + direction * Mathf.Clamp(along, 0f, most);
-        }
+        Vector2 direction = toSlot / length;
+        float travelled = (holder.Position - previous).Dot(direction);
+        holder.Position = previous + direction * Mathf.Clamp(travelled, 0f, length * weight + 1f);
 
         float seenAngle = _stillness.PreviousRotation(holder, holder.RotationDegrees);
         float turnToSlot = slot.AngleDegrees - seenAngle;
@@ -3708,7 +3715,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // The block shield is drawn at the bar's left end; on a narrow bar it covers the first digit of the centred HP
         // text (a 7 shield over "12/29" shows "2/29"). The native bar never moves the label, so the digit is moved clear
         // here — only while a block is shown, only as far as it must, and never past the bar's right end.
-        KeepHpTextClearOfBlockBand(hpBar, bandNode);
+        if (bandNode is Label hpLabel)
+            KeepHpTextClearOfBlockBand(creature, hpBar, hpLabel);
 
         if (nameSynced)
             return;
@@ -3730,44 +3738,106 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// back to its native X as soon as the shield is hidden again. Everything is measured in canvas units and the write
     /// is converted through the label's parent scale, so a nested or scaled bar behaves the same.
     /// </summary>
-    private static void KeepHpTextClearOfBlockBand(Control hpBar, Control hpLabel)
+    private static void KeepHpTextClearOfBlockBand(Control creature, Control hpBar, Label hpLabel)
     {
         if (hpLabel == hpBar)
             return;   // no HP label in this bar's scene: the bar itself is never moved sideways
-        if (hpBar.GetNodeOrNull<Control>("%BlockContainer") is not { } shield)
-        {
-            if (hpLabel.HasMeta("portrait_hp_x"))
-                hpLabel.Position = new Vector2(hpLabel.GetMeta("portrait_hp_x").AsSingle(), hpLabel.Position.Y);
-            return;
-        }
-        // The label's native place, kept before the first write (the native health bar never sets its X). Its own rect
-        // follows the bar's width, so the place is converted from the last shift this pass instead of cached globally.
         if (!hpLabel.HasMeta("portrait_hp_x"))
             hpLabel.SetMeta("portrait_hp_x", hpLabel.Position.X);
+        if (!hpLabel.HasMeta("portrait_hp_scale"))
+            hpLabel.SetMeta("portrait_hp_scale", hpLabel.Scale.X);
         float nativeX = hpLabel.GetMeta("portrait_hp_x").AsSingle();
-        float appliedLocal = hpLabel.HasMeta("portrait_hp_shift") ? hpLabel.GetMeta("portrait_hp_shift").AsSingle() : 0f;
-        float labelScale = MathF.Max(0.0001f, hpLabel.GetGlobalTransform().Scale.X);
-        float parentScale = MathF.Max(0.0001f, labelScale / MathF.Max(0.0001f, hpLabel.Scale.X));
-        Rect2 bar = hpBar.GetGlobalRect();
-        Rect2 label = hpLabel.GetGlobalRect();
-        // The rect the native bar lays the label out in: what was drawn less the shift this pass wrote last time. Without
-        // this the measured text would already include the shift and the rule would undo itself every frame.
-        float nativeLeft = label.Position.X - appliedLocal * parentScale;
-        // The text is centred in the label's rect: its left edge is the native left plus the centring term.
-        float textWidth = MathF.Max(1f, hpLabel.GetMinimumSize().X * labelScale);
-        float textLeft = nativeLeft + (label.Size.X - textWidth) * 0.5f;
-        float shift = 0f;
-        if (shield.IsVisibleInTree())
+        float nativeScale = hpLabel.GetMeta("portrait_hp_scale").AsSingle();
+        Control? shield = hpBar.GetNodeOrNull<Control>("%BlockContainer");
+        if (shield == null || !shield.IsVisibleInTree())
         {
-            Rect2 shieldRect = shield.GetGlobalRect();
-            shift = PortraitCombatMath.BlockedHpLabelShift(bar.End.X, textLeft, textWidth, shieldRect.End.X,
-                HpTextClearance, HpTextClearance);
+            // No block: the digits go back to the native place and size, so a bar the game draws cleanly is untouched.
+            if (MathF.Abs(hpLabel.Scale.X - nativeScale) > 0.001f)
+                hpLabel.Scale = new Vector2(nativeScale, nativeScale);
+            if (MathF.Abs(hpLabel.Position.X - nativeX) > 0.01f)
+                hpLabel.Position = new Vector2(nativeX, hpLabel.Position.Y);
+            if (creature.HasMeta("portrait_hp_shift_capped"))
+                creature.RemoveMeta("portrait_hp_shift_capped");
+            return;
         }
-        float local = shift / parentScale;
-        hpLabel.SetMeta("portrait_hp_shift", local);
-        float target = nativeX + local;
-        if (MathF.Abs(hpLabel.Position.X - target) > 0.01f)
-            hpLabel.Position = new Vector2(target, hpLabel.Position.Y);
+        if (hpLabel.GetParent() is not Control parent)
+            return;
+        float parentTransformScale = parent.GetGlobalTransform().Scale.X;
+        float parentScale = MathF.Max(0.0001f, parentTransformScale);
+        // The ink as the native bar lays it out (the label's own scale is 1 there), mapped onto the canvas.
+        Transform2D parentTransform = parent.GetGlobalTransform();
+        Vector2 nativeOrigin = new(nativeX, hpLabel.Position.Y);
+        Rect2 localInk = LabelInkLocal(hpLabel);
+        Rect2 nativeInk = parentTransform * new Rect2(localInk.Position + nativeOrigin, localInk.Size);
+        float pivotX = (parentTransform * (nativeOrigin + hpLabel.PivotOffset)).X;
+        Rect2 barRect = hpBar.GetGlobalRect();
+        Rect2 shieldInk = ShieldInk(shield);
+        PortraitCombatMath.HpTextBlockFit fit = PortraitCombatMath.FitHpTextBesideBlock(
+            nativeInk.Position.X, nativeInk.Size.X, pivotX, shieldInk.End.X, barRect.End.X, HpTextClearance,
+            HpTextMinScale);
+        float targetScale = fit.Scale * nativeScale;
+        if (MathF.Abs(hpLabel.Scale.X - targetScale) > 0.001f)
+            hpLabel.Scale = new Vector2(targetScale, targetScale);
+        float targetX = nativeX + fit.Shift / parentScale;
+        if (MathF.Abs(hpLabel.Position.X - targetX) > 0.01f)
+            hpLabel.Position = new Vector2(targetX, hpLabel.Position.Y);
+        // The floor: a bar too narrow for the shield and the smallest allowed digits still overflows its right end; keep
+        // the legibility floor, say so on the creature, and let the stage report take it to the user.
+        float inkRight = nativeInk.Position.X + fit.Shift + nativeInk.Size.X * fit.Scale;
+        if (fit.Scale <= HpTextMinScale + 0.001f && inkRight > barRect.End.X - HpTextClearance + 0.5f)
+            creature.SetMeta("portrait_hp_shift_capped",
+                $"need={fit.Shift:F1} scale={fit.Scale:F3} inkRight={inkRight:F1} barRight={barRect.End.X:F1}");
+        else if (creature.HasMeta("portrait_hp_shift_capped"))
+            creature.RemoveMeta("portrait_hp_shift_capped");
+    }
+
+    /// <summary>
+    /// A label's drawn glyph ink in its own units, as the stage checks measure it: the text's advance at the label's own
+    /// theme font size, its cap height, and the outline grown on every side, placed by the label's alignment inside its
+    /// rect. The control's rect is not the ink (the game's HP label is wider and taller than the digits), and the metrics
+    /// are scale-free so the caller can place the ink at the native scale itself.
+    /// </summary>
+    private static Rect2 LabelInkLocal(Label label)
+    {
+        string text = label.Text;
+        Font? font = label.GetThemeFont("font");
+        if (font == null || string.IsNullOrWhiteSpace(text))
+            return new Rect2(Vector2.Zero, label.Size);
+        int fontSize = label.GetThemeFontSize("font_size");
+        int outline = Math.Max(0, label.GetThemeConstant("outline_size"));
+        Vector2 advance = font.GetStringSize(text, label.HorizontalAlignment, -1f, fontSize);
+        float ascent = font.GetAscent(fontSize);
+        Vector2 textSize = new(advance.X, ascent > 0f ? ascent : advance.Y);
+        Vector2 box = label.Size;
+        float x = label.HorizontalAlignment switch
+        {
+            HorizontalAlignment.Center => (box.X - textSize.X) * 0.5f,
+            HorizontalAlignment.Right => box.X - textSize.X,
+            _ => 0f,
+        };
+        float y = label.VerticalAlignment switch
+        {
+            VerticalAlignment.Center => (box.Y - textSize.Y) * 0.5f,
+            VerticalAlignment.Bottom => box.Y - textSize.Y,
+            _ => 0f,
+        };
+        return new Rect2(new Vector2(x - outline, y - outline),
+            textSize + new Vector2(outline * 2f, outline * 2f));
+    }
+
+    /// <summary>The block shield's drawn ink: its icon merged with the block number's glyph ink when it shows one.</summary>
+    private static Rect2 ShieldInk(Control shield)
+    {
+        Rect2? ink = null;
+        if (shield.GetNodeOrNull<TextureRect>("BlockIcon") is { } icon && icon.IsVisibleInTree())
+            ink = icon.GetGlobalRect();
+        if (shield.GetNodeOrNull<Label>("BlockLabel") is { } blockLabel && blockLabel.IsVisibleInTree() &&
+            !string.IsNullOrWhiteSpace(blockLabel.Text))
+        {
+            Rect2 number = blockLabel.GetGlobalTransform() * LabelInkLocal(blockLabel);
+            ink = ink is { } known ? known.Merge(number) : number;
+        }
+        return ink ?? shield.GetGlobalRect();
     }
 
     /// <summary>
@@ -5665,6 +5735,24 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 if (orbMgr.HasMeta("portrait_orb_scale_base"))
                     orbMgr.RemoveMeta("portrait_orb_scale_base");
             }
+            // The block-shield rule may have moved and shrunk the HP number: the game's own bar gets its label back.
+            if (HpBar is { } hpBar && GodotObject.IsInstanceValid(hpBar) &&
+                hpBar.GetNodeOrNull<Label>("%HpLabel") is { } hpLabel)
+            {
+                if (hpLabel.HasMeta("portrait_hp_x"))
+                {
+                    hpLabel.Position = new Vector2(hpLabel.GetMeta("portrait_hp_x").AsSingle(), hpLabel.Position.Y);
+                    hpLabel.RemoveMeta("portrait_hp_x");
+                }
+                if (hpLabel.HasMeta("portrait_hp_scale"))
+                {
+                    float hpScale = hpLabel.GetMeta("portrait_hp_scale").AsSingle();
+                    hpLabel.Scale = new Vector2(hpScale, hpScale);
+                    hpLabel.RemoveMeta("portrait_hp_scale");
+                }
+            }
+            if (creature.HasMeta("portrait_hp_shift_capped"))
+                creature.RemoveMeta("portrait_hp_shift_capped");
             refl.InvokeUpdateBounds(creature);
         }
     }
