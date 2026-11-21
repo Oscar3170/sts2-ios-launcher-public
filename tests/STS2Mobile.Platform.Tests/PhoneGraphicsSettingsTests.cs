@@ -24,6 +24,7 @@ public sealed class PhoneGraphicsSettingsTests : IDisposable
             PortraitMode: false,
             PortraitDefault: false,
             FlatHand: false,
+            ReduceEffects: true,
             StartInPortrait: false,
             Preset: BatteryPreset.Maximum,
         });
@@ -35,20 +36,65 @@ public sealed class PhoneGraphicsSettingsTests : IDisposable
     {
         Assert.Equal(BatteryPreset.Off, Off.Preset);
         Assert.Equal(1, Off.ResolutionFactor);
+        Assert.False(Off.ReduceEffects);
     }
 
     [Fact]
     public void BalancedPreset()
     {
         var balanced = Off.WithPreset(BatteryPreset.Balanced);
-        Assert.True(balanced is { Resolution: RenderResolution.Reduced, LowerIdleFrameRate: false, CoolDownWhenHot: true, Preset: BatteryPreset.Balanced });
+        Assert.True(balanced is { Resolution: RenderResolution.Reduced, LowerIdleFrameRate: false, CoolDownWhenHot: true, ReduceEffects: true, Preset: BatteryPreset.Balanced });
     }
 
     [Fact]
     public void MaximumPreset()
     {
         var maximum = Off.WithPreset(BatteryPreset.Maximum);
-        Assert.True(maximum is { Resolution: RenderResolution.Low, LowerIdleFrameRate: true, CoolDownWhenHot: true, Preset: BatteryPreset.Maximum });
+        Assert.True(maximum is { Resolution: RenderResolution.Low, LowerIdleFrameRate: true, CoolDownWhenHot: true, ReduceEffects: true, Preset: BatteryPreset.Maximum });
+    }
+
+    [Fact]
+    public void ReduceEffectsRoundTripsAndIsPartOfThePresets()
+    {
+        Assert.True(Defaults.ReduceEffects);
+        Assert.True(Defaults.WithReduceEffects(false) is { ReduceEffects: false, Preset: BatteryPreset.Custom });
+        Assert.True(Off.WithReduceEffects(true) is { ReduceEffects: true, Preset: BatteryPreset.Custom });
+        Assert.True(Defaults.WithPreset(BatteryPreset.Balanced) is { ReduceEffects: true, Preset: BatteryPreset.Balanced });
+
+        var reduced = Off.WithReduceEffects(true);
+        reduced.Save(SettingsFile);
+        Assert.Equal(reduced, PhoneGraphicsSettings.Load(SettingsFile));
+
+        var full = Defaults.WithReduceEffects(false);
+        full.Save(SettingsFile);
+        Assert.Equal(full, PhoneGraphicsSettings.Load(SettingsFile));
+    }
+
+    [Fact]
+    public void OlderFilesTakeTheEffectsTheirPresetMeans()
+    {
+        // A file written before the setting existed keeps its preset's own answer: an existing Maximum (or Balanced) file
+        // keeps its preset and gains the optimisation, while Off and a hand-tuned file keep the game's own effects.
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"lowerIdleFrameRate\":true,\"coolDownWhenHot\":true}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReduceEffects: true, Preset: BatteryPreset.Maximum });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"reduced\",\"coolDownWhenHot\":true}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReduceEffects: true, Preset: BatteryPreset.Balanced });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"full\"}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReduceEffects: false, Preset: BatteryPreset.Off });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"coolDownWhenHot\":true}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReduceEffects: false, Preset: BatteryPreset.Custom });
+    }
+
+    [Fact]
+    public void AFileThatHasTheSettingKeepsItsChoice()
+    {
+        // Only a missing key is inferred; an explicit off stays off, as Custom on the Maximum-shaped choices.
+        File.WriteAllText(SettingsFile,
+            "{\"resolution\":\"low\",\"lowerIdleFrameRate\":true,\"coolDownWhenHot\":true,\"reduceEffects\":false}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReduceEffects: false, Preset: BatteryPreset.Custom });
     }
 
     [Fact]

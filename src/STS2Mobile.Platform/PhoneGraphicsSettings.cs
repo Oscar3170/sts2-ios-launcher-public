@@ -18,18 +18,19 @@ public sealed record PhoneGraphicsSettings(
     bool PortraitMode = false,
     bool PortraitDefault = false,
     bool FlatHand = false,
-    bool PerformanceLog = false)
+    bool PerformanceLog = false,
+    bool ReduceEffects = false)
 {
     public const string FileName = "phone-graphics.json";
     private const int Format = 1;
 
     /// <summary>
     /// A new install's choices, the Maximum preset in landscape: Low resolution, 30 fps when idle, cooling down when hot,
-    /// and Portrait Mode off. The first launch still draws at full resolution, since the file is
+    /// reduced effects, and Portrait Mode off. The first launch still draws at full resolution, since the file is
     /// written once the game has started and the native code reads it before the next launch's engine starts.
     /// </summary>
     public static readonly PhoneGraphicsSettings Default =
-        new(RenderResolution.Low, true, true, false, false, false, false, false);
+        new(RenderResolution.Low, true, true, false, false, false, false, false, true);
 
     /// <summary>True only when Portrait Mode is on and the player chose to enter portrait at game launch.</summary>
     public bool StartInPortrait => PortraitMode && PortraitDefault;
@@ -47,6 +48,9 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>Writes the per-frame portrait pass timings to the game log (off by default; for testing).</summary>
     public PhoneGraphicsSettings WithPerformanceLog(bool enabled) => this with { PerformanceLog = enabled };
+
+    /// <summary>Keeps the game's combat effects (false) or skips the hand cards' while they move (true).</summary>
+    public PhoneGraphicsSettings WithReduceEffects(bool enabled) => this with { ReduceEffects = enabled };
 
     /// <summary>Fraction of the screen's resolution drawn: 3x, 2.5x or 2x pixels per point on a 3x screen.</summary>
     public double ResolutionFactor => FactorOf(Resolution);
@@ -66,9 +70,9 @@ public sealed record PhoneGraphicsSettings(
     /// <summary>The same settings with the preset's choices; Custom changes nothing.</summary>
     public PhoneGraphicsSettings WithPreset(BatteryPreset preset) => preset switch
     {
-        BatteryPreset.Off => this with { Resolution = RenderResolution.Full, LowerIdleFrameRate = false, CoolDownWhenHot = false },
-        BatteryPreset.Balanced => this with { Resolution = RenderResolution.Reduced, LowerIdleFrameRate = false, CoolDownWhenHot = true },
-        BatteryPreset.Maximum => this with { Resolution = RenderResolution.Low, LowerIdleFrameRate = true, CoolDownWhenHot = true },
+        BatteryPreset.Off => this with { Resolution = RenderResolution.Full, LowerIdleFrameRate = false, CoolDownWhenHot = false, ReduceEffects = false },
+        BatteryPreset.Balanced => this with { Resolution = RenderResolution.Reduced, LowerIdleFrameRate = false, CoolDownWhenHot = true, ReduceEffects = true },
+        BatteryPreset.Maximum => this with { Resolution = RenderResolution.Low, LowerIdleFrameRate = true, CoolDownWhenHot = true, ReduceEffects = true },
         _ => this,
     };
 
@@ -86,20 +90,47 @@ public sealed record PhoneGraphicsSettings(
         {
             if (!File.Exists(path) || JsonNode.Parse(File.ReadAllText(path)) is not JsonObject root) return Default;
             bool portraitMode = Flag(root, "portraitMode");
+            bool lowerIdleFrameRate = Flag(root, "lowerIdleFrameRate");
+            bool coolDownWhenHot = Flag(root, "coolDownWhenHot");
+            RenderResolution resolution =
+                Enum.TryParse(Text(root, "resolution"), ignoreCase: true, out RenderResolution chosen) ? chosen : RenderResolution.Full;
             return new PhoneGraphicsSettings(
-                Enum.TryParse(Text(root, "resolution"), ignoreCase: true, out RenderResolution resolution) ? resolution : RenderResolution.Full,
-                Flag(root, "lowerIdleFrameRate"),
-                Flag(root, "coolDownWhenHot"),
+                resolution,
+                lowerIdleFrameRate,
+                coolDownWhenHot,
                 Flag(root, "msaaCleared"),
                 portraitMode,
                 portraitMode && Flag(root, "portraitDefault"),
                 Flag(root, "flatHand"),
-                Flag(root, "performanceLog"));
+                Flag(root, "performanceLog"),
+                // A file written before the setting existed keeps the effects its preset means (see the helper).
+                root.ContainsKey("reduceEffects")
+                    ? Flag(root, "reduceEffects")
+                    : ReducedEffectsOfLegacyFile(resolution, lowerIdleFrameRate, coolDownWhenHot));
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
         {
             return Default;
         }
+    }
+
+    /// <summary>
+    /// What a file from before the setting existed means by its other choices: its battery preset's own answer. Maximum
+    /// and Balanced both reduce effects, so an existing Maximum file keeps its preset and gains the optimisation; Off
+    /// does not, and a hand-tuned combination (Custom) keeps the game's full effects.
+    /// </summary>
+    private static bool ReducedEffectsOfLegacyFile(RenderResolution resolution, bool lowerIdleFrameRate, bool coolDownWhenHot)
+    {
+        var legacy = new PhoneGraphicsSettings(resolution, lowerIdleFrameRate, coolDownWhenHot, MsaaCleared: false);
+        foreach (BatteryPreset preset in NamedPresets)
+        {
+            PhoneGraphicsSettings bundled = legacy.WithPreset(preset);
+            if (bundled.Resolution == legacy.Resolution &&
+                bundled.LowerIdleFrameRate == legacy.LowerIdleFrameRate &&
+                bundled.CoolDownWhenHot == legacy.CoolDownWhenHot)
+                return bundled.ReduceEffects;
+        }
+        return false;
     }
 
     /// <summary>Writes the file in one step, so the native reader never sees half of it.</summary>
@@ -121,6 +152,7 @@ public sealed record PhoneGraphicsSettings(
             writer.WriteBoolean("portraitDefault", PortraitMode && PortraitDefault);
             writer.WriteBoolean("flatHand", FlatHand);
             writer.WriteBoolean("performanceLog", PerformanceLog);
+            writer.WriteBoolean("reduceEffects", ReduceEffects);
             writer.WriteEndObject();
         }
         File.Move(partial, path, overwrite: true);
@@ -128,10 +160,11 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>A one-line summary for the log.</summary>
     public string Describe(double appliedFactor) => string.Create(CultureInfo.InvariantCulture,
-        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand} perfLog={PerformanceLog}");
+        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand} perfLog={PerformanceLog} reduceEffects={ReduceEffects}");
 
     private bool Matches(PhoneGraphicsSettings other) =>
-        Resolution == other.Resolution && LowerIdleFrameRate == other.LowerIdleFrameRate && CoolDownWhenHot == other.CoolDownWhenHot;
+        Resolution == other.Resolution && LowerIdleFrameRate == other.LowerIdleFrameRate &&
+        CoolDownWhenHot == other.CoolDownWhenHot && ReduceEffects == other.ReduceEffects;
 
     private static string? Text(JsonObject root, string name) =>
         root[name] is JsonValue value && value.TryGetValue(out string? text) ? text : null;

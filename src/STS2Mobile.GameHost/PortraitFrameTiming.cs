@@ -17,12 +17,19 @@ namespace STS2Mobile.GameHost;
 ///
 /// Four buckets nest inside another pass and are reported on their own as well: <c>stage</c> and <c>selection</c> inside
 /// <c>combat</c> (the room pass), <c>orbs</c> inside <c>preDraw</c>, and <c>hpText</c> inside <c>labels</c>.
+///
+/// A pass whose wall time goes over <see cref="SpikeMsec"/> is attributed in the same line: whether a garbage collection ran
+/// during it and how many bytes were allocated, so a device run can tell a pass that did real work from one a GC pause landed
+/// in (<c>spikes=hand=7.8/gc=1/alloc=41k</c>). The second's own allocation total and GC counts are printed too.
 /// </summary>
 internal static class PortraitFrameTiming
 {
     internal const int PassCount = 14;
     internal const int Combat = 0, Ftue = 1, Stage = 2, Labels = 3, Status = 4, Vfx = 5,
         Hand = 6, Rail = 7, Selection = 8, PreDraw = 9, Hover = 10, Touch = 11, Orbs = 12, HpText = 13;
+
+    /// <summary>The wall time, in milliseconds, above which a single pass is reported with its GC and allocation facts.</summary>
+    internal const double SpikeMsec = 5.0;
 
     /// <summary>The field names of the printed line, indexed by the pass constants above.</summary>
     internal static readonly string[] Names =
@@ -42,6 +49,15 @@ internal static class PortraitFrameTiming
     private static readonly double[] SecondSum = new double[PassCount];
     private static readonly double[] SecondMax = new double[PassCount];
     private static readonly int[] SecondRuns = new int[PassCount];
+    // The second's worst over-budget pass, with the GCs and allocations that happened inside it.
+    private static readonly double[] SpikeMs = new double[PassCount];
+    private static readonly int[] SpikeGcs = new int[PassCount];
+    private static readonly long[] SpikeAllocated = new long[PassCount];
+    private static long _lastAllocated;
+    private static double _secondAllocatedMb;
+    private static int _lastGc0, _lastGc1, _lastGc2;
+    private static int _secondGc0, _secondGc1, _secondGc2;
+    private static bool _allocationAvailable = true;
     private static ulong _lastFrameIndex;
     private static ulong _lastPrintMsec;
     private static int _secondFrames;
@@ -61,17 +77,26 @@ internal static class PortraitFrameTiming
     internal static void SetEnabled(bool enabled) => Enabled = enabled;
 
     /// <summary>Times one pass for the rest of the enclosing block; a struct, so nothing is allocated.</summary>
-    internal static Scope Begin(int pass) => Enabled ? new Scope(pass, Stopwatch.GetTimestamp()) : default;
+    internal static Scope Begin(int pass) => Enabled
+        ? new Scope(pass, Stopwatch.GetTimestamp(), GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2),
+            AllocatedBytes())
+        : default;
 
     internal readonly struct Scope : IDisposable
     {
         private readonly int _pass;
         private readonly long _start;
+        private readonly long _allocated;
+        private readonly int _gc0, _gc1, _gc2;
 
-        internal Scope(int pass, long start)
+        internal Scope(int pass, long start, int gc0, int gc1, int gc2, long allocated)
         {
             _pass = pass;
             _start = start;
+            _gc0 = gc0;
+            _gc1 = gc1;
+            _gc2 = gc2;
+            _allocated = allocated;
         }
 
         public void Dispose()
@@ -80,6 +105,29 @@ internal static class PortraitFrameTiming
             long ticks = Stopwatch.GetTimestamp() - _start;
             FrameTicks[_pass] += ticks;
             if (ticks > FrameMax[_pass]) FrameMax[_pass] = ticks;
+            double ms = ticks * Millisecond;
+            if (ms < SpikeMsec) return;
+            // A GC pause inside the pass is part of its wall time; the counters say whether the pause or the pass's own work
+            // made it long. Only the worst over-budget sample of the second is kept per pass.
+            if (ms <= SpikeMs[_pass]) return;
+            SpikeMs[_pass] = ms;
+            SpikeGcs[_pass] = GC.CollectionCount(0) - _gc0 + GC.CollectionCount(1) - _gc1 + GC.CollectionCount(2) - _gc2;
+            SpikeAllocated[_pass] = AllocatedBytes() - _allocated;
+        }
+    }
+
+    /// <summary>This thread's allocated bytes, or zero where the runtime does not offer the count (the field stays unset).</summary>
+    private static long AllocatedBytes()
+    {
+        if (!_allocationAvailable) return 0;
+        try
+        {
+            return GC.GetAllocatedBytesForCurrentThread();
+        }
+        catch (Exception)
+        {
+            _allocationAvailable = false;
+            return 0;
         }
     }
 
@@ -106,6 +154,22 @@ internal static class PortraitFrameTiming
         ulong frame = Engine.GetProcessFrames();
         if (frame == _lastFrameIndex) return;
         _lastFrameIndex = frame;
+
+        // What the whole main thread allocated (our passes and the game's code alike) and how many collections ran: this is
+        // the pressure behind a pass whose wall time a GC pause inflated.
+        long allocated = AllocatedBytes();
+        int gc0 = GC.CollectionCount(0), gc1 = GC.CollectionCount(1), gc2 = GC.CollectionCount(2);
+        if (_lastAllocated != 0)
+        {
+            _secondAllocatedMb += (allocated - _lastAllocated) / 1048576.0;
+            _secondGc0 += gc0 - _lastGc0;
+            _secondGc1 += gc1 - _lastGc1;
+            _secondGc2 += gc2 - _lastGc2;
+        }
+        _lastAllocated = allocated;
+        _lastGc0 = gc0;
+        _lastGc1 = gc1;
+        _lastGc2 = gc2;
 
         bool any = false;
         for (int pass = 0; pass < PassCount; pass++)
@@ -136,18 +200,25 @@ internal static class PortraitFrameTiming
         Array.Clear(SecondSum);
         Array.Clear(SecondMax);
         Array.Clear(SecondRuns);
+        Array.Clear(SpikeMs);
+        Array.Clear(SpikeGcs);
+        Array.Clear(SpikeAllocated);
         _secondFrames = 0;
         _cardsPeak = 0;
         _drewThisSecond = false;
+        _secondAllocatedMb = 0;
+        _secondGc0 = _secondGc1 = _secondGc2 = 0;
     }
 
     /// <summary>
     /// The second's line: each pass as the mean and worst of the frames it ran in, with that count, then what the frames
-    /// were doing — the largest hand seen, the last creature count, and whether any frame was mid-draw.
+    /// were doing — the largest hand seen, the last creature count, whether any frame was mid-draw, what the main thread
+    /// allocated and how many collections ran — and, for each pass that went over <see cref="SpikeMsec"/>, its worst
+    /// sample with the GCs and bytes allocated inside it.
     /// </summary>
     private static string SecondLine(ulong now)
     {
-        var text = new StringBuilder("[stats] perf ms=", 384);
+        var text = new StringBuilder("[stats] perf ms=", 512);
         text.Append(now).Append(" frames=").Append(_secondFrames);
         for (int pass = 0; pass < PassCount; pass++)
         {
@@ -158,8 +229,23 @@ internal static class PortraitFrameTiming
                 .Append('/').Append(SecondMax[pass].ToString("F2"))
                 .Append('@').Append(runs);
         }
-        return text.Append(" cards=").Append(_cardsPeak)
+        text.Append(" cards=").Append(_cardsPeak)
             .Append(" creatures=").Append(_creatures)
-            .Append(" drawing=").Append(_drewThisSecond ? '1' : '0').ToString();
+            .Append(" drawing=").Append(_drewThisSecond ? '1' : '0')
+            .Append(" alloc_mb=").Append(_secondAllocatedMb.ToString("F1"))
+            .Append(" gc0=").Append(_secondGc0)
+            .Append(" gc1=").Append(_secondGc1)
+            .Append(" gc2=").Append(_secondGc2);
+        var spikes = new StringBuilder(96);
+        for (int pass = 0; pass < PassCount; pass++)
+        {
+            if (SpikeMs[pass] < SpikeMsec) continue;
+            if (spikes.Length > 0) spikes.Append(',');
+            spikes.Append(Names[pass]).Append('=').Append(SpikeMs[pass].ToString("F1"))
+                .Append("/gc=").Append(SpikeGcs[pass])
+                .Append("/alloc=").Append(SpikeAllocated[pass] / 1024).Append('k');
+        }
+        if (spikes.Length > 0) text.Append(" spikes=").Append(spikes);
+        return text.ToString();
     }
 }

@@ -276,6 +276,54 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// <summary>Called by PortraitLayout so a static mode change relayouts immediately, not on some later frame.</summary>
     internal static void SetFlatHandListener(Action? listener) => _flatHandChanged = listener;
 
+    /// <summary>
+    /// The Graphics "Reduce Effects" choice, for the hand: a card still on its way to its slot draws without its glow
+    /// (the <c>NCardHighlight</c> shader quad over the whole card) and without its shadow, and the glow's tween — the
+    /// game's <c>AnimShow</c>, which writes the shader width on every frame of it — is stopped rather than run for half a
+    /// second on every drawn card. The moment the card rests in its slot it gets all of it back, at the width the game
+    /// would have left: the playable boost for a card that can be played, the game's own 0.075 for a gold or red glow,
+    /// 0 for nothing. PhoneGraphics writes it before the next hand pass and the test host may set it directly; the pass
+    /// runs every frame of a draw and after any change, so it takes effect on the next frame.
+    /// </summary>
+    public static bool ReduceEffects { get; set; }
+
+    // Whether the hand pass last saw a draw's batch open or a holder moving, and the frame it saw it on; see HandMoving.
+    private static bool _handMoving;
+    private static ulong _handMovingFrame;
+    private static CombatReflection? _activityReflection;
+
+    /// <summary>
+    /// Whether hand cards are moving right now: a draw's batch is open, or a holder has left the transform the last pass
+    /// drew it at (a card gliding in, the row re-centring, a card settling). The hand pass sets it; the value lapses two
+    /// frames after the pass last saw motion, so it cannot stay true after the hand, the fight or portrait mode goes
+    /// away. Engine reads only, and the frame governor asks once a frame.
+    /// </summary>
+    public static bool HandMoving
+    {
+        get
+        {
+            ulong now = Engine.GetProcessFrames();
+            return _handMoving && now >= _handMovingFrame && now - _handMovingFrame <= 2;
+        }
+    }
+
+    /// <summary>
+    /// Whether the game is animating something the player is waiting on, for the frame-rate governor's idle cap: the hand
+    /// is moving (<see cref="HandMoving"/>), or a fight is running with player actions disabled — the enemy turn, a card
+    /// resolving, the turn-start draw (the game disables actions when End Turn is pressed and only enables them after the
+    /// turn's start hooks). The fight half is the game's own state, so it holds in landscape too; the two reads are
+    /// cached members of one reflection instance, built on the first ask.
+    /// </summary>
+    public static bool CombatAnimating
+    {
+        get
+        {
+            if (HandMoving) return true;
+            CombatReflection refl = _activityReflection ??= new CombatReflection(typeof(NGame).Assembly);
+            return refl.IsCombatInProgress() && refl.PlayerActionsDisabled();
+        }
+    }
+
     private static readonly Color PlayableHighlightColor = new(
         PortraitCombatMath.PlayableHighlightRgba.R,
         PortraitCombatMath.PlayableHighlightRgba.G,
@@ -376,6 +424,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private readonly HashSet<ulong> _enlargedPowerAmounts = new();
     private readonly Dictionary<ulong, Dictionary<ulong, Color>> _dimmedCardChildren = new();
     private readonly HashSet<ulong> _boostedHighlights = new();
+    // Hand cards whose glow and shadow ReduceEffects took away while they move, keyed by the card node, with what they
+    // were before, so the pass can put them back at rest (a card keeps its node for its whole life). The list is
+    // refilled per pass for the cards that left the hand.
+    private readonly Dictionary<ulong, ReducedCardEffects> _reducedCardEffects = new();
+    private readonly List<ulong> _reduceRestoreIds = new();
+    private bool _lastReduceEffects;
     private readonly HashSet<ulong> _wiredHolders = new();
     private readonly HashSet<ulong> _wiredSelectionHands = new();
     private readonly HashSet<ulong> _wiredSelectionContainers = new();
@@ -453,6 +507,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private bool _selectionLayoutFailed;
     private bool _selectionLayoutFailureLogged;
     private readonly HandStillness _stillness = new();
+    // The fight's one-shot resources, loaded ahead of the frames that would load them (see CombatAssetWarmup).
+    private readonly CombatAssetWarmup _warmup = new();
+    // The stage pass's per-frame lists and its copy of the ally slots, refilled rather than allocated: the pass runs every
+    // frame of the fight, and six lists plus an array per frame is most of what this layout allocates.
+    private readonly List<Control> _stagePlayers = new();
+    private readonly List<Control> _stagePets = new();
+    private readonly List<Control> _stageEnemies = new();
+    private readonly List<Control> _stageLeft = new();
+    private readonly List<Control> _stageAllies = new();
+    private PortraitCreatureSlot[] _stageAllySlots = [];
     private readonly Dictionary<ulong, Control.MouseFilterEnum> _endTurnFilters = new();
     private readonly Dictionary<ulong, ControlDesktopState> _selectionControls = new();
     private readonly Dictionary<ulong, SelectionHolderEase> _selectionHolderEase = new();
@@ -560,6 +624,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         FitCombatFtueModal(root, portrait: false);
         RestoreAllDimmedCards(refl);
+        RestoreAllReducedCardEffects();
         RestoreEndTurnFilters();
         RestoreSelectionUi();
         RestoreBackgroundBosses();
@@ -625,6 +690,11 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         foreach (ulong id in _boostedHighlights)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _boostedHighlights.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _reducedCardEffects.Keys)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _reducedCardEffects.Remove(id);
 
         dead.Clear();
         foreach (ulong id in _enlargedFonts.Keys)
@@ -824,6 +894,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
 
         Control? hand = ui != null ? Remembered(ui, "Hand", ref _cachedHand) : null;
+        // Load the fight's lazily loaded resources (card frames, power icons, orb assets, sounds) while the room is still on
+        // its entrance, through the game's own threaded loader, so no card visual or status pays for them later.
+        _warmup.Tick(room, hand, refl);
 
         // The bands depend only on the canvas and the run bars, so the rail, the hand and the stage all stay exactly
         // where they are whatever the hand's size: drawing or playing a card cannot move End Turn or the creatures.
@@ -1002,9 +1075,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         List<Control> allHoldersInHand = _allHoldersInHand;
         activeHolders.Clear();
         allHoldersInHand.Clear();
-        foreach (Node child in container.GetChildren())
+        int holderChildren = container.GetChildCount();
+        for (int i = 0; i < holderChildren; i++)
         {
-            if (child is Control holder && !holder.IsQueuedForDeletion() &&
+            if (container.GetChild(i) is Control holder && !holder.IsQueuedForDeletion() &&
                 holder.GetType().FullName == "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder")
             {
                 allHoldersInHand.Add(holder);
@@ -1015,9 +1089,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         // Also check any holder temporarily reparented onto NPlayerHand during drag.
         Control? draggedHolder = null;
-        foreach (Node child in hand.GetChildren())
+        int handChildren = hand.GetChildCount();
+        for (int i = 0; i < handChildren; i++)
         {
-            if (child is Control holder && !holder.IsQueuedForDeletion() &&
+            if (hand.GetChild(i) is Control holder && !holder.IsQueuedForDeletion() &&
                 holder.GetType().FullName == "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder")
             {
                 draggedHolder = holder;
@@ -1116,29 +1191,40 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
         int handCount = heldIndex >= 0 ? effectiveCount : Math.Max(activeHolders.Count, _handCountLock);
 
-        // Everything below is reflective work per card, and the game only re-lays the hand out after an add, a focus, a
-        // selection or a card-play change, all of which are signals or one cheap field. So the pass runs when one of those
-        // is dirty, when a draw is in progress (its cap needs every frame), when a holder is visibly still moving (a tween
-        // is running), and at least every HandIdlePassFrames.
-        ulong pressed = PhoneTouchCards.PressedHolder?.GetInstanceId() ?? 0UL;
+        // Whether anything in the hand is in motion this frame: a draw's batch is open, or a holder left the transform the
+        // last pass drew it at. The pass gate needs it, and so does the frame-rate governor, which must not cap a draw to
+        // 30 fps (see HandMoving); the check is engine reads only.
         long frame = (long)Engine.GetProcessFrames();
-        bool needsPass = _handDirty
-            || _handDrawBatch
-            || FlatHand != _lastHandFlat
-            || inCardPlay != _lastInCardPlay
-            || pressed != _lastPressedHolder
-            || _lastHandBands is not { } lastBands || !lastBands.Equals(bands)
-            || frame - _handLastPassFrame >= HandIdlePassFrames;
-        if (!needsPass)
+        bool handMoving = _handDrawBatch;
+        if (!handMoving)
         {
             foreach (Control holder in activeHolders)
             {
                 if (!_stillness.Moved(holder))
                     continue;
-                needsPass = true;
+                handMoving = true;
                 break;
             }
         }
+        _handMoving = handMoving;
+        _handMovingFrame = (ulong)frame;
+        // A draw's first frame is already past the process step, where the frame cap was last decided and could not yet
+        // see the hand move; decide again now, with it moving, so not even that frame is held at the idle rate.
+        if (handMoving) PhoneFrameCap.Apply();
+
+        // Everything below is reflective work per card, and the game only re-lays the hand out after an add, a focus, a
+        // selection or a card-play change, all of which are signals or one cheap field. So the pass runs when one of those
+        // is dirty, while the hand moves (a draw's cap and the settle need every frame), and at least every
+        // HandIdlePassFrames.
+        ulong pressed = PhoneTouchCards.PressedHolder?.GetInstanceId() ?? 0UL;
+        bool needsPass = _handDirty
+            || handMoving
+            || FlatHand != _lastHandFlat
+            || ReduceEffects != _lastReduceEffects
+            || inCardPlay != _lastInCardPlay
+            || pressed != _lastPressedHolder
+            || _lastHandBands is not { } lastBands || !lastBands.Equals(bands)
+            || frame - _handLastPassFrame >= HandIdlePassFrames;
         PortraitFrameTiming.SetCards(activeHolders.Count);
         PortraitFrameTiming.SetDrawing(_handDrawBatch);
         _diagnoseNeedsPass = needsPass;
@@ -1159,6 +1245,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _lastPressedHolder = pressed;
         _lastHandBands = bands;
         _lastHandFlat = FlatHand;
+        _lastReduceEffects = ReduceEffects;
 
         HashSet<ulong> activeDimmedCardIds = _activeDimmedCardIds;
         activeDimmedCardIds.Clear();
@@ -1227,10 +1314,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             float restingAngle = isFocused ? 0f : slot.AngleDegrees;
             CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive, restingAngle);
             _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale), restingAngle);
+            // A card rests when this frame draws it exactly where its slot puts it. Anything short of that is in flight:
+            // the frame a draw arrives on (at the draw pile) and the glide toward its slot. Only Reduce Effects reads it
+            // (the pass runs on every drawn frame of a draw), so with the setting off the check is skipped.
+            bool resting = !ReduceEffects || ((holder.Position - slotPosition).LengthSquared() <= 1f &&
+                MathF.Abs(holder.Scale.X - slot.Scale) <= 0.01f &&
+                MathF.Abs(holder.RotationDegrees - restingAngle) <= 0.5f);
 
             if (cardNode != null)
             {
-                ApplyCardPlayabilityVisuals(holder, cardNode, refl, combatInProgress, playable, activeDimmedCardIds);
+                ApplyCardPlayabilityVisuals(holder, cardNode, refl, combatInProgress, playable, activeDimmedCardIds, resting);
             }
         }
 
@@ -1276,6 +1369,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     _dimmedCardChildren.Remove(cardId);
             }
         }
+
+        // A reduced card that left the hand mid-draw gets its glow and shadow back before it is drawn anywhere else.
+        RestoreReducedEffectsOfLeavingCards(container);
     }
 
     /// <summary>
@@ -2111,7 +2207,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         CombatReflection refl,
         bool combatInProgress,
         bool playable,
-        HashSet<ulong> activeDimmedCardIds)
+        HashSet<ulong> activeDimmedCardIds,
+        bool resting)
     {
         ulong cardId = cardNode.GetInstanceId();
         Control? body = refl.CardBodyProp?.GetValue(cardNode) as Control ?? cardNode.GetNodeOrNull<Control>("%CardContainer");
@@ -2140,6 +2237,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                         mat.SetShaderParameter("width", 0.095f);
                 }
             }
+            ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting);
             return;
         }
 
@@ -2153,9 +2251,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
 
             float dim = PortraitCombatMath.UnplayableBodyBrightness;
-            foreach (Node child in body.GetChildren())
+            int bodyChildren = body.GetChildCount();
+            for (int i = 0; i < bodyChildren; i++)
             {
-                if (child is not CanvasItem item || SkippedCardBodyChildren.Contains(item.Name))
+                if (body.GetChild(i) is not CanvasItem item || SkippedCardBodyChildren.Contains(item.Name))
                     continue;
                 ulong childId = item.GetInstanceId();
                 if (!saved.TryGetValue(childId, out Color orig))
@@ -2187,6 +2286,134 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     energyLabel.AddThemeColorOverride("font_color", UnaffordableCostColor);
             }
         }
+
+        ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting);
+    }
+
+    /// <summary>
+    /// What Reduce Effects took away from a moving card. Both nodes are visible in the card scene and the game never
+    /// hides either — <c>AnimHide</c> only takes the glow's shader width to 0 — so putting them back is simply visible,
+    /// with the width the game would have been showing at rest.
+    /// </summary>
+    private struct ReducedCardEffects
+    {
+        public ulong HolderId;
+        public ulong HighlightId;
+        // The width the game's own half-second tween was heading to, written back once instead (see the restore).
+        public float HighlightWidth;
+        public ulong ShadowId;
+    }
+
+    /// <summary>
+    /// Reduce Effects on the hand: a card in flight from a draw — its first frames at the draw pile, its glide to its
+    /// slot, the row re-centring around the cards still arriving — draws without its glow and its shadow, and the glow's
+    /// tween is killed rather than run: the game's half-second <c>AnimShow</c> writes the highlight's shader width on
+    /// every frame of it, for every drawn card. A card that once lost them keeps them off until it rests, so the batch's
+    /// re-centring cannot blink the glow of a card that momentarily reaches its old slot; at rest everything comes back,
+    /// the width written once instead of tweened, so a resting playable card looks exactly as it does with the setting
+    /// off. A hand that moves for another reason (a card played, a press) is left alone.
+    /// </summary>
+    private void ApplyReducedCardEffects(Control holder, ulong cardId, CombatReflection refl, bool combatInProgress,
+        bool playable, Control? body, Control? highlight, bool resting)
+    {
+        bool reduced = ReduceEffects && !resting && (_handDrawBatch || _reducedCardEffects.ContainsKey(cardId));
+        if (!reduced)
+        {
+            RestoreReducedCardEffects(cardId);
+            return;
+        }
+
+        if (_reducedCardEffects.TryGetValue(cardId, out ReducedCardEffects already))
+        {
+            if (already.HolderId == holder.GetInstanceId())
+            {
+                // The game may start a new glow tween while the card is still moving (a cost change, a model update), and
+                // that tween would write the shader width of a highlight nobody draws on every frame: stop it again.
+                if (refl.HighlightTweenField?.GetValue(highlight) is Tween movedTween && movedTween.IsRunning())
+                    movedTween.Kill();
+                return;
+            }
+            // The card node came back from the pool under a new holder: the old card's state is not this card's.
+            _reducedCardEffects.Remove(cardId);
+        }
+
+        bool glowGold = (bool)(refl.HolderGlowGoldProp?.GetValue(holder) ?? false);
+        bool glowRed = (bool)(refl.HolderGlowRedProp?.GetValue(holder) ?? false);
+        var state = new ReducedCardEffects
+        {
+            HolderId = holder.GetInstanceId(),
+            // The width the game would be showing at rest: the playable boost in a fight, the game's own AnimShow value
+            // for a gold or red glow, nothing at all (a card's AnimHide target) for the rest.
+            HighlightWidth = combatInProgress && playable ? 0.095f : glowGold || glowRed ? 0.075f : 0f,
+        };
+        if (highlight != null)
+        {
+            if (refl.HighlightTweenField?.GetValue(highlight) is Tween tween && tween.IsRunning())
+                tween.Kill();
+            state.HighlightId = highlight.GetInstanceId();
+            highlight.Visible = false;
+        }
+        if (body?.GetNodeOrNull<CanvasItem>("Shadow") is { } shadow)
+        {
+            state.ShadowId = shadow.GetInstanceId();
+            shadow.Visible = false;
+        }
+        _reducedCardEffects[cardId] = state;
+    }
+
+    /// <summary>Puts a card's glow and shadow back, writing the glow width once instead of running its tween.</summary>
+    private void RestoreReducedCardEffects(ulong cardId)
+    {
+        if (!_reducedCardEffects.Remove(cardId, out ReducedCardEffects state))
+            return;
+        if (state.HighlightId != 0 && GodotObject.InstanceFromId(state.HighlightId) is Control highlight &&
+            GodotObject.IsInstanceValid(highlight))
+        {
+            highlight.Visible = true;
+            if (highlight.Material is ShaderMaterial mat)
+                mat.SetShaderParameter("width", state.HighlightWidth);
+        }
+        if (state.ShadowId != 0 && GodotObject.InstanceFromId(state.ShadowId) is CanvasItem shadow &&
+            GodotObject.IsInstanceValid(shadow))
+            shadow.Visible = true;
+    }
+
+    /// <summary>
+    /// A card that left the hand while its effects were reduced (an effect played it straight out of a draw, or the hand
+    /// went away mid-draw) gets them back before it is shown anywhere else and before its node goes back to the pool,
+    /// whose reset does not touch the highlight's visibility.
+    /// </summary>
+    private void RestoreReducedEffectsOfLeavingCards(Control container)
+    {
+        if (_reducedCardEffects.Count == 0)
+            return;
+        List<ulong> leaving = _reduceRestoreIds;
+        leaving.Clear();
+        foreach ((ulong cardId, ReducedCardEffects state) in _reducedCardEffects)
+        {
+            bool stillInTheHand =
+                GodotObject.InstanceFromId(state.HolderId) is Control holder &&
+                GodotObject.IsInstanceValid(holder) &&
+                holder.GetParent() == container &&
+                GodotObject.InstanceFromId(cardId) is Control card &&
+                GodotObject.IsInstanceValid(card) &&
+                card.IsInsideTree();
+            if (!stillInTheHand)
+                leaving.Add(cardId);
+        }
+        foreach (ulong cardId in leaving)
+            RestoreReducedCardEffects(cardId);
+    }
+
+    /// <summary>Every reduced card gets its effects back (Portrait Mode off, the setting off, or the layout giving up).</summary>
+    private void RestoreAllReducedCardEffects()
+    {
+        if (_reducedCardEffects.Count == 0)
+            return;
+        var cards = new List<ulong>(_reducedCardEffects.Keys);
+        foreach (ulong cardId in cards)
+            RestoreReducedCardEffects(cardId);
+        _reducedCardEffects.Clear();
     }
 
     private void RestoreSingleCardVisuals(Control cardNode, CombatReflection refl, bool keepHighlightBoost = false)
@@ -2433,10 +2660,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             enemyContainer.Position = centerOrigin;
         }
 
-        // Partition active creature nodes into players, pets, and enemies.
-        var players = new List<Control>();
-        var pets = new List<Control>();
-        var currentEnemies = new List<Control>();
+        // Partition active creature nodes into players, pets, and enemies. The lists are refilled: the pass runs every frame.
+        List<Control> players = _stagePlayers;
+        List<Control> pets = _stagePets;
+        List<Control> currentEnemies = _stageEnemies;
+        players.Clear();
+        pets.Clear();
+        currentEnemies.Clear();
         bool hasOrbs = false;
 
         if (refl.RoomCreatureNodesField?.GetValue(room) is IEnumerable creatureList)
@@ -2480,12 +2710,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // scale (and its own cell), never rescale the hero and the units already on screen.
         if (plan.BodyScaleFrozen)
             plan.SharedBodyScale = plan.FrozenBodyScale;
-        PortraitCreatureSlot[] allySlots = (PortraitCreatureSlot[])plan.AllySlots.Clone();
+        PortraitCreatureSlot[] allySlots = _stageAllySlots;
+        if (allySlots.Length != plan.AllySlots.Length)
+            _stageAllySlots = allySlots = new PortraitCreatureSlot[plan.AllySlots.Length];
+        Array.Copy(plan.AllySlots, allySlots, plan.AllySlots.Length);
 
         // The game stands some enemies on the player's left (the Kaiser Crab's Crusher, with the
         // player in the middle and the Rocket on the right; its Surrounded power makes the side the player faces matter).
         // Those keep their side: the player moves to the middle and the enemies the game has on the left stand left of it.
-        var leftEnemies = new List<Control>();
+        List<Control> leftEnemies = _stageLeft;
+        leftEnemies.Clear();
         if (players.Count > 0 && _creatures.TryGetValue(players[0].GetInstanceId(), out CreatureDesktopState? playerDesktop))
         {
             foreach (Control enemy in currentEnemies)
@@ -2530,7 +2764,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
         }
 
-        var orderedAllies = new List<Control>(players.Count + pets.Count);
+        List<Control> orderedAllies = _stageAllies;
+        orderedAllies.Clear();
         orderedAllies.AddRange(players);
         orderedAllies.AddRange(pets);
 
@@ -3684,8 +3919,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
     private static void CollectOrbs(Node node, List<Control> orbs)
     {
-        foreach (Node child in node.GetChildren())
+        int children = node.GetChildCount();
+        for (int i = 0; i < children; i++)
         {
+            Node child = node.GetChild(i);
             if (child is Control control && control.GetType().Name == "NOrb")
                 orbs.Add(control);
             else
@@ -3764,8 +4001,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             {
                 cState.LastPowerChildCount = powerChildren;
                 cState.PowerChildrenDirty = false;
-                foreach (Node power in powerContainer.GetChildren())
+                for (int i = 0; i < powerChildren; i++)
                 {
+                    Node power = powerContainer.GetChild(i);
                     if (!_enlargedPowerAmounts.Add(power.GetInstanceId()))
                         continue;
                     EnlargeLabelFont(power.GetNodeOrNull<Label>("%AmountLabel") ?? power.GetNodeOrNull<Label>("AmountLabel"),
@@ -3837,7 +4075,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // bodies. The band also clears the foot line by a few units instead of starting exactly on it, because every body
         // ends on that line and a bar touching it is reported as overlapping the body standing beside it.
         float ownFeet = OwnFeetLine(creature, cState);
-        Control bandNode = hpBar.GetNodeOrNull<Control>("%HpLabel") ?? hpBar.GetNodeOrNull<Control>("HpLabel") ?? hpBar;
+        // The label the band and the block-shield rule use, remembered on the state while it stays valid: this pass asks for
+        // it on every frame of the fight, and a % path resolves through the unique-name map.
+        Label? hpLabel = cState.HpRuleLabel is { } knownLabel && GodotObject.IsInstanceValid(knownLabel)
+            ? knownLabel
+            : hpBar.GetNodeOrNull<Label>("%HpLabel") ?? hpBar.GetNodeOrNull<Label>("HpLabel");
+        Control bandNode = hpLabel ?? hpBar;
         float bandTop = bandNode.GetGlobalRect().Position.Y;
         if (ownFeet > 1f)
         {
@@ -3854,7 +4097,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // The block shield is drawn at the bar's left end; on a narrow bar it covers the first digit of the centred HP
         // text (a 7 shield over "12/29" shows "2/29"). The native bar never moves the label, so the digit is moved clear
         // here — only while a block is shown, only as far as it must, and never past the bar's right end.
-        if (bandNode is Label hpLabel)
+        if (hpLabel != null)
             using (PortraitFrameTiming.Begin(PortraitFrameTiming.HpText))
                 KeepHpTextClearOfBlockBand(creature, cState, hpBar, hpLabel);
 
@@ -4472,9 +4715,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private static int CountVisiblePowers(Control powerContainer)
     {
         int count = 0;
-        foreach (Node power in powerContainer.GetChildren())
+        int children = powerContainer.GetChildCount();
+        for (int i = 0; i < children; i++)
         {
-            if (power is Control { Visible: true } icon && !icon.IsQueuedForDeletion())
+            if (powerContainer.GetChild(i) is Control { Visible: true } icon && !icon.IsQueuedForDeletion())
                 count++;
         }
         return count;
@@ -5506,8 +5750,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             _vfxCreatures.AddRange(allies);
             _vfxCreatures.AddRange(enemies);
 
-            foreach (Node child in container.GetChildren())
+            int vfxChildren = container.GetChildCount();
+            for (int i = 0; i < vfxChildren; i++)
             {
+                Node child = container.GetChild(i);
                 if (child.IsQueuedForDeletion())
                     continue;
                 if (child is not Node2D && child is not Control)
@@ -6381,7 +6627,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             target != null && field?.GetValue(target) is Vector2 v ? v : fallback;
     }
 
-    private sealed class CombatReflection
+    internal sealed class CombatReflection
     {
         private readonly PropertyInfo? _combatRoomInstanceProp;
         private readonly PropertyInfo? _combatMgrInstanceProp;
@@ -6440,6 +6686,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         public readonly MethodInfo? CardUpdateEnergyCostMethod;
         public readonly MethodInfo? CardModelCanPlayMethod;
         public readonly FieldInfo? HighlightTweenField;
+
+        // The combat asset warmup's paths: a card model's pool frame material and energy icon, its banner material and the
+        // atlas sprites it draws, and the big/atlas icons of a creature's powers.
+        private readonly PropertyInfo? _cardPoolProp, _poolFrameMaterialPathProp, _poolEnergyIconPathProp;
+        private readonly PropertyInfo? _bannerMaterialPathProp, _portraitPathProp, _framePathProp, _portraitBorderPathProp,
+            _bannerTexturePathProp;
+        private readonly PropertyInfo? _creaturePowersProp, _powerBigIconPathProp, _powerPackedIconPathProp;
 
         public readonly FieldInfo? EndTurnStateField;
         public readonly FieldInfo? EndTurnPosTweenField;
@@ -6586,6 +6839,22 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
             Type? cardModelType = sts2.GetType("MegaCrit.Sts2.Core.Models.CardModel");
             CardModelCanPlayMethod = cardModelType?.GetMethod("CanPlay", InstAll, null, Type.EmptyTypes, null);
+            // The warmup's card paths: the pool's frame material and energy sprite font, and the card's own banner material
+            // and atlas sprites.
+            Type? cardPoolModelType = sts2.GetType("MegaCrit.Sts2.Core.Models.CardPoolModel");
+            _poolFrameMaterialPathProp = FindProperty(cardPoolModelType, "FrameMaterialPath");
+            _poolEnergyIconPathProp = FindProperty(cardPoolModelType, "EnergyIconPath");
+            _cardPoolProp = FindProperty(cardModelType, "Pool");
+            _bannerMaterialPathProp = FindProperty(cardModelType, "BannerMaterialPath");
+            _portraitPathProp = FindProperty(cardModelType, "PortraitPath");
+            _framePathProp = FindProperty(cardModelType, "FramePath");
+            _portraitBorderPathProp = FindProperty(cardModelType, "PortraitBorderPath");
+            _bannerTexturePathProp = FindProperty(cardModelType, "BannerTexturePath");
+            Type? creatureModelType = sts2.GetType("MegaCrit.Sts2.Core.Entities.Creatures.Creature");
+            _creaturePowersProp = FindProperty(creatureModelType, "Powers");
+            Type? powerModelType = sts2.GetType("MegaCrit.Sts2.Core.Models.PowerModel");
+            _powerBigIconPathProp = FindProperty(powerModelType, "BigIconPath");
+            _powerPackedIconPathProp = FindProperty(powerModelType, "PackedIconPath");
 
             Type? highlightType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Cards.NCardHighlight");
             HighlightTweenField = FindField(highlightType, "_curTween");
@@ -6726,6 +6995,104 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             if (EnergyCounterField?.GetValue(ui) is not Control counter)
                 return null;
             return EnergyCounterPlayerField?.GetValue(counter);
+        }
+
+        // ---- Combat asset warmup (see CombatAssetWarmup): the paths the game loads on their first use in a fight. ----
+
+        private static readonly string[] CombatPileNames = ["Hand", "Draw", "Discard", "Exhaust", "Play"];
+
+        /// <summary>Every card model in the player's combat piles, i.e. the whole deck this fight can draw or show.</summary>
+        public List<object> CombatCardModels(Control hand)
+        {
+            var models = new List<object>(64);
+            object? player = PlayerOf(hand);
+            if (player == null || CardPileGetMethod == null || CardPileCardsProp == null)
+                return models;
+            Type pileType = CardPileGetMethod.GetParameters()[0].ParameterType;
+            foreach (string pileName in CombatPileNames)
+            {
+                object? pile;
+                try
+                {
+                    pile = CardPileGetMethod.Invoke(null, [Enum.Parse(pileType, pileName), player]);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+                if (pile == null || CardPileCardsProp.GetValue(pile) is not System.Collections.IEnumerable cards)
+                    continue;
+                foreach (object? card in cards)
+                    if (card != null)
+                        models.Add(card);
+            }
+            return models;
+        }
+
+        /// <summary>
+        /// The visual resources a card model draws: the pool's frame material and energy sprite font (the two the device log
+        /// shows loaded on the first card of every room), the banner material, and the atlas-backed portrait, frame, border
+        /// and banner sprites.
+        /// </summary>
+        public void AddCardVisualPaths(object model, List<string> paths)
+        {
+            AddWarmupPath(_bannerMaterialPathProp?.GetValue(model) as string, paths);
+            AddWarmupPath(_portraitPathProp?.GetValue(model) as string, paths);
+            AddWarmupPath(_framePathProp?.GetValue(model) as string, paths);
+            AddWarmupPath(_portraitBorderPathProp?.GetValue(model) as string, paths);
+            AddWarmupPath(_bannerTexturePathProp?.GetValue(model) as string, paths);
+            if (_cardPoolProp?.GetValue(model) is { } pool)
+            {
+                AddWarmupPath(_poolFrameMaterialPathProp?.GetValue(pool) as string, paths);
+                AddWarmupPath(_poolEnergyIconPathProp?.GetValue(pool) as string, paths);
+            }
+        }
+
+        /// <summary>The big icon (the power flash and the hover tip) and the atlas icon of every power on a creature.</summary>
+        public void AddCreaturePowerPaths(Control creature, List<string> paths)
+        {
+            object? entity = CreatureEntityProp?.GetValue(creature);
+            if (entity == null || _creaturePowersProp?.GetValue(entity) is not System.Collections.IEnumerable powers)
+                return;
+            foreach (object? power in powers)
+            {
+                if (power == null)
+                    continue;
+                AddWarmupPath(_powerBigIconPathProp?.GetValue(power) as string, paths);
+                AddWarmupPath(_powerPackedIconPathProp?.GetValue(power) as string, paths);
+            }
+        }
+
+        /// <summary>The room's live creature nodes (players, pets and enemies).</summary>
+        public List<Control> RoomCreatures(Control room)
+        {
+            var creatures = new List<Control>(8);
+            if (RoomCreatureNodesField?.GetValue(room) is not System.Collections.IEnumerable nodes)
+                return creatures;
+            foreach (object? item in nodes)
+                if (item is Control creature && GodotObject.IsInstanceValid(creature))
+                    creatures.Add(creature);
+            return creatures;
+        }
+
+        /// <summary>Whether any player-side creature has an orb queue, i.e. the fight can draw or evoke an orb.</summary>
+        public bool AnyPlayerHasOrbs(Control room)
+        {
+            foreach (Control creature in RoomCreatures(room))
+            {
+                object? entity = CreatureEntityProp?.GetValue(creature);
+                if (entity == null || !IsPlayerSide(entity))
+                    continue;
+                if (CreatureHasOrbs(creature))
+                    return true;
+            }
+            return false;
+        }
+
+        private static void AddWarmupPath(string? path, List<string> paths)
+        {
+            if (!string.IsNullOrEmpty(path))
+                paths.Add(path!);
         }
 
         /// <summary>
@@ -6999,5 +7366,43 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
             return null;
         }
+    }
+}
+
+/// <summary>
+/// The idle frame cap's one write, shared by the two places that need it: <c>PhoneGraphics</c> publishes the player's
+/// choices and touch state every frame and applies the cap, and the portrait hand pass applies it again on a frame where
+/// a draw has just started — that frame's process step, where <c>PhoneGraphics</c> ran, could not see the motion yet. The
+/// test host makes the same two calls, so a run exercises the app's own path. Nothing is written until the choices have
+/// been published.
+/// </summary>
+internal static class PhoneFrameCap
+{
+    private static PhoneGraphicsSettings _settings = PhoneGraphicsSettings.Default;
+    private static int _gameLimit;
+    private static double _secondsSinceTouch;
+    private static int _thermalState = DevicePower.UnknownThermalState;
+    private static bool _touching;
+    private static bool _published;
+
+    /// <summary>The state the pure <see cref="FrameRateGovernor.Target"/> decides from; called once a frame by PhoneGraphics.</summary>
+    public static void SetInputs(int gameLimit, PhoneGraphicsSettings settings, bool touching, double secondsSinceTouch,
+        int thermalState)
+    {
+        _gameLimit = gameLimit;
+        _settings = settings;
+        _touching = touching;
+        _secondsSinceTouch = secondsSinceTouch;
+        _thermalState = thermalState;
+        _published = true;
+    }
+
+    /// <summary>Writes <c>Engine.MaxFps</c> from the published state and the game's activity now.</summary>
+    public static void Apply()
+    {
+        if (!_published) return;
+        int target = FrameRateGovernor.Target(_gameLimit, _settings, _touching, _secondsSinceTouch, _thermalState,
+            PortraitCombatLayout.CombatAnimating);
+        if (Engine.MaxFps != target) Engine.MaxFps = target;
     }
 }

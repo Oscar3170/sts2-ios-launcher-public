@@ -58,6 +58,7 @@ public sealed partial class PhoneGraphics : Node
             if (!_settings.StartInPortrait && _settings.PortraitMode)
                 _settings = _settings.WithPortraitMode(false);
             PortraitCombatLayout.FlatHand = _settings.FlatHand;
+            PortraitCombatLayout.ReduceEffects = _settings.ReduceEffects;
             PortraitFrameTiming.SetEnabled(_settings.PerformanceLog);
             _appliedFactor = DevicePower.RenderScale();
             GD.Print("Phone graphics: ", _settings.Describe(_appliedFactor));
@@ -136,9 +137,13 @@ public sealed partial class PhoneGraphics : Node
         {
             double now = Now();
             if (_touches.Count > 0) _lastTouch = now;
-            int target = FrameRateGovernor.Target(SaveManager.Instance.SettingsSave.FpsLimit, _settings, _touches.Count > 0,
+            // The game's own activity counts as activity: a turn draw and an enemy turn start more than two seconds after
+            // the last touch, and capping those to 30 fps was what made draws and enemy turns run at half rate. The idle
+            // cap comes back the frame the fight settles. PhoneFrameCap is also called from the hand pass, which sees a
+            // draw start in the same frame's pre-draw pass.
+            PhoneFrameCap.SetInputs(SaveManager.Instance.SettingsSave.FpsLimit, _settings, _touches.Count > 0,
                 now - _lastTouch, _settings.CoolDownWhenHot ? DevicePower.ThermalState() : DevicePower.UnknownThermalState);
-            if (Engine.MaxFps != target) Engine.MaxFps = target;
+            PhoneFrameCap.Apply();
         }
         catch (Exception error)
         {
@@ -265,6 +270,11 @@ public sealed partial class PhoneGraphics : Node
                 () => _settings.LowerIdleFrameRate ? 1 : 0, choice => Store(_settings with { LowerIdleFrameRate = choice == 1 }), out _, out _, out _);
             AddRow(content, template, divider, index, "Cool Down When Hot", () => OffOn,
                 () => _settings.CoolDownWhenHot ? 1 : 0, choice => Store(_settings with { CoolDownWhenHot = choice == 1 }), out _, out _, out _);
+            AddRow(content, template, divider, index, "Reduce Effects", () => OffOn,
+                () => _settings.ReduceEffects ? 1 : 0,
+                choice => Store(_settings.WithReduceEffects(choice == 1)),
+                out _, out _, out _,
+                subtitle: "Skip hand card glow and shadows while they move (portrait). No gameplay change.");
             RefreshPortraitDefaultRow();
             _portraitLayout.ApplyImmediate();
             // The panel sizes its scroll area and builds controller navigation in its own _Ready.
@@ -363,6 +373,7 @@ public sealed partial class PhoneGraphics : Node
     {
         if (settings == _settings) return;
         _settings = settings;
+        PortraitCombatLayout.ReduceEffects = _settings.ReduceEffects;
         try
         {
             _settings.Save(_path);
