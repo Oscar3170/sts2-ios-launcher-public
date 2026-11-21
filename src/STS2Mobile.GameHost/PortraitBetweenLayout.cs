@@ -19,6 +19,7 @@ internal sealed partial class PortraitBetweenLayout
     public const string RewardsScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen";
     public const string CardRewardTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NCardRewardSelectionScreen";
     public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
+    public const string DeckCardSelectTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NDeckCardSelectScreen";
     public const string MerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantInventory";
     public const string FakeMerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NFakeMerchantInventory";
     public const string MerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom";
@@ -34,7 +35,7 @@ internal sealed partial class PortraitBetweenLayout
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
-        MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
+        MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName, DeckCardSelectTypeName,
         MerchantInventoryTypeName, FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
         BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, AncientDialogueLineTypeName,
         MerchantRoomTypeName, BlitzMerchantRoomTypeName, FakeMerchantRoomTypeName,
@@ -158,6 +159,9 @@ internal sealed partial class PortraitBetweenLayout
             case CardGridTypeName:
                 LayoutCardGridPortrait(control, capHeight, canvasHeight, canvasWidth);
                 if (control.GetType().FullName == CardGridTypeName) _grids.Add(control.GetInstanceId());
+                break;
+            case DeckCardSelectTypeName:
+                LayoutShopRemovalPreview(control);
                 break;
             case AncientLayoutTypeName:
                 LayoutAncientPortrait(control, canvasWidth);

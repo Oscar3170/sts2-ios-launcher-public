@@ -107,6 +107,12 @@ internal sealed class PhoneSelectConfirm
         /// <summary>Puts back what <see cref="Suppress"/> changed.</summary>
         internal virtual void Restore(Control screen, Control item) { }
 
+        /// <summary>Portrait now owns the screen: its items may need their native take taken off its release.</summary>
+        internal virtual void Attach(Control screen) { }
+
+        /// <summary>Portrait lets the screen go: its native take must work again.</summary>
+        internal virtual void Detach(Control screen) { }
+
         /// <summary>A node under the screen that holds the items, remembered once (never searched by path per frame).</summary>
         protected Control? Row(Control screen, string path)
         {
@@ -123,6 +129,7 @@ internal sealed class PhoneSelectConfirm
         internal readonly Control Screen = screen;
         internal readonly ulong ScreenId = screen.GetInstanceId();
         internal readonly SelectAdapter Adapter = adapter;
+        internal bool Attached;
     }
 
     private sealed class Selection
@@ -324,9 +331,35 @@ internal sealed class PhoneSelectConfirm
         if (_failed || !SafeAreaCanvas.IsPortrait || !GodotObject.IsInstanceValid(screen)) return;
         ulong id = screen.GetInstanceId();
         foreach (Tracked tracked in _screens)
-            if (tracked.ScreenId == id) return;
-        _screens.Add(new Tracked(screen, adapter));
+        {
+            if (tracked.ScreenId != id) continue;
+            if (tracked.Attached) return;
+            tracked.Attached = true;
+            tracked.Adapter.Attach(screen);
+            return;
+        }
+        _screens.Add(new Tracked(screen, adapter) { Attached = true });
+        adapter.Attach(screen);
         screen.TreeExiting += () => OnScreenExiting(id);
+    }
+
+    /// <summary>Leaves the screen to the game: everything <see cref="SelectAdapter.Attach"/> took off must be put back.</summary>
+    private void DetachAll()
+    {
+        foreach (Tracked tracked in _screens)
+        {
+            if (!tracked.Attached) continue;
+            tracked.Attached = false;
+            if (!GodotObject.IsInstanceValid(tracked.Screen)) continue;
+            try
+            {
+                tracked.Adapter.Detach(tracked.Screen);
+            }
+            catch (Exception error)
+            {
+                GD.PrintErr("Phone select confirm: the screen's native input could not be put back: ", error.Message);
+            }
+        }
     }
 
     private void OnScreenExiting(ulong screenId)
@@ -393,6 +426,7 @@ internal sealed class PhoneSelectConfirm
             if (!portrait)
             {
                 if (_selected != null) Drop("landscape", counted: true);
+                DetachAll();
                 ResetPress();
                 return;
             }
@@ -424,6 +458,7 @@ internal sealed class PhoneSelectConfirm
         _failed = true;
         GD.PrintErr("Phone select confirm: turned off after an error: ", error);
         if (_selected != null) Drop("turned off", counted: false);
+        DetachAll();
     }
 
     // ---- Press, hold, release ---------------------------------------------------------------------------------------------
@@ -828,6 +863,12 @@ internal sealed class PhoneSelectConfirm
     private sealed class TreasureAdapter(PhoneSelectConfirm owner) : SelectAdapter(owner)
     {
         private readonly Dictionary<Type, FieldInfo?> _holdersFields = new();
+        private readonly Dictionary<ulong, int> _knownCounts = new();
+
+        // Each holder's own Released -> collection.PickRelic connection, taken off while portrait owns the chest (the second
+        // tap calls PickRelic itself). The native signal fires from the holder's release whatever the press flag says, so the
+        // press's whole release has to be kept from the collection.
+        private readonly Dictionary<ulong, List<(Control Holder, Callable Callable)>> _blocked = new();
 
         internal override string Label => "treasure relic";
         internal override bool CardOutline => false;
@@ -840,7 +881,19 @@ internal sealed class PhoneSelectConfirm
             return field?.GetValue(screen) as IList;
         }
 
-        internal override int ItemCount(Control screen) => Holders(screen)?.Count ?? 0;
+        internal override int ItemCount(Control screen)
+        {
+            IList? holders = Holders(screen);
+            int count = holders?.Count ?? 0;
+            // The collection connects its holders' release when the chest opens; take it off then, before the first press.
+            ulong id = screen.GetInstanceId();
+            if (!_knownCounts.TryGetValue(id, out int known) || known != count)
+            {
+                _knownCounts[id] = count;
+                if (count > 0) Block(screen);
+            }
+            return count;
+        }
 
         internal override Control? ItemAt(Control screen, int index)
         {
@@ -855,6 +908,65 @@ internal sealed class PhoneSelectConfirm
         // A chest holder is made once for its relic and never shows another; the collection is built again for the next
         // chest. Its identity is the holder itself, not its relic node, so nothing read from the animating relic can drop it.
         internal override bool ModelCanChange => false;
+
+        /// <summary>The selecting press must not reach the collection: its own release would pick the relic straight away.</summary>
+        internal override void Suppress(Control screen, Control item)
+        {
+            Owner.ClearPress(item);
+            Block(screen);
+        }
+
+        internal override void Attach(Control screen) => Block(screen);
+
+        internal override void Detach(Control screen) => Unblock(screen);
+
+        /// <summary>
+        /// Takes every holder's <c>Released</c> connection off while portrait owns the chest. The collection connects it in
+        /// <c>InitializeRelics</c> (after the collection is tracked), so it is scanned again on every press; only connections
+        /// made since the last scan are new to block.
+        /// </summary>
+        private void Block(Control screen)
+        {
+            // A chest that has gone leaves nothing to put back; the holder nodes went with it.
+            foreach (ulong dead in _blocked.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _blocked.Remove(dead);
+            foreach (ulong dead in _knownCounts.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _knownCounts.Remove(dead);
+            ulong screenId = screen.GetInstanceId();
+            if (!_blocked.TryGetValue(screenId, out List<(Control Holder, Callable Callable)>? blocked))
+                _blocked[screenId] = blocked = new();
+            IList? holders = Holders(screen);
+            if (holders == null) return;
+            foreach (object? entry in holders)
+            {
+                if (entry is not Control holder || !GodotObject.IsInstanceValid(holder) || !holder.IsInsideTree()) continue;
+                foreach (Godot.Collections.Dictionary connection in holder.GetSignalConnectionList("Released"))
+                {
+                    Variant value = connection["callable"];
+                    if (value.VariantType != Variant.Type.Callable) continue;
+                    Callable callable = value.AsCallable();
+                    if (blocked.Any(b => ReferenceEquals(b.Holder, holder) && b.Callable.Equals(callable))) continue;
+                    holder.Disconnect("Released", callable);
+                    blocked.Add((holder, callable));
+                    GD.Print("Phone select confirm: the treasure relic waits for the second tap.");
+                }
+            }
+        }
+
+        private void Unblock(Control screen)
+        {
+            if (!_blocked.Remove(screen.GetInstanceId(), out List<(Control Holder, Callable Callable)>? blocked)) return;
+            foreach ((Control holder, Callable callable) in blocked)
+            {
+                if (!GodotObject.IsInstanceValid(holder) || !holder.IsInsideTree()) continue;
+                try
+                {
+                    holder.Connect("Released", callable);
+                }
+                catch (Exception error)
+                {
+                    GD.PrintErr("Phone select confirm: the treasure relic's native pick could not be put back: ", error.Message);
+                }
+            }
+        }
 
         internal override Panel AttachOutline(Control item)
         {

@@ -110,6 +110,9 @@ internal sealed partial class PortraitBetweenLayout
         public Control? RelicsGroup;
         public Control? PotionsGroup;
         public Control? BlitzGroup;
+        public bool BlitzRoom;
+        public Control? BlitzFooter;
+        public bool? BlitzFooterFitContent;
         public int GroupSignature = -1;
     }
 
@@ -119,10 +122,12 @@ internal sealed partial class PortraitBetweenLayout
         public string TypeName = "";
         public Vector2 Canvas;
         public bool Blitz;
+        public Control? Room;
         public Control? Scene;
         public Control? Bg;
         public Control? Party;
         public Control? Merchant;
+        public Control? BlitzMerchant;
         public Vector2 MerchantHome;
         public readonly List<ShopRoomLayer> Layers = new();
         public TextureRect? Underlay;
@@ -240,12 +245,23 @@ internal sealed partial class PortraitBetweenLayout
         state.BlitzGroup = FindShopGroup(inventory, stock, "BlitzSlots");
         state.Removal = stock.GetNodeOrNull<Control>("MerchantCardRemoval") ??
                         inventory.GetNodeOrNull<Control>("%MerchantCardRemoval");
+        // The standard inventory carries the Blitz container too, hidden and full: the room decides the mode, not the count.
+        state.BlitzRoom = IsInBlitzRoom(inventory) || state.BlitzGroup?.Visible == true;
+        state.BlitzFooter = stock.GetNodeOrNull<Control>("BlitzSelectionText") ??
+                            inventory.GetNodeOrNull<Control>("%BlitzSelectionText");
         RefreshShopGroups(state);
         return state;
     }
 
     private static Control? FindShopGroup(Control inventory, TextureRect stock, string name) =>
         stock.GetNodeOrNull<Control>(name) ?? inventory.GetNodeOrNull<Control>("%" + name);
+
+    private static bool IsInBlitzRoom(Node node)
+    {
+        for (Node? parent = node.GetParent(); parent != null; parent = parent.GetParent())
+            if (parent.GetType().FullName == BlitzMerchantRoomTypeName) return true;
+        return false;
+    }
 
     private static int GroupChildren(Control? group) =>
         group != null && GodotObject.IsInstanceValid(group) ? group.GetChildCount() : 0;
@@ -278,7 +294,8 @@ internal sealed partial class PortraitBetweenLayout
         AddGroupSlots(state, state.ColorlessGroup, state.CardGroups, state.Colorless);
         AddGroupSlots(state, state.RelicsGroup, state.ItemGroups, state.Relics);
         AddGroupSlots(state, state.PotionsGroup, state.ItemGroups, state.Potions);
-        AddGroupSlots(state, state.BlitzGroup, state.ItemGroups, state.BlitzSlots);
+        // Only a Blitz room's container is stock: in a standard room the same scene node holds six hidden slots.
+        if (state.BlitzRoom) AddGroupSlots(state, state.BlitzGroup, state.ItemGroups, state.BlitzSlots);
         if (state.Removal != null && GodotObject.IsInstanceValid(state.Removal)) state.ItemGroups.Add(state.Removal);
 
         state.Blitz = state.BlitzSlots.Count > 0;
@@ -463,12 +480,28 @@ internal sealed partial class PortraitBetweenLayout
         float scale = slots.Count > 0 ? slots[0].Scale : PortraitShopMath.BlitzMaxScale;
         PlaceGroup(ItemGroupFor(state, state.BlitzSlots), scale, state.BlitzSlots, slots);
 
-        if (state.Stock?.GetNodeOrNull<Control>("BlitzSelectionText") is { } summary)
+        if (state.BlitzGroup is { } blitzGroup && GodotObject.IsInstanceValid(blitzGroup) && !blitzGroup.Visible)
+            blitzGroup.Show();
+        // Only the Blitz stock belongs to this page: the shared scene's card, relic and potion containers stay out of it.
+        foreach (Control group in state.CardGroups)
+            if (GodotObject.IsInstanceValid(group) && group.Visible) group.Visible = false;
+        foreach (Control group in state.ItemGroups)
+            if (GodotObject.IsInstanceValid(group) && !ReferenceEquals(group, state.BlitzGroup) &&
+                !ReferenceEquals(group, state.Removal) && group.Visible)
+                group.Visible = false;
+        if (state.BlitzFooter is { } summary && GodotObject.IsInstanceValid(summary))
         {
             Capture(summary, captureVisible: false);
+            if (state.BlitzFooterFitContent == null && summary is RichTextLabel footerLabel)
+                state.BlitzFooterFitContent = footerLabel.FitContent;
             summary.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+            // The label's own bounds kept it 1400 units wide (its scene size and fit-to-content): a page-wide footer is asked for.
+            summary.CustomMinimumSize = Vector2.Zero;
+            if (summary is RichTextLabel fitted) fitted.FitContent = false;
             summary.Size = new Vector2(rect.Width, PortraitShopMath.BlitzFooter);
-            summary.Position = new Vector2(0f, rect.Height - PortraitShopMath.BlitzFooter);
+            Vector2 footerAt = new(0f, rect.Height - PortraitShopMath.BlitzFooter);
+            if (summary.GetParent() == state.Stock) summary.Position = footerAt;
+            else if (state.Stock is { } stock) summary.GlobalPosition = stock.GlobalPosition + footerAt;
             summary.Set("MinFontSize", PortraitShopMath.BlitzFooterFontSize);
             summary.Set("MaxFontSize", PortraitShopMath.BlitzFooterFontSize);
             SetRichFontSize(summary, PortraitShopMath.BlitzFooterFontSize);
@@ -929,6 +962,9 @@ internal sealed partial class PortraitBetweenLayout
             FreeShopTab(state.ItemsTab);
             if (state.Dialogue is { } dialogue && GodotObject.IsInstanceValid(dialogue) && state.DialogueCaptured)
                 dialogue.Position = state.DialogueHome;
+            if (state.BlitzFooter is RichTextLabel footer && GodotObject.IsInstanceValid(footer) &&
+                state.BlitzFooterFitContent is { } fit)
+                footer.FitContent = fit;
             if (state.BackCaptured && state.BackButton is { } back && GodotObject.IsInstanceValid(back))
             {
                 if (state.BackMoveTweenField?.GetValue(back) is Tween move && GodotObject.IsInstanceValid(move)) move.Kill();
@@ -958,6 +994,26 @@ internal sealed partial class PortraitBetweenLayout
             _rotatedCloths.Remove(id);
     }
 
+    /// <summary>
+    /// The deck select's card-removal preview: its Confirm and Cancel are 110 units tall natively. They grow to the phone's
+    /// smallest touch target around their centres; the card holds its own size, and the game shows the container itself.
+    /// </summary>
+    private void LayoutShopRemovalPreview(Control screen)
+    {
+        if (screen.GetNodeOrNull<Control>("%PreviewContainer") is not { } preview) return;
+        if (preview.GetNodeOrNull<Control>("%PreviewConfirm") is { } confirm) GrowShopButton(confirm);
+        if (preview.GetNodeOrNull<Control>("%PreviewCancel") is { } cancel) GrowShopButton(cancel);
+    }
+
+    private void GrowShopButton(Control button)
+    {
+        if (!GodotObject.IsInstanceValid(button) || button.Size.Y >= PortraitBands.MinTarget) return;
+        Capture(button, captureVisible: false);
+        float grow = PortraitBands.MinTarget - button.Size.Y;
+        button.Size = new Vector2(button.Size.X, PortraitBands.MinTarget);
+        button.Position -= new Vector2(0f, grow / 2f);
+    }
+
     // ---- The room behind the shop --------------------------------------------------------------------------------------
 
     /// <summary>
@@ -979,7 +1035,7 @@ internal sealed partial class PortraitBetweenLayout
             }
             if (state.Failed) return;
             var canvas = new Vector2(canvasWidth, canvasHeight);
-            if (state.Applied && state.Canvas == canvas) return;
+            if (state.Applied && state.Canvas == canvas && (!state.Blitz || state.BlitzMerchant != null)) return;
             state.Canvas = canvas;
             if (state.Blitz) ApplyBlitzShopRoom(state, canvas);
             else ApplyStandardShopRoom(state, canvas);
@@ -999,6 +1055,7 @@ internal sealed partial class PortraitBetweenLayout
         {
             Id = room.GetInstanceId(),
             TypeName = typeName,
+            Room = room,
             Scene = scene,
             Blitz = typeName == BlitzMerchantRoomTypeName,
         };
@@ -1006,6 +1063,10 @@ internal sealed partial class PortraitBetweenLayout
         {
             if (scene.GetNodeOrNull<Control>("BgContainer") is not { } bg) return null;
             state.Bg = bg;
+            state.BlitzMerchant = room.GetNodeOrNull<Control>("%MerchantButton") ??
+                                  room.GetNodeOrNull<Control>("MerchantButton") ??
+                                  scene.GetNodeOrNull<Control>("%MerchantButton");
+            if (state.BlitzMerchant != null) Capture(state.BlitzMerchant, captureVisible: false);
             Capture(scene, captureVisible: false);
             Capture(bg, captureVisible: false);
             return state;
@@ -1076,6 +1137,10 @@ internal sealed partial class PortraitBetweenLayout
     private static void ApplyBlitzShopRoom(ShopRoomState state, Vector2 canvas)
     {
         if (state.Scene is not { } scene || state.Bg is not { } bg) return;
+        if (state.BlitzMerchant == null && state.Room is { } room)
+            state.BlitzMerchant = room.GetNodeOrNull<Control>("%MerchantButton") ??
+                                  room.GetNodeOrNull<Control>("MerchantButton") ??
+                                  scene.GetNodeOrNull<Control>("%MerchantButton");
         scene.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
         scene.Size = new Vector2(1920f, 1080f);
         scene.PivotOffset = Vector2.Zero;
@@ -1112,6 +1177,17 @@ internal sealed partial class PortraitBetweenLayout
         else
         {
             state.Underlay.Size = canvas;
+        }
+        // The authored scene is wider than the canvas; slide it left when its merchant button (built after a room is entered)
+        // runs off the right edge, so the shop's own target is reachable.
+        if (state.BlitzMerchant is { } merchant && GodotObject.IsInstanceValid(merchant))
+        {
+            Rect2 box = merchant.GetGlobalRect();
+            const float margin = 24f;
+            if (box.End.X > canvas.X - margin)
+                scene.GlobalPosition -= new Vector2(box.End.X - (canvas.X - margin), 0f);
+            else if (box.Position.X < margin)
+                scene.GlobalPosition += new Vector2(margin - box.Position.X, 0f);
         }
         EnsureShopBlitzFade(state, canvas, floor);
     }
