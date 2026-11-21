@@ -58,6 +58,7 @@ internal static class PortraitFrameTiming
     private static int _lastGc0, _lastGc1, _lastGc2;
     private static int _secondGc0, _secondGc1, _secondGc2;
     private static bool _allocationAvailable = true;
+    private static bool FrameGcSeen;
     private static ulong _lastFrameIndex;
     private static ulong _lastPrintMsec;
     private static int _secondFrames;
@@ -105,13 +106,15 @@ internal static class PortraitFrameTiming
             long ticks = Stopwatch.GetTimestamp() - _start;
             FrameTicks[_pass] += ticks;
             if (ticks > FrameMax[_pass]) FrameMax[_pass] = ticks;
+            int collections = GC.CollectionCount(0) - _gc0 + GC.CollectionCount(1) - _gc1 + GC.CollectionCount(2) - _gc2;
+            if (collections > 0) FrameGcSeen = true;
             double ms = ticks * Millisecond;
             if (ms < SpikeMsec) return;
             // A GC pause inside the pass is part of its wall time; the counters say whether the pause or the pass's own work
             // made it long. Only the worst over-budget sample of the second is kept per pass.
             if (ms <= SpikeMs[_pass]) return;
             SpikeMs[_pass] = ms;
-            SpikeGcs[_pass] = GC.CollectionCount(0) - _gc0 + GC.CollectionCount(1) - _gc1 + GC.CollectionCount(2) - _gc2;
+            SpikeGcs[_pass] = collections;
             SpikeAllocated[_pass] = AllocatedBytes() - _allocated;
         }
     }
@@ -144,6 +147,16 @@ internal static class PortraitFrameTiming
     internal static ReadOnlySpan<double> LastFrameMs() => LastFrame;
 
     /// <summary>
+    /// Whether a garbage collection ran inside any of the last frame's passes. A collection pause is charged to the pass it
+    /// lands in (wall clock), so a measurement that wants the passes' own work should leave these frames out: the harness's
+    /// budget gate reads this per frame and reports the GC frames separately.
+    /// </summary>
+    internal static bool LastFrameGcInPass { get; private set; }
+
+    /// <summary>How many collections (all generations) ran during the last frame, wherever they landed.</summary>
+    internal static int LastFrameCollections { get; private set; }
+
+    /// <summary>
     /// Ends the frame: the passes' numbers become <see cref="LastFrameMs"/>, are folded into the second, and the second is
     /// printed once it is over. Called from the end of the pre-draw pass, after every other pass of the frame has run; a
     /// second call in the same engine frame is a no-op, so no later flush point can count a frame twice.
@@ -165,11 +178,15 @@ internal static class PortraitFrameTiming
             _secondGc0 += gc0 - _lastGc0;
             _secondGc1 += gc1 - _lastGc1;
             _secondGc2 += gc2 - _lastGc2;
+            LastFrameCollections = gc0 - _lastGc0 + gc1 - _lastGc1 + gc2 - _lastGc2;
         }
         _lastAllocated = allocated;
         _lastGc0 = gc0;
         _lastGc1 = gc1;
         _lastGc2 = gc2;
+        // The frame's passes have all closed: what they saw is the frame's answer to "was this a GC frame".
+        LastFrameGcInPass = FrameGcSeen;
+        FrameGcSeen = false;
 
         bool any = false;
         for (int pass = 0; pass < PassCount; pass++)

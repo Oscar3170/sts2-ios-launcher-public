@@ -507,6 +507,18 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private bool _selectionLayoutFailed;
     private bool _selectionLayoutFailureLogged;
     private readonly HandStillness _stillness = new();
+    // Each card node's body, highlight and the two icons the playability visuals write, resolved once per card node instead
+    // of a reflection read and a node-path lookup per card per pass (the hand pass runs on every drawn frame of a draw).
+    private sealed class CardVisualNodes
+    {
+        public Control? Body;
+        public Control? Highlight;
+        public CanvasItem? EnergyIcon;
+        public CanvasItem? StarIcon;
+    }
+    private readonly Dictionary<ulong, CardVisualNodes> _cardVisualNodes = new();
+    // The hand's draw-pile node, remembered while it stays in the tree (the first pass of each drawn card starts there).
+    private Control? _drawPileNode;
     // The fight's one-shot resources, loaded ahead of the frames that would load them (see CombatAssetWarmup).
     private readonly CombatAssetWarmup _warmup = new();
     // The stage pass's per-frame lists and its copy of the ally slots, refilled rather than allocated: the pass runs every
@@ -780,6 +792,11 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         foreach (ulong id in _statusBodyRects.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _statusBodyRects.Remove(id);
+
+        dead.Clear();
+        foreach (ulong id in _cardVisualNodes.Keys)
+            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
+        foreach (ulong id in dead) _cardVisualNodes.Remove(id);
     }
 
     /// <summary>
@@ -1426,13 +1443,17 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// The draw pile's point in the holder container's coordinates: where the game starts a drawn card, taken from the pile
     /// node the player sees. Only asked for on a holder's first pass.
     /// </summary>
-    private static Vector2? DrawPileLocalPoint(Control hand, Control container)
+    private Vector2? DrawPileLocalPoint(Control hand, Control container)
     {
-        Control? ui = hand.GetParent() as Control;
-        Control? piles = ui?.GetNodeOrNull<Control>("%CombatPileContainer")
-            ?? ui?.GetNodeOrNull<Control>("CombatPileContainer");
-        Control? pile = piles?.GetNodeOrNull<Control>("%DrawPile") ?? piles?.GetNodeOrNull<Control>("DrawPile");
-        if (pile == null || !GodotObject.IsInstanceValid(pile))
+        Control? pile = _drawPileNode;
+        if (pile == null || !GodotObject.IsInstanceValid(pile) || !pile.IsInsideTree())
+        {
+            Control? ui = hand.GetParent() as Control;
+            Control? piles = ui?.GetNodeOrNull<Control>("%CombatPileContainer")
+                ?? ui?.GetNodeOrNull<Control>("CombatPileContainer");
+            _drawPileNode = pile = piles?.GetNodeOrNull<Control>("%DrawPile") ?? piles?.GetNodeOrNull<Control>("DrawPile");
+        }
+        if (pile == null)
             return null;
         return container.GetGlobalTransform().AffineInverse() * pile.GetGlobalRect().GetCenter();
     }
@@ -2211,8 +2232,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         bool resting)
     {
         ulong cardId = cardNode.GetInstanceId();
-        Control? body = refl.CardBodyProp?.GetValue(cardNode) as Control ?? cardNode.GetNodeOrNull<Control>("%CardContainer");
-        Control? highlight = refl.CardHighlightProp?.GetValue(cardNode) as Control ?? body?.GetNodeOrNull<Control>("Highlight");
+        CardVisualNodes nodes = CardVisualNodesOf(cardNode, refl);
+        Control? body = nodes.Body;
+        Control? highlight = nodes.Highlight;
 
         if (!combatInProgress || playable)
         {
@@ -2270,9 +2292,11 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
 
         // Keep energy and star icons at 100% brightness and sharpen unaffordable red cost digits (#FF5252).
-        if (body?.GetNodeOrNull<CanvasItem>("EnergyIcon") is { } energyIcon && energyIcon.Modulate != Colors.White)
+        if (nodes.EnergyIcon is { } energyIcon && GodotObject.IsInstanceValid(energyIcon) &&
+            energyIcon.Modulate != Colors.White)
             energyIcon.Modulate = Colors.White;
-        if (body?.GetNodeOrNull<CanvasItem>("StarIcon") is { } starIcon && starIcon.Modulate != Colors.White)
+        if (nodes.StarIcon is { } starIcon && GodotObject.IsInstanceValid(starIcon) &&
+            starIcon.Modulate != Colors.White)
             starIcon.Modulate = Colors.White;
 
         if (refl.CardEnergyLabelField?.GetValue(cardNode) is Control energyLabel)
@@ -2416,6 +2440,35 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         _reducedCardEffects.Clear();
     }
 
+    /// <summary>
+    /// A card node's body, highlight and the two icons the playability visuals write, resolved once and remembered while the
+    /// nodes stay valid: they are scene children of the card and survive a pooled card's reuse for another model. Resolving
+    /// them was one reflection read and up to three node-path lookups per card per pass, and the pass runs on every drawn
+    /// frame of a draw.
+    /// </summary>
+    private CardVisualNodes CardVisualNodesOf(Control cardNode, CombatReflection refl)
+    {
+        ulong cardId = cardNode.GetInstanceId();
+        if (_cardVisualNodes.TryGetValue(cardId, out CardVisualNodes? known) &&
+            (known.Body == null || GodotObject.IsInstanceValid(known.Body)) &&
+            (known.Highlight == null || GodotObject.IsInstanceValid(known.Highlight)) &&
+            (known.EnergyIcon == null || GodotObject.IsInstanceValid(known.EnergyIcon)) &&
+            (known.StarIcon == null || GodotObject.IsInstanceValid(known.StarIcon)))
+            return known;
+        Control? body = refl.CardBodyProp?.GetValue(cardNode) as Control ?? cardNode.GetNodeOrNull<Control>("%CardContainer");
+        Control? highlight = refl.CardHighlightProp?.GetValue(cardNode) as Control ?? body?.GetNodeOrNull<Control>("Highlight");
+        var nodes = new CardVisualNodes
+        {
+            Body = body,
+            Highlight = highlight,
+            EnergyIcon = body?.GetNodeOrNull<CanvasItem>("EnergyIcon"),
+            StarIcon = body?.GetNodeOrNull<CanvasItem>("StarIcon"),
+        };
+        if (body != null)
+            _cardVisualNodes[cardId] = nodes;
+        return nodes;
+    }
+
     private void RestoreSingleCardVisuals(Control cardNode, CombatReflection refl, bool keepHighlightBoost = false)
     {
         ulong cardId = cardNode.GetInstanceId();
@@ -2431,7 +2484,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         if (keepHighlightBoost)
             return;
-        if ((refl.CardHighlightProp?.GetValue(cardNode) as Control) is { } highlight &&
+        if (CardVisualNodesOf(cardNode, refl).Highlight is { } highlight &&
             _boostedHighlights.Remove(highlight.GetInstanceId()) &&
             highlight.Material is ShaderMaterial mat)
         {
