@@ -191,7 +191,7 @@ internal static partial class PortraitProof
     {
         ClearNextStepFile();
         await EnsurePortraitAsync(tree, game);
-        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, pageTwo: false, addThreePotions: true, closeRelicHover: true);
+        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, addThreePotions: true, closeRelicHover: true);
         await WaitFramesAsync(tree, 90);
         Type mapType = GameType(ScreensNs + "Map.NMapScreen");
         Call(StaticProp(mapType, "Instance")!, "Close", false);
@@ -542,7 +542,7 @@ internal static partial class PortraitProof
 
         // In a run: pause menu laid out in portrait, then Portrait Mode off live, then the pause menu again.
         await EnsurePortraitAsync(tree, game);
-        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, pageTwo: false, addThreePotions: true, closeRelicHover: true);
+        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, addThreePotions: true, closeRelicHover: true);
         await WaitFramesAsync(tree, 90);
         await RunConsoleCmdAsync(Sts2, "RoomConsoleCmd", player, ["RestSite"]);
         await WaitFramesAsync(tree, 120);
@@ -575,7 +575,7 @@ internal static partial class PortraitProof
     {
         ClearNextStepFile();
         await EnsurePortraitAsync(tree, game);
-        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, pageTwo: false, addThreePotions: true, closeRelicHover: true);
+        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, addThreePotions: true, closeRelicHover: true);
         await WaitFramesAsync(tree, 90);
         await AuditStepAsync(tree, "game-over-victory", async () =>
         {

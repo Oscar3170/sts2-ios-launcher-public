@@ -408,7 +408,7 @@ internal sealed class PortraitOverlayLayout
     private readonly Dictionary<ulong, bool> _besidePeek = new();
     private readonly HashSet<ulong> _choiceSnapshots = new();
     private readonly HashSet<ulong> _potionPopups = new();
-    private readonly Dictionary<ulong, (Vector2 Position, Vector2 Scale)> _fittedPopups = new();
+    private readonly Dictionary<ulong, (Vector2 Position, Vector2 Scale, bool TopLevel)> _fittedPopups = new();
     private readonly HashSet<ulong> _inspectTickboxes = new();
     private readonly HashSet<ulong> _viewUpgrades = new();
     private readonly HashSet<ulong> _liftedChoiceBanners = new();
@@ -818,20 +818,82 @@ internal sealed class PortraitOverlayLayout
     // ---- Potion popup -------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// A potion's popup (Use and Discard, 82 x 30 points) opens centred under its slot. The slots now stand in their own row at
-    /// the left of the screen, where a centred popup runs past the left edge. In portrait the popup is drawn larger about its
-    /// top middle so each button is 44 points tall, sits just under the slot, and is moved inside the screen; the potion's tip,
-    /// which the game placed beside the popup before this, is placed again beside where the popup now is.
+    /// A potion's popup (Use and Discard) opens from its slot. In portrait the slots sit in a scrolling row inside the stone
+    /// header, so the popup would be clipped with them: it becomes top level (its own draw and input root, still a child of
+    /// its holder for the game's cleanup and focus), drops below the relic band, is centred on the visible part of its holder
+    /// and kept inside the safe frame, drawn large enough for the buttons to be 44 points. A swipe of the potion row, which
+    /// moves the slot under the popup, takes it down through the game's own close. A holder outside that row keeps the
+    /// original behaviour: a larger popup just under the slot, moved inside the screen.
     /// </summary>
     private void FitPotionPopup(Control popup, Vector2 canvas)
     {
         ulong id = popup.GetInstanceId();
         if (_fittedPopups.ContainsKey(id) || !popup.IsNodeReady()) return;
         Control? parent = popup.GetParent() as Control;
-        Vector2 parentScale = parent?.GetGlobalTransformWithCanvas().Scale ?? Vector2.One;
+        if (parent == null) return;
+        ScrollContainer? row = null;
+        for (Node? node = parent; node != null; node = node.GetParent())
+        {
+            if (node is ScrollContainer clip && clip.Name == PortraitLayout.PotionRowScrollName)
+            {
+                row = clip;
+                break;
+            }
+        }
+        if (row == null)
+        {
+            FitPotionPopupBesideHolder(popup, parent, canvas);
+            return;
+        }
+
+        float capHeight = PortraitLayout.ComputeCapHeight(popup.GetTree().Root);
+        Rect2 holder = parent.GetGlobalRect();
+        Rect2 visible = holder.Intersection(row.GetGlobalRect());
+        float anchorX = (visible.HasArea() ? visible : holder).GetCenter().X;
+        float buttonHeight = popup.GetNodeOrNull<Control>("%UseButton") is { Size.Y: > 1f } use ? use.Size.Y : 86f;
+        PopupPlacement placement = PortraitHeaderMath.PotionPopup(EdgeMargin, capHeight, canvas.X - EdgeMargin, canvas.Y - EdgeMargin,
+            anchorX, PortraitBands.RelicBandBottom(capHeight), popup.Size.X, popup.Size.Y,
+            PortraitBands.MinTarget / Math.Max(buttonHeight, 1f), PotionPopupMaxScale, PotionPopupGap + 12f);
+        if (!placement.Visible)
+        {
+            FitPotionPopupBesideHolder(popup, parent, canvas);
+            return;
+        }
+
+        _fittedPopups[id] = (popup.Position, popup.Scale, popup.TopLevel);
+        popup.TopLevel = true;
+        popup.PivotOffset = Vector2.Zero;
+        popup.Scale = new Vector2(placement.Scale, placement.Scale);
+        popup.GlobalPosition = new Vector2(placement.X, placement.Y);
+        PlacePopupTips(popup);
+        DismissPopupOnScroll(popup, row);
+        GD.Print($"Portrait overlay: potion popup drawn at {placement.Scale:F2} below the relic band at " +
+            $"({placement.X:F0},{placement.Y:F0}).");
+    }
+
+    /// <summary>A scrolling potion row moves the slot the popup belongs to: the game's own close takes the popup down.</summary>
+    private static void DismissPopupOnScroll(Control popup, ScrollContainer row)
+    {
+        ScrollBar bar = row.GetHScrollBar();
+        void OnScroll(double _)
+        {
+            if (GodotObject.IsInstanceValid(popup) && popup.IsInsideTree()) popup.Call("Remove");
+        }
+        bar.ValueChanged += OnScroll;
+        popup.TreeExiting += () =>
+        {
+            if (GodotObject.IsInstanceValid(bar)) bar.ValueChanged -= OnScroll;
+        };
+    }
+
+    /// <summary>The original portrait fit: a larger popup just under the slot, moved inside the screen.</summary>
+    private void FitPotionPopupBesideHolder(Control popup, Control parent, Vector2 canvas)
+    {
+        ulong id = popup.GetInstanceId();
+        Vector2 parentScale = parent.GetGlobalTransformWithCanvas().Scale;
         float buttonHeight = popup.GetNodeOrNull<Control>("%UseButton") is { Size.Y: > 1f } use ? use.Size.Y : 86f;
         float grow = Math.Clamp(PortraitBands.MinTarget / (buttonHeight * Math.Max(parentScale.Y, 0.01f)), 1f, PotionPopupMaxScale);
-        _fittedPopups[id] = (popup.Position, popup.Scale);
+        _fittedPopups[id] = (popup.Position, popup.Scale, popup.TopLevel);
 
         popup.Scale = new Vector2(grow, grow);
         if (parent is { Size.Y: > 1f }) popup.Position = new Vector2(popup.Position.X, parent.Size.Y + PotionPopupGap);
@@ -965,9 +1027,10 @@ internal sealed class PortraitOverlayLayout
             if (_snapshots.TryGetValue(id, out PortraitControlSnapshot? snapshot) && GodotObject.InstanceFromId(id) is Control control &&
                 GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
-        foreach ((ulong id, (Vector2 position, Vector2 scale)) in _fittedPopups)
+        foreach ((ulong id, (Vector2 position, Vector2 scale, bool topLevel)) in _fittedPopups)
         {
             if (GodotObject.InstanceFromId(id) is not Control popup || !GodotObject.IsInstanceValid(popup)) continue;
+            popup.TopLevel = topLevel;
             popup.Scale = scale;
             popup.Position = position;
             PlacePopupTips(popup);

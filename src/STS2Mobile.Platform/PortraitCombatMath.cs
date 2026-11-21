@@ -1391,45 +1391,6 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// The orb arc's fit under the run bars: how far the whole arc moves down on the canvas and the factor its radius is
-    /// scaled by, both measured about the arc's own scaling origin (the orb manager's position and pivot).
-    /// </summary>
-    public readonly record struct PortraitOrbArcFit(float ShiftY, float Scale);
-
-    /// <summary>The gap the orb arc keeps under the run bars.</summary>
-    public const float OrbArcTopMargin = 8f;
-
-    /// <summary>
-    /// The smallest the arc's radius may shrink to: the icons are drawn at about 75.5 canvas units, and 50 is the
-    /// readable floor for a six-to-ten-orb row (0.66 of it), so the fallback never costs an orb its icon.
-    /// </summary>
-    public const float OrbArcMinScale = 0.66f;
-
-    /// <summary>
-    /// Puts an orb arc drawn from <paramref name="top"/> to <paramref name="bottom"/> back under the run bars. The top
-    /// limit is the stage top plus the margin; the bottom limit is the hand rail, which the arc must never reach. The arc
-    /// is moved down whole first, so every orb keeps its drawn size; only when it is taller than the room between the two
-    /// limits is its radius shrunk about <paramref name="originY"/> (the point the manager scales around), never below
-    /// <paramref name="minScale"/>. A shift is negative when the scaled arc has to be lifted to stay off the rail.
-    /// </summary>
-    public static PortraitOrbArcFit FitOrbArcBelow(float top, float bottom, float originY, float topLimitY,
-        float bottomLimitY, float minScale)
-    {
-        if (top >= topLimitY)
-            return new PortraitOrbArcFit(0f, 1f);
-        float height = Math.Max(0f, bottom - top);
-        float room = Math.Max(0f, bottomLimitY - topLimitY);
-        float scale = height <= room ? 1f : Math.Clamp(room / height, Math.Max(0.01f, minScale), 1f);
-        float topAfterScale = originY + (top - originY) * scale;
-        float bottomAfterScale = originY + (bottom - originY) * scale;
-        // The arc must move at least enough to put its top on the limit and at most as far as the rail allows.
-        float leastDown = topLimitY - topAfterScale;
-        float mostDown = bottomLimitY - bottomAfterScale;
-        float shift = leastDown > 0f ? Math.Min(leastDown, MathF.Max(0f, mostDown)) : MathF.Min(0f, mostDown);
-        return new PortraitOrbArcFit(shift, scale);
-    }
-
-    /// <summary>
     /// The shift and uniform scale that put a block-shielded bar's HP digits beside the shield: the drawn ink has to start
     /// <paramref name="gap"/> after the shield's drawn right edge and end <paramref name="gap"/> before the bar's right
     /// end. The digits are moved first, and scaled about <paramref name="pivotX"/> only by what the move cannot cover,

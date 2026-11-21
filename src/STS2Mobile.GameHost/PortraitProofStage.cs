@@ -21,7 +21,7 @@ internal static partial class PortraitProof
 
         Assembly sts2 = typeof(NGame).Assembly;
         object player = await StartProofRunAsync(
-            tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, pageTwo: false);
+            tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false);
 
         await EnterEncounterAsync(sts2, tree, player, "KAISER_CRAB_BOSS", 42UL);
         await WaitForCombatBannerAsync(tree);

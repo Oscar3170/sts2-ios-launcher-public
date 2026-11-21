@@ -1149,63 +1149,6 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void OrbArcUnderTheRunBarsMovesWholeBeforeItShrinks()
-    {
-        // The 9:16 ten-orb failure: the hero grew to 1.116 and the ring rose to 533.9 under a 612 run-bar floor, while
-        // it still ended well above the 1028.3 rail. Moving the whole arc down keeps every icon at its drawn size.
-        PortraitCombatMath.PortraitOrbArcFit fit =
-            PortraitCombatMath.FitOrbArcBelow(533.9f, 830f, 847.7f, 620f, 1020.3f, 0.66f);
-        Assert.Equal(1f, fit.Scale);
-        Assert.Equal(86.1f, fit.ShiftY, 0.1f);
-        Assert.Equal(620f, 533.9f + fit.ShiftY, 0.1f);
-        Assert.True(830f + fit.ShiftY <= 1020.3f);
-
-        // The accepted three- and five-orb rows sit at about 783 and 794: already under the limit, so nothing moves.
-        Assert.Equal(new PortraitCombatMath.PortraitOrbArcFit(0f, 1f),
-            PortraitCombatMath.FitOrbArcBelow(782.9f, 858.4f, 847.7f, 620f, 1020.3f, 0.66f));
-        Assert.Equal(new PortraitCombatMath.PortraitOrbArcFit(0f, 1f),
-            PortraitCombatMath.FitOrbArcBelow(794.2f, 869.7f, 847.7f, 620f, 1020.3f, 0.66f));
-    }
-
-    [Fact]
-    public void OrbArcTallerThanTheRoomShrinksItsRadiusToFitBothLimits()
-    {
-        // An arc whose span cannot fit between the bar floor and the rail: the radius shrinks about the manager's pivot
-        // so the top lands on the bar floor and the bottom on the rail, not one at the other's expense.
-        const float top = 533.9f, bottom = 1000f, origin = 847.7f, topLimit = 620f, bottomLimit = 1020f;
-        PortraitCombatMath.PortraitOrbArcFit fit =
-            PortraitCombatMath.FitOrbArcBelow(top, bottom, origin, topLimit, bottomLimit, 0.66f);
-        Assert.InRange(fit.Scale, 0.66f, 1f);
-        Assert.Equal(400f, (bottom - top) * fit.Scale, 0.5f);
-        float topAfter = origin + (top - origin) * fit.Scale + fit.ShiftY;
-        float bottomAfter = origin + (bottom - origin) * fit.Scale + fit.ShiftY;
-        Assert.Equal(topLimit, topAfter, 0.5f);
-        Assert.Equal(bottomLimit, bottomAfter, 0.5f);
-
-        // The 60% floor wins over the rail: a very tall arc keeps readable icons and reports the overflow instead of
-        // shrinking below what a player can read.
-        PortraitCombatMath.PortraitOrbArcFit floored =
-            PortraitCombatMath.FitOrbArcBelow(0f, 1500f, origin, topLimit, bottomLimit, 0.66f);
-        Assert.Equal(0.66f, floored.Scale);
-    }
-
-    [Fact]
-    public void OrbArcBelowALowPivotIsLiftedRatherThanLeftOnTheRail()
-    {
-        // Scaling about a pivot under the arc moves the arc down; when that pushes its bottom past the rail the fit is a
-        // lift (a negative shift), so the whole arc still sits between the two limits.
-        const float origin = 1200f, topLimit = 620f, bottomLimit = 1020f;
-        float top = 520f, bottom = 1010f;
-        PortraitCombatMath.PortraitOrbArcFit fit =
-            PortraitCombatMath.FitOrbArcBelow(top, bottom, origin, topLimit, bottomLimit, 0.66f);
-        float topAfter = origin + (top - origin) * fit.Scale + fit.ShiftY;
-        float bottomAfter = origin + (bottom - origin) * fit.Scale + fit.ShiftY;
-        Assert.True(fit.Scale < 1f);
-        Assert.True(topAfter >= topLimit - 0.01f);
-        Assert.True(bottomAfter <= bottomLimit + 0.01f);
-    }
-
-    [Fact]
     public void BlockedHpTextShiftsFirstAndShrinksOnlyWhenTheBarIsTooNarrow()
     {
         // The hero's "9999/9999" (drawn ink 207 wide) with a shield whose drawn right edge is 45 past the bar's left. A

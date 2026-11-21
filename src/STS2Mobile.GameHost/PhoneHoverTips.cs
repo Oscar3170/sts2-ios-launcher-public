@@ -30,6 +30,7 @@ internal sealed class PhoneHoverTips
     private const string TipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
     private const string HandHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder";
     private const string PlayerHandTypeName = "MegaCrit.Sts2.Core.Nodes.Combat.NPlayerHand";
+    private const string PotionPopupTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionPopup";
     private const float Margin = 10f;
     private const float Gap = 8f;
 
@@ -219,6 +220,9 @@ internal sealed class PhoneHoverTips
         // under it, or a child, so any node under the hand counts.
         bool isHandTip = IsHandTip(ownerControl);
         (float Top, float Bottom)? band = isHandTip ? handBand : null;
+        // A potion's popup is drawn over the middle of the screen; its description is never allowed to cover the Use and
+        // Discard buttons, so a column with no room beside the popup is put under it.
+        Rect2? popup = PotionPopupOf(ownerControl)?.GetGlobalRect();
         Transform2D toCanvas = set.GetGlobalTransformWithCanvas();
         Control? text = _textField!.GetValue(set) as Control;
         Control? cards = _cardField!.GetValue(set) as Control;
@@ -226,7 +230,7 @@ internal sealed class PhoneHoverTips
         if (text != null && GodotObject.IsInstanceValid(text))
         {
             if (text is FlowContainer flow) MakeOneColumn(flow);
-            placedText = FitColumn(text, toCanvas, canvas, owner, scale, avoid: null, band);
+            placedText = FitColumn(text, toCanvas, canvas, owner, scale, avoid: popup, band);
         }
         if (cards != null && GodotObject.IsInstanceValid(cards))
             FitColumn(cards, toCanvas, canvas, owner, scale, placedText, band);
@@ -274,6 +278,14 @@ internal sealed class PhoneHoverTips
         }
         Visit(set);
         return union;
+    }
+
+    /// <summary>The open potion popup this tip set describes, if any (the set's owner is its HoverTipBounds).</summary>
+    private static Control? PotionPopupOf(Control? owner)
+    {
+        for (Node? node = owner; node != null; node = node.GetParent())
+            if (node.GetType().FullName == PotionPopupTypeName && node is Control popup) return popup;
+        return null;
     }
 
     private static bool IsHandTip(Control? owner)

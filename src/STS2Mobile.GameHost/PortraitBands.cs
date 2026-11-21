@@ -28,4 +28,10 @@ internal static class PortraitBands
 
     /// <summary>Below the safe cap, where a screen that keeps the relic strip in view starts (the fight's stage).</summary>
     public const float RunContentTop = TopBarHeight + RelicBandHeight;
+
+    /// <summary>The bottom of the stone header (and of the potion row inside it) in canvas coordinates.</summary>
+    public static float HeaderBottom(float capHeight) => capHeight + TopBarHeight;
+
+    /// <summary>The bottom of the relic band, below which the fight's stage starts, in canvas coordinates.</summary>
+    public static float RelicBandBottom(float capHeight) => capHeight + RunContentTop;
 }

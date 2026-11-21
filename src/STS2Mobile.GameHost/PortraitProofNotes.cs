@@ -26,7 +26,7 @@ internal static partial class PortraitProof
         await EnsurePortraitAsync(tree, game);
         var characters = ModelDbList("AllCharacters").ToList();
         int fool = Math.Max(0, characters.FindIndex(c => c.GetType().Name == "Fool"));
-        object player = await StartProofRunAsync(tree, game, characterIndex: fool, fivePotions: false, thirtyRelics: true, pageTwo: false, closeRelicHover: true);
+        object player = await StartProofRunAsync(tree, game, characterIndex: fool, fivePotions: false, thirtyRelics: true, closeRelicHover: true);
         await WaitFramesAsync(tree, 90);
         Call(StaticProp(GameType(ScreensNs + "Map.NMapScreen"), "Instance")!, "Close", false);
         DismissFtues(tree, Sts2);

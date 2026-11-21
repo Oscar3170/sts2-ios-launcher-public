@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Godot;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
 using STS2Mobile.Platform;
@@ -17,9 +18,8 @@ namespace STS2Mobile.GameHost;
 /// </summary>
 internal sealed class PortraitLayout
 {
-    private const string SafeCapName = "PortraitSafeCap";
+    private const string StoneHeaderName = "PhoneStoneHeader";
     private const string ExpandSpacerName = "PortraitExpandSpacer";
-    private const string RelicPagerName = "PortraitRelicPager";
     private const string TopBarTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar";
     private const string RelicInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Relics.NRelicInventory";
     private const string PotionTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotion";
@@ -29,16 +29,27 @@ internal sealed class PortraitLayout
     private const float TopBarRowHeight = PortraitBands.TopBarRowHeight;
     // The right margin the game's scene gives the top bar's boss icon.
     private const int BossIconMarginRight = 4;
-    // The top bar's items were small: relics 96 units (33 points, were 78), ten to a row, so a page of
-    // two rows holds 18 with the pager taking two places.
+    // The top bar's items were small: relics 96 units (33 points, were 78), wrapped into lines inside the fixed band.
     private const float PortraitRelicSize = 96f;
     private const float DesktopRelicSize = 68f;
-    private const int PortraitRelicsPerPage = 18;
+    private const float RelicSeparation = 8f;
     // Sizes for a finger. A potion slot is 44 points (127 units) in its own row under the top bar, and the map,
     // deck and settings buttons are 44 points wide, their touch area reaching up into the safe cap to be 44 points tall.
     private const string PotionRowName = "PotionMarginifier";
+    internal const string PotionRowScrollName = "PhonePotionRow";
+    private const string PotionStripName = "Strip";
+    private const string MapDeckRowName = "PhoneMapDeckRow";
+    internal const string RelicClipName = "PhoneRelicRow";
+    private const string RelicExtentName = "Extent";
     private const float PotionSlotSize = PortraitBands.MinTarget;
     private const float PotionPictureScale = 1.5f;
+    private const float PotionRowMargin = 10f;
+    private const float PotionRowGap = 8f;
+    private const float PotionHolderSeparation = 4f;
+    private const float RelicSideMargin = 20f;
+    private const float RelicClipTopGap = 14f;
+    private const float RelicFadeSeconds = 0.25f;
+    private const float MapDeckSeparation = 8f;
     private const float TopBarButtonWidth = PortraitBands.MinTarget;
     private const float TopBarRowInset = 4f;
     private const float TopBarTouchRise = PortraitBands.MinTarget - (TopBarRowHeight - TopBarRowInset);
@@ -65,15 +76,10 @@ internal sealed class PortraitLayout
     private const string SettingsClipperPath = "ScrollContainer/Mask/Clipper";
     private const string SettingsSpacerName = "PortraitScaleSpacer";
 
-    // Neutral slate stone cap (#2C444F = RGB 44, 68, 79) matching top_bar.tres with neutral white balance.
-    private static readonly Color SafeCapColor = new(44f / 255f, 68f / 255f, 79f / 255f, 1f);
-    private static readonly Color PagerFillColor = new(24f / 255f, 37f / 255f, 45f / 255f, 0.94f);
-    private static readonly Color PagerBorderColor = new(118f / 255f, 146f / 255f, 162f / 255f, 0.9f);
-    private static readonly Color PagerTextColor = new(239f / 255f, 200f / 255f, 81f / 255f, 1f);
-
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
     private readonly Dictionary<ulong, Vector2> _relicOriginalPos = new();
-    private readonly Dictionary<ulong, int> _relicPages = new();
+    private readonly Dictionary<ulong, RelicClipState> _relicClips = new();
+    private readonly PhoneHeaderSwipe _headerSwipe = new();
     private readonly HashSet<ulong> _wiredTopBars = new();
     private readonly HashSet<ulong> _wiredInventories = new();
     private readonly HashSet<ulong> _wiredPotionHolders = new();
@@ -88,11 +94,34 @@ internal sealed class PortraitLayout
     private readonly PortraitOverlayLayout _overlays = new();
     private SceneTree? _tree;
     private FieldInfo? _topBarHideTween;
-    // The run's top bar and relic strip, as last laid out in portrait (see KeepRunBarsInPlace).
+    // The run's top bar and relic strip, as last laid out in portrait (see OwnRunBarTweens).
     private ulong _runTopBarId;
     private ulong _runRelicsId;
+    // The header nodes a swipe may scroll: the potion row and the relic band's clip.
+    private ulong _potionRowId;
+    private ulong _relicClipId;
+    private ulong _blitzMapId;
+    private ulong _blitzContainerId;
+    private ulong _topBarHpId;
+    private ulong _pauseButtonId;
+    // The scroll offsets the holders' touch areas were last matched to (see RefreshHeaderHolderInput).
+    private int _potionScrollSeen = -1;
+    private readonly Dictionary<ulong, int> _relicScrollSeen = new();
     private bool _applyQueued;
     private int _switchGeneration;
+
+    /// <summary>One relic inventory's scroll clip, and the layout to put back when Portrait Mode is turned off.</summary>
+    private sealed class RelicClipState
+    {
+        public ScrollContainer Clip = null!;
+        public Control Extent = null!;
+        public Node OriginalParent = null!;
+        public int OriginalIndex;
+        public Control.MouseFilterEnum OriginalMouseFilter;
+        public FieldInfo? TweenField;
+        public Tween? Fade;
+        public bool FadedOut;
+    }
 
     // True from the first portrait layout until landscape has been put back after Portrait Mode is turned off. While it is
     // false nothing here writes to the game, so landscape with Portrait Mode never on is the game's own.
@@ -105,6 +134,8 @@ internal sealed class PortraitLayout
         tree.Root.SizeChanged += OnRootSizeChanged;
         tree.NodeAdded += OnNodeAdded;
         tree.ProcessFrame += OnProcessFrame;
+        RenderingServer.FramePreDraw += OnHeaderPreDraw;
+        _headerSwipe.Attach(tree);
         PortraitCombatLayout.SetFlatHandListener(ApplyImmediate);
         QueueApply();
     }
@@ -114,6 +145,8 @@ internal sealed class PortraitLayout
         if (_tree == null) return;
         PortraitCombatLayout.SetFlatHandListener(null);
         _combat.Detach();
+        RenderingServer.FramePreDraw -= OnHeaderPreDraw;
+        _headerSwipe.Detach();
         _tree.Root.SizeChanged -= OnRootSizeChanged;
         _tree.NodeAdded -= OnNodeAdded;
         _tree.ProcessFrame -= OnProcessFrame;
@@ -198,7 +231,6 @@ internal sealed class PortraitLayout
             return;
         _needsRestore = true;
         float capHeight = ComputeCapHeight(_tree.Root);
-        KeepRunBarsInPlace();
         _combat.OnProcessFrame(_tree, capHeight);
         _between.OnProcessFrame(_tree.Root, capHeight);
         _fit.OnProcessFrame(_tree.Root, capHeight);
@@ -243,8 +275,10 @@ internal sealed class PortraitLayout
             return;
         }
         _needsRestore = true;
-        float canvasHeight = Math.Max(_tree.Root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
+        Vector2 canvasSize = _tree.Root.GetVisibleRect().Size;
+        float canvasHeight = Math.Max(canvasSize.Y, SafeAreaCanvas.MinPortraitHeight);
         float capHeight = ComputeCapHeight(_tree.Root);
+        Vector2 canvas = new(canvasSize.X, canvasHeight);
 
         foreach (Node node in Traverse(_tree.Root))
         {
@@ -256,12 +290,12 @@ internal sealed class PortraitLayout
                 if (typeName == TopBarTypeName)
                 {
                     _runTopBarId = control.GetInstanceId();
-                    LayoutTopBarPortrait(control, capHeight);
+                    LayoutTopBarPortrait(control, capHeight, canvas);
                 }
                 else if (typeName == RelicInventoryTypeName && control is FlowContainer flow)
                 {
                     _runRelicsId = flow.GetInstanceId();
-                    LayoutRelicInventoryPortrait(flow, capHeight);
+                    LayoutRelicInventoryPortrait(flow, capHeight, canvas);
                 }
                 else if (typeName == EarlyAccessDisclaimerTypeName) LayoutEarlyAccessPortrait(control);
                 else if (typeName == PortraitCombatLayout.CombatRoomTypeName) _combat.ApplyRoomImmediate(control, capHeight, canvasHeight);
@@ -275,6 +309,19 @@ internal sealed class PortraitLayout
                     _overlays.ApplyNode(control, typeName, capHeight, _tree.Root.GetVisibleRect().Size);
             }
         }
+        RefreshHeaderSwipeRows();
+        _potionScrollSeen = -1;
+        _relicScrollSeen.Clear();
+    }
+
+    /// <summary>The swipe rows, as last laid out: the potion row and whichever relic clip the run's inventory has.</summary>
+    private void RefreshHeaderSwipeRows()
+    {
+        Control? potions = _potionRowId != 0 ? GodotObject.InstanceFromId(_potionRowId) as Control : null;
+        Control? relics = _relicClipId != 0 ? GodotObject.InstanceFromId(_relicClipId) as Control : null;
+        _headerSwipe.SetRows(
+            potions is { } p && GodotObject.IsInstanceValid(p) ? p : null,
+            relics is { } r && GodotObject.IsInstanceValid(r) ? r : null);
     }
 
     private void RestoreLandscape(Node root)
@@ -313,21 +360,41 @@ internal sealed class PortraitLayout
                 string? typeName = control.GetType().FullName;
                 if (typeName == TopBarTypeName)
                 {
-                    if (control.GetNodeOrNull<CanvasItem>(SafeCapName) is { } cap) cap.Visible = false;
+                    if (control.GetNodeOrNull<CanvasItem>(StoneHeaderName) is { } stone) stone.Visible = false;
                     if (control.GetNodeOrNull<CanvasItem>("LeftAlignedStuff/" + ExpandSpacerName) is { } spacer) spacer.Visible = false;
                     if (control.GetNodeOrNull<Node>("%TimerContainer") is { } timer && timer.HasMethod("RefreshVisibility"))
                         timer.Call("RefreshVisibility");
-                    if (control.GetNodeOrNull<Control>(PotionRowName) is { } potionRow &&
-                        control.GetNodeOrNull<Control>("LeftAlignedStuff") is { } leftBox)
+                    // Map and deck back into the desktop row, before the settings button.
+                    if (control.GetNodeOrNull<HBoxContainer>("RightAlignedStuff") is { } rightBox)
                     {
-                        // Back into the top bar's row, after the gold, where the game's scene has it.
+                        int at = control.GetNodeOrNull<Control>("%PauseButton")?.GetIndex() ?? rightBox.GetChildCount();
+                        foreach (string name in new[] { "%Map", "%Deck" })
+                        {
+                            if (control.GetNodeOrNull<Control>(name) is not { } button || button.GetParent() == rightBox) continue;
+                            button.Reparent(rightBox, keepGlobalTransform: false);
+                            rightBox.MoveChild(button, Math.Clamp(at++, 0, rightBox.GetChildCount() - 1));
+                        }
+                    }
+                    if (control.GetNodeOrNull<HBoxContainer>(MapDeckRowName) is { } mapDeckRow) mapDeckRow.QueueFree();
+                    // The potion tray back into the top bar's row, after the gold, where the game's scene has it.
+                    Control? potionRow = control.GetNodeOrNull<ScrollContainer>(PotionRowScrollName)
+                        ?.GetNodeOrNull<Control>(PotionStripName)?.GetNodeOrNull<Control>(PotionRowName)
+                        ?? control.FindChild(PotionRowName, true, false) as Control;
+                    if (potionRow != null && control.GetNodeOrNull<Control>("LeftAlignedStuff") is { } leftBox)
+                    {
                         potionRow.Reparent(leftBox, keepGlobalTransform: false);
                         int after = leftBox.GetNodeOrNull<Node>("TopBarGold")?.GetIndex() ?? 2;
                         leftBox.MoveChild(potionRow, Math.Min(after + 1, leftBox.GetChildCount() - 1));
                     }
+                    if (control.GetNodeOrNull<ScrollContainer>(PotionRowScrollName) is { } potionScroll) potionScroll.QueueFree();
                     if (control.GetNodeOrNull<Control>("%TopBarPortraitTip") is { } portraitTip)
                         PhoneHitArea.Remove(portraitTip);
                     RestorePotionHoldersLandscape(control);
+                    _potionRowId = 0;
+                    _blitzMapId = 0;
+                    _blitzContainerId = 0;
+                    _topBarHpId = 0;
+                    _pauseButtonId = 0;
                 }
                 else if (typeName == RelicInventoryTypeName && control is FlowContainer inventory)
                 {
@@ -343,6 +410,9 @@ internal sealed class PortraitLayout
             else label.RemoveThemeFontSizeOverride("font_size");
         }
         _fontSizes.Clear();
+        _headerSwipe.Clear();
+        _potionRowId = 0;
+        _relicClipId = 0;
     }
 
     /// <summary>Sets a label's font size in portrait, keeping the game's own to put back in landscape.</summary>
@@ -479,7 +549,7 @@ internal sealed class PortraitLayout
 
     /// <summary>
     /// Settings. The tabs sit under the notch (under the top bar, potions and relics in a run, which
-    /// stay in view: see <see cref="KeepRunBarsInPlace"/>) and the rows scroll below them, never under them. Each panel but
+    /// stay in view: see <see cref="OwnRunBarTweens"/>) and the rows scroll below them, never under them. Each panel but
     /// Input is drawn <see cref="SettingsScale"/> times larger at a width that fits the screen, so its rows, text,
     /// tickboxes, page arrows, sliders and the language list grow together; its small controls get 44 point touch areas.
     /// Input, the keyboard and controller table, keeps the game's size: it already spans the width.
@@ -631,6 +701,8 @@ internal sealed class PortraitLayout
         }
     }
 
+    private static bool IsInputPanel(Control panel) => panel.GetType().Name == "NInputSettingsPanel";
+
     private static void RefreshSettingsPanels(NSettingsScreen settings)
     {
         if (settings.GetNodeOrNull<Control>(SettingsClipperPath) is not { } clipper) return;
@@ -652,70 +724,167 @@ internal sealed class PortraitLayout
     }
 
     /// <summary>
-    /// In a run the game slides the top bar and the relics up out of view while the pause menu, Settings or the compendium is
-    /// open (and while a player's details are open in a lobby). The top bar's slide is a desktop bar's height, so in portrait it
-    /// stopped in the notch's band over the relics. Portrait keeps both where the fight puts them on
-    /// every screen; their buttons close the open screen first, as they do in a fight.
+    /// Before each frame is drawn, the game's own run-bar slides are taken over. The game slides the top bar and the relic
+    /// strip up out of view while the pause menu, Settings or the compendium is open; in portrait the top bar's desktop slide
+    /// would stop it inside the notch's band, and the relics would slide out of their band. The top bar is held exactly where
+    /// the fight puts it and the relic clip fades out and in instead of sliding, as the reference layout does. Running from
+    /// <see cref="RenderingServer.FramePreDraw"/> is what makes this invisible: every tween the game created this frame has
+    /// already written, and no frame is drawn before the correction. The Blitz map's own reposition is taken over here too,
+    /// because the game places it between the desktop left box and the deck button, which portrait has moved.
     /// </summary>
-    private void KeepRunBarsInPlace()
+    private void OnHeaderPreDraw()
     {
-        if (_runTopBarId != 0 && GodotObject.InstanceFromId(_runTopBarId) is Control topBar && GodotObject.IsInstanceValid(topBar) &&
-            topBar.IsInsideTree() && topBar.Position.Y < -0.5f)
-        {
-            _topBarHideTween ??= topBar.GetType().GetField("_hideTween", BindingFlags.Instance | BindingFlags.NonPublic);
-            (_topBarHideTween?.GetValue(topBar) as Tween)?.Kill();
-            topBar.Position = new Vector2(topBar.Position.X, 0f);
-        }
-        if (_runRelicsId != 0 && GodotObject.InstanceFromId(_runRelicsId) is Control relics && GodotObject.IsInstanceValid(relics) &&
-            relics.IsInsideTree() && relics.Position.Y < RelicHomeY(relics) - 0.5f)
-            relics.GetType().GetMethod("ShowImmediately", Type.EmptyTypes)?.Invoke(relics, null);
+        if (_tree == null || !SafeAreaCanvas.IsPortrait || !GodotObject.IsInstanceValid(_tree.Root)) return;
+        OwnRunBarTweens();
+        KeepBlitzMapInRow();
+        RefreshHeaderHolderInput();
     }
 
-    private static float RelicHomeY(Control relics) =>
-        relics.GetType().GetField("_originalPos", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(relics) is Vector2 home ? home.Y : relics.Position.Y;
+    /// <summary>
+    /// A scroll clip hides its content but Godot still offers every holder to a touch, wherever it was scrolled to: a potion
+    /// scrolled out of the row would sit over the map and deck buttons, a third line of relics over the stage. Each holder's
+    /// touch area is turned off until the whole of it is inside its clip. Checked when an offset changes, not per holder per
+    /// frame.
+    /// </summary>
+    private void RefreshHeaderHolderInput()
+    {
+        if (_potionRowId != 0 && GodotObject.InstanceFromId(_potionRowId) is ScrollContainer potions &&
+            GodotObject.IsInstanceValid(potions))
+        {
+            int scroll = potions.ScrollHorizontal;
+            if (scroll != _potionScrollSeen)
+            {
+                _potionScrollSeen = scroll;
+                FilterHolderInput(potions);
+            }
+        }
+        foreach ((ulong id, RelicClipState state) in _relicClips)
+        {
+            if (!GodotObject.IsInstanceValid(state.Clip)) continue;
+            int scroll = state.Clip.ScrollVertical;
+            if (_relicScrollSeen.TryGetValue(id, out int seen) && seen == scroll) continue;
+            _relicScrollSeen[id] = scroll;
+            FilterHolderInput(state.Clip);
+        }
+    }
 
-    private static bool IsInputPanel(Control panel) => panel.GetType().Name == "NInputSettingsPanel";
+    private static void FilterHolderInput(Control clip)
+    {
+        // Two units of slack: a slot scrolled flush with the clip's edge still shows (and is tapped) as a whole.
+        Rect2 visible = clip.GetGlobalRect().Grow(2f);
+        FilterHolderInput(clip, visible);
+    }
 
-    private void LayoutTopBarPortrait(Control topBar, float capHeight)
+    private static void FilterHolderInput(Node node, Rect2 visible)
+    {
+        foreach (Node child in node.GetChildren())
+        {
+            if (child is NClickableControl clickable)
+            {
+                Control.MouseFilterEnum want = visible.Encloses(clickable.GetGlobalRect())
+                    ? Control.MouseFilterEnum.Stop
+                    : Control.MouseFilterEnum.Ignore;
+                if (clickable.MouseFilter != want) clickable.MouseFilter = want;
+            }
+            FilterHolderInput(child, visible);
+        }
+    }
+
+    /// <summary>Leaving portrait: every holder is offered to the game again, wherever the desktop scene puts it.</summary>
+    private static void ResetHolderInput(Node node)
+    {
+        foreach (Node child in node.GetChildren())
+        {
+            if (child is NClickableControl clickable) clickable.MouseFilter = Control.MouseFilterEnum.Stop;
+            ResetHolderInput(child);
+        }
+    }
+
+    private void OwnRunBarTweens()
+    {
+        if (_runTopBarId != 0 && GodotObject.InstanceFromId(_runTopBarId) is Control topBar && GodotObject.IsInstanceValid(topBar) &&
+            topBar.IsInsideTree())
+        {
+            _topBarHideTween ??= topBar.GetType().GetField("_hideTween", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (_topBarHideTween?.GetValue(topBar) is Tween tween && GodotObject.IsInstanceValid(tween) && tween.IsRunning())
+                tween.Kill();
+            if (MathF.Abs(topBar.Position.Y) > 0.01f) topBar.Position = new Vector2(topBar.Position.X, 0f);
+        }
+
+        foreach ((ulong id, RelicClipState state) in _relicClips)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control relics || !GodotObject.IsInstanceValid(relics) ||
+                !relics.IsInsideTree() || !GodotObject.IsInstanceValid(state.Clip)) continue;
+            state.TweenField ??= relics.GetType().GetField("_curTween", BindingFlags.Instance | BindingFlags.NonPublic);
+            // The game moves the whole inventory (a slide of 68 units a line plus 90) from AnimHide/AnimShow and from
+            // ShowImmediately/HideImmediately. The clip does the hiding instead, so the inventory stays at its home.
+            if (state.TweenField?.GetValue(relics) is Tween slide && GodotObject.IsInstanceValid(slide) && slide.IsRunning())
+                slide.Kill();
+            if (relics.Position.LengthSquared() > 0.04f) relics.Position = Vector2.Zero;
+            // AnimHide/AnimShow mark their intent here; ShowImmediately/HideImmediately do not and only flicker the
+            // inventory out for a screenshot, which the pin above undoes.
+            bool shown = relics.FocusBehaviorRecursive != Control.FocusBehaviorRecursiveEnum.Disabled;
+            if (shown == state.FadedOut) FadeRelicClip(state, shown);
+        }
+    }
+
+    /// <summary>The relic clip fades where the game would slide, and stops taking touches as it fades out.</summary>
+    private static void FadeRelicClip(RelicClipState state, bool shown)
+    {
+        state.FadedOut = !shown;
+        state.Clip.MouseBehaviorRecursive = shown
+            ? Control.MouseBehaviorRecursiveEnum.Inherited
+            : Control.MouseBehaviorRecursiveEnum.Disabled;
+        state.Fade?.Kill();
+        if (!state.Clip.IsInsideTree())
+        {
+            state.Clip.Modulate = new Color(1f, 1f, 1f, shown ? 1f : 0f);
+            return;
+        }
+        state.Fade = state.Clip.CreateTween();
+        state.Fade.TweenProperty(state.Clip, "modulate:a", shown ? 1f : 0f, RelicFadeSeconds)
+            .SetTrans(Tween.TransitionType.Cubic).SetEase(Tween.EaseType.Out);
+    }
+
+    /// <summary>
+    /// The Blitz run's map is a strip of map points the game centres between the left box and the deck button every time a
+    /// box sorts. Portrait puts the deck button in the second row, so the strip is placed here instead: between the health
+    /// and the settings button in the top row, scaled down to what that room allows and never larger than 1.6 times its art.
+    /// </summary>
+    private void KeepBlitzMapInRow()
+    {
+        if (_blitzMapId == 0 || GodotObject.InstanceFromId(_blitzMapId) is not Control map || !GodotObject.IsInstanceValid(map) ||
+            !map.IsInsideTree() || !map.IsVisibleInTree()) return;
+        if (map.GetParent() is not Control topBar || topBar.GetType().FullName != TopBarTypeName) return;
+        if (_blitzContainerId == 0 || GodotObject.InstanceFromId(_blitzContainerId) is not Control container ||
+            !GodotObject.IsInstanceValid(container)) return;
+        float width = container.Size.X, height = container.Size.Y;
+        // An empty strip (every non-Blitz run) keeps the scene's 40 x 40 box: nothing to place.
+        if (width <= 100f || height <= 1f) return;
+        if (_topBarHpId == 0 || GodotObject.InstanceFromId(_topBarHpId) is not Control hp || !GodotObject.IsInstanceValid(hp)) return;
+        float left = hp.GetGlobalRect().End.X + 22f;
+        float right = (_pauseButtonId != 0 && GodotObject.InstanceFromId(_pauseButtonId) is Control pause &&
+            GodotObject.IsInstanceValid(pause) ? pause.GetGlobalRect().Position.X : topBar.Size.X) - 22f;
+        if (right - left < 120f) return;
+        float scale = MathF.Min(1.6f, MathF.Min((right - left) / width, TopBarRowHeight / height));
+        container.PivotOffset = Vector2.Zero;
+        container.Scale = new Vector2(scale, scale);
+        container.Position = new Vector2((left + right - width * scale) / 2f - map.Position.X,
+            (TopBarRowHeight - height * scale) / 2f);
+    }
+
+    private void LayoutTopBarPortrait(Control topBar, float capHeight, Vector2 canvas)
     {
         WireTopBarSignals(topBar);
-
-        var safeCap = topBar.GetNodeOrNull<ColorRect>(SafeCapName);
-        if (safeCap == null)
-        {
-            safeCap = new ColorRect
-            {
-                Name = SafeCapName,
-                Color = SafeCapColor,
-                MouseFilter = Control.MouseFilterEnum.Ignore,
-            };
-            topBar.AddChild(safeCap);
-            topBar.MoveChild(safeCap, 0);
-        }
-        safeCap.AnchorLeft = 0f;
-        safeCap.AnchorRight = 1f;
-        safeCap.AnchorTop = 0f;
-        safeCap.AnchorBottom = 0f;
-        safeCap.OffsetLeft = 0f;
-        safeCap.OffsetRight = 0f;
-        safeCap.OffsetTop = -60f;
-        safeCap.OffsetBottom = capHeight + 4f;
-        safeCap.Visible = true;
-
-        if (topBar.GetNodeOrNull<Control>("%BgImage") is { } bgImage)
-        {
-            Capture(bgImage, captureVisible: false);
-            // Keep desktop OffsetLeft=-1280 and OffsetRight=1280 so top_bar.tres keeps its 1:1 horizontal stone grain.
-            bgImage.OffsetTop = capHeight - 12f;
-            bgImage.OffsetBottom = capHeight + TopBarRowHeight + 12f;
-        }
+        LayoutStoneHeader(topBar, capHeight, canvas);
 
         // The row's boxes start above the row, in the safe cap, so what they hold is 44 points tall to a finger. Each
         // picture is kept in the row itself by a top margin or by sitting at the bottom of its box.
         float rowTop = capHeight + TopBarRowInset - TopBarTouchRise;
         float rowBottom = capHeight + TopBarRowHeight;
         int rise = (int)TopBarTouchRise;
-        float rightWidth = 3f * TopBarButtonWidth;
+        // The settings button is the row's only button: map and deck moved to the right of the potion row.
+        float rightWidth = TopBarButtonWidth;
 
         if (topBar.GetNodeOrNull<HBoxContainer>("RightAlignedStuff") is { } rightBox)
         {
@@ -737,35 +906,10 @@ internal sealed class PortraitLayout
                 }
             }
 
-            foreach (string btnName in new[] { "%Map", "%Deck", "%PauseButton" })
+            if (topBar.GetNodeOrNull<Control>("%PauseButton") is { } pause)
             {
-                if (topBar.GetNodeOrNull<Control>(btnName) is not { } btn) continue;
-                Capture(btn, captureVisible: false);
-                btn.CustomMinimumSize = new Vector2(TopBarButtonWidth, 80f);
-                if (btn.IsClass("MarginContainer"))
-                {
-                    // Map and settings are margin containers to the engine (their script class derives from a plain
-                    // control, so a C# type test would miss them): the picture fills the box inside the margins. The box
-                    // stays 64 units wide, as the game has it: the game turns and scales the picture around a pivot fixed
-                    // for that width, so a wider box swings the picture off its place (the gear spins while it is touched).
-                    int spare = (int)TopBarButtonWidth - 64;
-                    btn.AddThemeConstantOverride("margin_left", spare / 2);
-                    btn.AddThemeConstantOverride("margin_right", spare - spare / 2);
-                    btn.AddThemeConstantOverride("margin_top", 8 + rise);
-                    btn.AddThemeConstantOverride("margin_bottom", 8);
-                }
-                else if (btn.GetNodeOrNull<Control>("Control") is { } pictureBox)
-                {
-                    // Deck: the picture is centred in a box that fills the button.
-                    Capture(pictureBox, captureVisible: false);
-                    pictureBox.OffsetTop = rise;
-                    if (btn.GetNodeOrNull<Control>("DeckCardCount") is { } deckCount)
-                    {
-                        // The deck's card count is under 10 points. By its font, not its scale: the game animates
-                        // the label's scale whenever the count changes, which would put a scale of ours back to 1.
-                        SetFontSize(deckCount, (int)MathF.Round(GameFontSize(deckCount) * 1.2f));
-                    }
-                }
+                _pauseButtonId = pause.GetInstanceId();
+                StyleTopBarButton(pause, rise, secondRow: false);
             }
         }
 
@@ -806,6 +950,7 @@ internal sealed class PortraitLayout
 
             if (topBar.GetNodeOrNull<Control>("%TopBarHp") is { } hpBox)
             {
+                _topBarHpId = hpBox.GetInstanceId();
                 Capture(hpBox, captureVisible: false);
                 hpBox.AddThemeConstantOverride("separation", 2);
                 if (hpBox.GetNodeOrNull<Control>("HpIcon") is { } hpIcon)
@@ -846,47 +991,6 @@ internal sealed class PortraitLayout
                     goldLabel.SizeFlagsVertical = Control.SizeFlags.ShrinkEnd;
                     SetFontSize(goldLabel, TopBarNumberFontSize);
                 }
-            }
-
-            // The potion tray leaves the row for its own row under it (see LayoutPotionRowPortrait).
-            Control? potionRow = topBar.GetNodeOrNull<Control>(PotionRowName) ?? leftBox.GetNodeOrNull<Control>(PotionRowName);
-            if (potionRow != null)
-            {
-                Capture(potionRow, captureVisible: false);
-                if (potionRow.GetParent() != topBar)
-                    potionRow.Reparent(topBar, keepGlobalTransform: false);
-                potionRow.AddThemeConstantOverride("margin_top", 0);
-                potionRow.AddThemeConstantOverride("margin_bottom", 0);
-            }
-
-            if (topBar.GetNodeOrNull<Control>("%PotionContainer") is { } potionContainer)
-            {
-                Capture(potionContainer, captureVisible: false);
-                potionContainer.CustomMinimumSize = new Vector2(0f, 72f);
-                potionContainer.AddThemeConstantOverride("margin_top", 2);
-                potionContainer.AddThemeConstantOverride("margin_bottom", 2);
-            }
-
-            if (topBar.GetNodeOrNull<Control>("%PotionContainer/MarginContainer") is { } trayMargin)
-            {
-                Capture(trayMargin, captureVisible: false);
-                trayMargin.AddThemeConstantOverride("margin_left", 10);
-                trayMargin.AddThemeConstantOverride("margin_right", 10);
-                trayMargin.AddThemeConstantOverride("margin_top", 2);
-                trayMargin.AddThemeConstantOverride("margin_bottom", 2);
-            }
-
-            RefreshPotionHoldersPortrait(topBar);
-
-            if (potionRow != null)
-            {
-                potionRow.AnchorLeft = 0f;
-                potionRow.AnchorRight = 0f;
-                potionRow.AnchorTop = 0f;
-                potionRow.AnchorBottom = 0f;
-                potionRow.Position = new Vector2(10f, capHeight + TopBarRowHeight + 2f);
-                // A control outside a container never shrinks by itself: after a slot is removed, take the row's own size.
-                potionRow.ResetSize();
             }
 
             if (topBar.GetNodeOrNull<Control>("%RoomIcons") is { } roomIcons)
@@ -952,12 +1056,257 @@ internal sealed class PortraitLayout
             }
         }
 
+        LayoutMapDeckRow(topBar, capHeight, canvas);
+        LayoutPotionRow(topBar, capHeight, canvas);
+
+        // The Blitz run's map strip: in the top row, beside the settings button. The game's own reposition runs between
+        // desktop boxes that portrait no longer has, so the strip is placed again before each frame (KeepBlitzMapInRow).
+        if (topBar.GetNodeOrNull<Control>("%BlitzMap") is { } blitzMap)
+        {
+            Capture(blitzMap, captureVisible: false);
+            _blitzMapId = blitzMap.GetInstanceId();
+            _blitzContainerId = blitzMap.GetNodeOrNull<Control>("BlitzMapContainer")?.GetInstanceId() ?? 0;
+            blitzMap.AnchorLeft = 0f;
+            blitzMap.AnchorRight = 1f;
+            blitzMap.AnchorTop = 0f;
+            blitzMap.AnchorBottom = 0f;
+            blitzMap.OffsetLeft = 0f;
+            blitzMap.OffsetRight = 0f;
+            blitzMap.OffsetTop = capHeight;
+            blitzMap.OffsetBottom = capHeight + TopBarRowHeight;
+        }
+
         if (topBar.GetNodeOrNull<Control>("GoldPopup") is { } goldPopup)
         {
             PortraitControlSnapshot snap = Capture(goldPopup, captureVisible: false);
             goldPopup.OffsetTop = snap.InitialOffsetTop + capHeight;
             goldPopup.OffsetBottom = snap.InitialOffsetBottom + capHeight;
         }
+    }
+
+    /// <summary>
+    /// The cracked-stone header: the game's own top-bar texture as a nine-patch over the safe cap and the top bar, with the
+    /// game's torn bottom edge at the header's bottom. The native stretched background is hidden; in landscape it is shown
+    /// again exactly as the game had it.
+    /// </summary>
+    private void LayoutStoneHeader(Control topBar, float capHeight, Vector2 canvas)
+    {
+        if (topBar.GetNodeOrNull<NinePatchRect>(StoneHeaderName) is not { } stone)
+        {
+            if (topBar.GetNodeOrNull<TextureRect>("%BgImage") is not { } background || background.Texture == null) return;
+            StonePatchMargins margins = PortraitHeaderMath.StonePatchMargins(
+                (int)background.Texture.GetWidth(), (int)background.Texture.GetHeight());
+            stone = new NinePatchRect
+            {
+                Name = StoneHeaderName,
+                Texture = background.Texture,
+                Material = background.Material,
+                PatchMarginLeft = margins.Left,
+                PatchMarginTop = margins.Top,
+                PatchMarginRight = margins.Right,
+                PatchMarginBottom = margins.Bottom,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+            };
+            topBar.AddChild(stone);
+            topBar.MoveChild(stone, 0);
+        }
+
+        stone.AnchorLeft = 0f;
+        stone.AnchorTop = 0f;
+        stone.AnchorRight = 0f;
+        stone.AnchorBottom = 0f;
+        stone.OffsetLeft = 0f;
+        stone.OffsetTop = 0f;
+        stone.OffsetRight = canvas.X;
+        stone.OffsetBottom = PortraitBands.HeaderBottom(capHeight);
+        stone.Visible = true;
+
+        if (topBar.GetNodeOrNull<TextureRect>("%BgImage") is { } native)
+        {
+            Capture(native, captureVisible: true);
+            native.Visible = false;
+        }
+    }
+
+    /// <summary>
+    /// A top bar button with a 44 point touch box. In the first row the box reaches up into the safe cap (<paramref name="rise"/>)
+    /// so the picture stays in the row; in the second row the box is the button itself. Both keep the 64 unit picture box the
+    /// game pivots its picture around: the map's margin container and the deck's picture control.
+    /// </summary>
+    private void StyleTopBarButton(Control button, int rise, bool secondRow)
+    {
+        Capture(button, captureVisible: false);
+        button.CustomMinimumSize = new Vector2(TopBarButtonWidth, secondRow ? PortraitBands.MinTarget : 80f);
+        if (button.IsClass("MarginContainer"))
+        {
+            // Map is a margin container to the engine (its script class derives from a plain control, so a C# type test
+            // would miss it): the picture fills the box inside the margins. The gear's box stays as the game has it: the
+            // game turns and scales the picture around a pivot fixed for that width, so a wider box swings it off place.
+            int spare = (int)TopBarButtonWidth - 64;
+            button.AddThemeConstantOverride("margin_left", spare / 2);
+            button.AddThemeConstantOverride("margin_right", spare - spare / 2);
+            if (secondRow)
+            {
+                button.AddThemeConstantOverride("margin_top", 31);
+                button.AddThemeConstantOverride("margin_bottom", 32);
+            }
+            else
+            {
+                button.AddThemeConstantOverride("margin_top", 8 + rise);
+                button.AddThemeConstantOverride("margin_bottom", 8);
+            }
+        }
+        else if (button.GetNodeOrNull<Control>("Control") is { } pictureBox)
+        {
+            // Deck: the picture is centred in a box that fills the button.
+            Capture(pictureBox, captureVisible: false);
+            pictureBox.OffsetTop = secondRow ? 0f : rise;
+            if (button.GetNodeOrNull<Control>("DeckCardCount") is { } deckCount)
+            {
+                // The deck's card count is under 10 points. By its font, not its scale: the game animates
+                // the label's scale whenever the count changes, which would put a scale of ours back to 1.
+                SetFontSize(deckCount, (int)MathF.Round(GameFontSize(deckCount) * 1.2f));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Map and deck move from the first row to the right of the potion row, where the reference layout has them: two 44 point
+    /// buttons side by side at the screen's right edge, level with the tray.
+    /// </summary>
+    private void LayoutMapDeckRow(Control topBar, float capHeight, Vector2 canvas)
+    {
+        float width = 2f * TopBarButtonWidth + MapDeckSeparation;
+        HBoxContainer? row = topBar.GetNodeOrNull<HBoxContainer>(MapDeckRowName);
+        if (row == null)
+        {
+            row = new HBoxContainer { Name = MapDeckRowName, MouseFilter = Control.MouseFilterEnum.Ignore };
+            topBar.AddChild(row);
+        }
+        HeaderBox box = PortraitHeaderMath.MapDeckRow(canvas.X, capHeight, TopBarRowHeight, PortraitBands.PotionRowHeight,
+            width, PortraitBands.MinTarget, PotionRowMargin);
+        row.AnchorLeft = 0f;
+        row.AnchorRight = 0f;
+        row.AnchorTop = 0f;
+        row.AnchorBottom = 0f;
+        row.OffsetLeft = box.Left;
+        row.OffsetRight = box.Right;
+        row.OffsetTop = box.Top;
+        row.OffsetBottom = box.Bottom;
+        row.AddThemeConstantOverride("separation", (int)MapDeckSeparation);
+        // Blitz hides the map button; the deck then keeps the screen's right edge.
+        row.Alignment = BoxContainer.AlignmentMode.End;
+
+        foreach (string name in new[] { "%Map", "%Deck" })
+        {
+            if (topBar.GetNodeOrNull<Control>(name) is not { } button) continue;
+            // Captured before the first move: these offsets are the desktop row's.
+            Capture(button, captureVisible: false);
+            if (button.GetParent() != row) button.Reparent(row, keepGlobalTransform: false);
+            StyleTopBarButton(button, 0, secondRow: true);
+        }
+    }
+
+    /// <summary>
+    /// The potion row: the game's own tray (its dark box and the slots) inside a horizontal scroll clip, left of the map and
+    /// deck buttons. Any number of slots can be reached by swiping; the tray never shrinks the slots to make them fit.
+    /// </summary>
+    private void LayoutPotionRow(Control topBar, float capHeight, Vector2 canvas)
+    {
+        ScrollContainer? row = topBar.GetNodeOrNull<ScrollContainer>(PotionRowScrollName);
+        if (row == null)
+        {
+            row = new ScrollContainer
+            {
+                Name = PotionRowScrollName,
+                FollowFocus = false,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ClipContents = true,
+                HorizontalScrollMode = ScrollContainer.ScrollMode.ShowNever,
+                VerticalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            };
+            topBar.AddChild(row);
+            row.AddChild(new Control { Name = PotionStripName, MouseFilter = Control.MouseFilterEnum.Ignore });
+        }
+        _potionRowId = row.GetInstanceId();
+        Control strip = row.GetNode<Control>(PotionStripName);
+
+        float mapDeckWidth = 2f * TopBarButtonWidth + MapDeckSeparation;
+        HeaderBox box = PortraitHeaderMath.PotionRow(canvas.X, capHeight, TopBarRowHeight, PortraitBands.PotionRowHeight,
+            mapDeckWidth, PotionRowMargin, PotionRowGap);
+        row.AnchorLeft = 0f;
+        row.AnchorRight = 0f;
+        row.AnchorTop = 0f;
+        row.AnchorBottom = 0f;
+        row.OffsetLeft = box.Left;
+        row.OffsetRight = box.Right;
+        row.OffsetTop = box.Top;
+        row.OffsetBottom = box.Bottom;
+
+        Control? tray = strip.GetNodeOrNull<Control>(PotionRowName) ?? topBar.FindChild(PotionRowName, true, false) as Control;
+        if (tray != null)
+        {
+            Capture(tray, captureVisible: false);
+            if (tray.GetParent() != strip) tray.Reparent(strip, keepGlobalTransform: false);
+            tray.AnchorLeft = 0f;
+            tray.AnchorRight = 0f;
+            tray.AnchorTop = 0f;
+            tray.AnchorBottom = 0f;
+            tray.OffsetLeft = 0f;
+            tray.OffsetTop = 0f;
+            tray.AddThemeConstantOverride("margin_top", 0);
+            tray.AddThemeConstantOverride("margin_bottom", 0);
+            // The tray is as long as every slot; only the slots take touches. The tray's own box, its dark background and
+            // the slots' margin container are 1588 units wide with twelve slots, well past the row, so they must not offer
+            // themselves to a finger over the map, the deck or the stage.
+            tray.MouseFilter = Control.MouseFilterEnum.Ignore;
+        }
+
+        if (topBar.GetNodeOrNull<Control>("%PotionContainer") is { } potionContainer)
+        {
+            Capture(potionContainer, captureVisible: false);
+            potionContainer.CustomMinimumSize = new Vector2(0f, 72f);
+            potionContainer.AddThemeConstantOverride("margin_top", 2);
+            potionContainer.AddThemeConstantOverride("margin_bottom", 2);
+            potionContainer.MouseFilter = Control.MouseFilterEnum.Ignore;
+        }
+
+        if (topBar.GetNodeOrNull<Control>("%PotionContainer/MarginContainer") is { } trayMargin)
+        {
+            Capture(trayMargin, captureVisible: false);
+            trayMargin.AddThemeConstantOverride("margin_left", (int)PotionRowMargin);
+            trayMargin.AddThemeConstantOverride("margin_right", (int)PotionRowMargin);
+            trayMargin.AddThemeConstantOverride("margin_top", 2);
+            trayMargin.AddThemeConstantOverride("margin_bottom", 2);
+            trayMargin.MouseFilter = Control.MouseFilterEnum.Ignore;
+        }
+
+        foreach (string background in new[] { "%PotionContainer/PotionBg", "%PotionContainer/PotionErrorBg" })
+            if (topBar.GetNodeOrNull<Control>(background) is { } potionBackground)
+                potionBackground.MouseFilter = Control.MouseFilterEnum.Ignore;
+
+        RefreshPotionHoldersPortrait(topBar);
+
+        if (tray != null)
+        {
+            // A control outside a container never takes its own size: after a slot is added or removed, take it again.
+            tray.ResetSize();
+            Vector2 traySize = tray.GetCombinedMinimumSize();
+            int slots = CountPotionHolders(topBar);
+            float width = PortraitHeaderMath.PotionStripWidth(slots, PotionSlotSize, PotionHolderSeparation,
+                PotionRowMargin, PotionRowMargin);
+            strip.CustomMinimumSize = new Vector2(MathF.Max(width, traySize.X), traySize.Y);
+            tray.Size = strip.CustomMinimumSize;
+        }
+    }
+
+    private static int CountPotionHolders(Control topBar)
+    {
+        if (topBar.GetNodeOrNull<Control>("%PotionContainer/MarginContainer/PotionHolders") is not { } holdersBox) return 0;
+        int count = 0;
+        foreach (Node child in holdersBox.GetChildren())
+            if (child is Control holder && !holder.IsQueuedForDeletion()) count++;
+        return count;
     }
 
     private void WireTopBarSignals(Control topBar)
@@ -1013,7 +1362,7 @@ internal sealed class PortraitLayout
         }
 
         float holderSize = PotionSlotSize;
-        holdersBox.AddThemeConstantOverride("separation", 4);
+        holdersBox.AddThemeConstantOverride("separation", (int)PotionHolderSeparation);
 
         foreach (Control holder in holders)
         {
@@ -1044,6 +1393,11 @@ internal sealed class PortraitLayout
     private void RestorePotionHoldersLandscape(Control topBar)
     {
         if (topBar.GetNodeOrNull<HBoxContainer>("%PotionContainer/MarginContainer/PotionHolders") is not { } holdersBox) return;
+        if (topBar.GetNodeOrNull<Control>("%PotionContainer") is { } potionContainer) ResetHolderInput(potionContainer);
+        foreach (string name in new[] { PotionRowName, "%PotionContainer", "%PotionContainer/MarginContainer",
+                     "%PotionContainer/PotionBg", "%PotionContainer/PotionErrorBg" })
+            if (topBar.FindChild(name.TrimStart('%'), true, false) is Control box)
+                box.MouseFilter = Control.MouseFilterEnum.Stop;
         foreach (Node child in holdersBox.GetChildren())
         {
             if (child is not Control holder) continue;
@@ -1074,30 +1428,111 @@ internal sealed class PortraitLayout
         }
     }
 
-    private void LayoutRelicInventoryPortrait(FlowContainer inventory, float capHeight)
+    private void LayoutRelicInventoryPortrait(FlowContainer inventory, float capHeight, Vector2 canvas)
     {
+        if (!inventory.IsInsideTree() || inventory.GetParent() == null) return;
         WireRelicInventorySignals(inventory);
         Capture(inventory, captureVisible: false);
         SaveRelicOriginalPos(inventory);
+        RelicClipState? state = EnsureRelicClip(inventory);
+        if (state == null || !GodotObject.IsInstanceValid(state.Clip) || !GodotObject.IsInstanceValid(state.Extent)) return;
 
-        float topY = capHeight + PortraitBands.TopBarHeight + 14f;
+        // The clip is fixed inside the band the stage was tuned around: relics wrap into lines and scroll; neither the count
+        // nor a scroll ever moves the stage, the backgrounds or the control rail.
+        HeaderBox clip = PortraitHeaderMath.RelicClip(canvas.X, capHeight, PortraitBands.TopBarHeight,
+            PortraitBands.RelicBandHeight, RelicSideMargin, RelicClipTopGap);
+        state.Clip.AnchorLeft = 0f;
+        state.Clip.AnchorTop = 0f;
+        state.Clip.AnchorRight = 0f;
+        state.Clip.AnchorBottom = 0f;
+        state.Clip.OffsetLeft = clip.Left;
+        state.Clip.OffsetTop = clip.Top;
+        state.Clip.OffsetRight = clip.Right;
+        state.Clip.OffsetBottom = clip.Bottom;
+
         inventory.AnchorLeft = 0f;
-        inventory.AnchorRight = 1f;
         inventory.AnchorTop = 0f;
+        inventory.AnchorRight = 0f;
         inventory.AnchorBottom = 0f;
-        inventory.OffsetLeft = 20f;
-        inventory.OffsetRight = -20f;
-        inventory.OffsetTop = topY;
-        inventory.OffsetBottom = topY + 2f * PortraitRelicSize + 16f;
-        inventory.AddThemeConstantOverride("h_separation", 8);
-        inventory.AddThemeConstantOverride("v_separation", 8);
+        inventory.OffsetLeft = 0f;
+        inventory.OffsetTop = 0f;
+        inventory.AddThemeConstantOverride("h_separation", (int)RelicSeparation);
+        inventory.AddThemeConstantOverride("v_separation", (int)RelicSeparation);
 
-        var portraitOrigin = new Vector2(20f, topY);
-        SetRelicOriginalPos(inventory, portraitOrigin);
-        if (inventory.Position.Y >= 0f)
-            inventory.Position = portraitOrigin;
+        RefreshRelicHoldersPortrait(inventory);
 
-        RefreshRelicPagingPortrait(inventory);
+        var holders = GetRelicHolders(inventory);
+        float content = PortraitHeaderMath.RelicContentHeight(holders.Count, clip.Width, PortraitRelicSize, RelicSeparation);
+        float height = MathF.Max(content, inventory.GetCombinedMinimumSize().Y);
+        inventory.CustomMinimumSize = new Vector2(clip.Width, 0f);
+        inventory.Size = new Vector2(clip.Width, height);
+        inventory.OffsetRight = clip.Width;
+        inventory.OffsetBottom = inventory.Size.Y;
+        // The scroll container measures the content control: it must advertise the wrapped flow's height, which its own
+        // minimum size does not (it is measured before the wrap).
+        state.Extent.CustomMinimumSize = new Vector2(clip.Width, MathF.Max(inventory.Size.Y, clip.Height));
+        SetRelicOriginalPos(inventory, Vector2.Zero);
+        inventory.Position = Vector2.Zero;
+    }
+
+    /// <summary>
+    /// Moves the game's relic flow into a scroll clip inside the relic band, once, before its holders matter to the layout.
+    /// Reparenting keeps the native holders, their signals and the native inspect on tap/hold: only the flow's own parent
+    /// changes. The game's own slide is replaced by a fade of the clip (OwnRunBarTweens).
+    /// </summary>
+    private RelicClipState? EnsureRelicClip(FlowContainer inventory)
+    {
+        ulong id = inventory.GetInstanceId();
+        if (_relicClips.TryGetValue(id, out RelicClipState? existing) && GodotObject.IsInstanceValid(existing.Clip) &&
+            GodotObject.IsInstanceValid(existing.Extent))
+        {
+            if (inventory.GetParent() != existing.Extent)
+                inventory.Reparent(existing.Extent, keepGlobalTransform: false);
+            return existing;
+        }
+
+        if (inventory.GetParent() is not { } parent) return null;
+        var state = new RelicClipState
+        {
+            OriginalParent = parent,
+            OriginalIndex = inventory.GetIndex(),
+            OriginalMouseFilter = inventory.MouseFilter,
+            TweenField = inventory.GetType().GetField("_curTween", BindingFlags.Instance | BindingFlags.NonPublic),
+        };
+        var clip = new ScrollContainer
+        {
+            Name = RelicClipName,
+            FollowFocus = false,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            ClipContents = true,
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.ShowNever,
+        };
+        var extent = new Control { Name = RelicExtentName, MouseFilter = Control.MouseFilterEnum.Ignore };
+        clip.AddChild(extent);
+        parent.AddChild(clip);
+        // Just above the top bar, so the band draws over the room but under every screen opened later.
+        Node? bar = null;
+        foreach (Node child in parent.GetChildren())
+        {
+            if (child.GetType().FullName != TopBarTypeName) continue;
+            bar = child;
+            break;
+        }
+        if (bar != null) parent.MoveChild(clip, Math.Min(bar.GetIndex() + 1, parent.GetChildCount() - 1));
+
+        state.Clip = clip;
+        state.Extent = extent;
+        (state.TweenField?.GetValue(inventory) as Tween)?.Kill();
+        inventory.Reparent(extent, keepGlobalTransform: false);
+        inventory.MouseFilter = Control.MouseFilterEnum.Ignore;
+        inventory.PivotOffset = Vector2.Zero;
+        inventory.FocusBehaviorRecursive = Control.FocusBehaviorRecursiveEnum.Inherited;
+        SetRelicOriginalPos(inventory, Vector2.Zero);
+        inventory.Position = Vector2.Zero;
+        _relicClips[id] = state;
+        if (id == _runRelicsId) _relicClipId = clip.GetInstanceId();
+        return state;
     }
 
     private void WireRelicInventorySignals(FlowContainer inventory)
@@ -1109,125 +1544,49 @@ internal sealed class PortraitLayout
             inventory.Connect("RelicsChanged", Callable.From(QueueApply));
     }
 
-    private void RefreshRelicPagingPortrait(FlowContainer inventory)
+    /// <summary>Every relic holder at 33 points, wrapped into the clip's lines; no holder is ever hidden.</summary>
+    private void RefreshRelicHoldersPortrait(FlowContainer inventory)
     {
-        var holders = GetRelicHolders(inventory);
         float scale = PortraitRelicSize / DesktopRelicSize;
-
-        foreach (Control holder in holders)
+        foreach (Control holder in GetRelicHolders(inventory))
         {
             holder.CustomMinimumSize = new Vector2(PortraitRelicSize, PortraitRelicSize);
+            holder.Visible = true;
             if ((holder.GetNodeOrNull<Control>("%Relic") ?? holder.GetNodeOrNull<Control>("Relic")) is { } relicNode)
             {
                 relicNode.PivotOffset = Vector2.Zero;
                 relicNode.Scale = new Vector2(scale, scale);
             }
         }
-
-        ulong invId = inventory.GetInstanceId();
-        if (holders.Count <= PortraitRelicsPerPage)
-        {
-            _relicPages.Remove(invId);
-            foreach (Control holder in holders) holder.Visible = true;
-            if (inventory.GetNodeOrNull<CanvasItem>(RelicPagerName) is { } existingPager)
-                existingPager.Visible = false;
-            return;
-        }
-
-        int pageCount = (holders.Count + PortraitRelicsPerPage - 1) / PortraitRelicsPerPage;
-        int page = _relicPages.TryGetValue(invId, out int storedPage) ? Math.Clamp(storedPage, 0, pageCount - 1) : 0;
-        _relicPages[invId] = page;
-
-        int start = page * PortraitRelicsPerPage;
-        int end = Math.Min(start + PortraitRelicsPerPage, holders.Count);
-        for (int i = 0; i < holders.Count; i++)
-            holders[i].Visible = i >= start && i < end;
-
-        Button pager = EnsureRelicPager(inventory);
-        var label = pager.GetNode<Label>("PagerLabel");
-        label.Text = page == 0
-            ? $"+{holders.Count - PortraitRelicsPerPage} ({holders.Count})"
-            : $"{start + 1}-{end} ({holders.Count})";
-        pager.Visible = true;
-        int lastIndex = inventory.GetChildCount() - 1;
-        if (pager.GetIndex() != lastIndex)
-            inventory.MoveChild(pager, lastIndex);
-    }
-
-    private Button EnsureRelicPager(FlowContainer inventory)
-    {
-        if (inventory.GetNodeOrNull<Button>(RelicPagerName) is { } existing)
-            return existing;
-
-        var style = new StyleBoxFlat
-        {
-            BgColor = PagerFillColor,
-            BorderColor = PagerBorderColor,
-            BorderWidthLeft = 2,
-            BorderWidthTop = 2,
-            BorderWidthRight = 2,
-            BorderWidthBottom = 2,
-            CornerRadiusTopLeft = 36,
-            CornerRadiusTopRight = 36,
-            CornerRadiusBottomLeft = 36,
-            CornerRadiusBottomRight = 36,
-        };
-
-        var pager = new Button
-        {
-            Name = RelicPagerName,
-            CustomMinimumSize = new Vector2(164f, PortraitRelicSize),
-            FocusMode = Control.FocusModeEnum.None,
-            MouseFilter = Control.MouseFilterEnum.Stop,
-        };
-        foreach (string state in new[] { "normal", "hover", "pressed", "focus", "disabled" })
-            pager.AddThemeStyleboxOverride(state, style);
-
-        var label = new Label
-        {
-            Name = "PagerLabel",
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-        };
-        label.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        label.AddThemeColorOverride("font_color", PagerTextColor);
-        label.AddThemeColorOverride("font_outline_color", new Color(0f, 0f, 0f, 0.65f));
-        label.AddThemeConstantOverride("outline_size", 8);
-        label.AddThemeFontSizeOverride("font_size", 26);
-        if (ResourceLoader.Exists("res://themes/kreon_bold_glyph_space_one.tres") &&
-            ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres") is { } kreon)
-        {
-            label.AddThemeFontOverride("font", kreon);
-        }
-        pager.AddChild(label);
-
-        ulong invId = inventory.GetInstanceId();
-        pager.Pressed += () =>
-        {
-            if (GodotObject.InstanceFromId(invId) is not FlowContainer inv || !GodotObject.IsInstanceValid(inv)) return;
-            int total = GetRelicHolders(inv).Count;
-            if (total <= PortraitRelicsPerPage) return;
-            int pages = (total + PortraitRelicsPerPage - 1) / PortraitRelicsPerPage;
-            int current = _relicPages.TryGetValue(invId, out int p) ? p : 0;
-            _relicPages[invId] = (current + 1) % pages;
-            RefreshRelicPagingPortrait(inv);
-        };
-
-        inventory.AddChild(pager);
-        return pager;
     }
 
     private void RestoreRelicInventoryLandscape(FlowContainer inventory)
     {
         ulong invId = inventory.GetInstanceId();
+        if (_relicClips.TryGetValue(invId, out RelicClipState? state))
+        {
+            state.Fade?.Kill();
+            if (GodotObject.IsInstanceValid(state.OriginalParent) && inventory.GetParent() == state.Extent)
+            {
+                inventory.Reparent(state.OriginalParent, keepGlobalTransform: false);
+                state.OriginalParent.MoveChild(inventory,
+                    Math.Clamp(state.OriginalIndex, 0, Math.Max(0, state.OriginalParent.GetChildCount() - 1)));
+            }
+            inventory.FocusBehaviorRecursive = Control.FocusBehaviorRecursiveEnum.Inherited;
+            inventory.MouseFilter = state.OriginalMouseFilter;
+            if (_relicClipId == state.Clip.GetInstanceId()) _relicClipId = 0;
+            if (GodotObject.IsInstanceValid(state.Clip)) state.Clip.QueueFree();
+            _relicClips.Remove(invId);
+        }
+
         if (_relicOriginalPos.TryGetValue(invId, out Vector2 origPos))
         {
             SetRelicOriginalPos(inventory, origPos);
-            if (inventory.Position.Y >= 0f)
-                inventory.Position = origPos;
+            inventory.Position = origPos;
         }
 
+        ResetHolderInput(inventory);
+        _relicScrollSeen.Remove(invId);
         foreach (Control holder in GetRelicHolders(inventory))
         {
             holder.CustomMinimumSize = new Vector2(DesktopRelicSize, DesktopRelicSize);
@@ -1238,9 +1597,6 @@ internal sealed class PortraitLayout
                 relicNode.Scale = Vector2.One;
             }
         }
-
-        if (inventory.GetNodeOrNull<CanvasItem>(RelicPagerName) is { } pager)
-            pager.Visible = false;
     }
 
     private static List<Control> GetRelicHolders(FlowContainer inventory)
@@ -1248,7 +1604,7 @@ internal sealed class PortraitLayout
         var list = new List<Control>();
         foreach (Node child in inventory.GetChildren())
         {
-            if (child is Control control && !control.IsQueuedForDeletion() && control.Name != RelicPagerName)
+            if (child is Control control && !control.IsQueuedForDeletion())
                 list.Add(control);
         }
         return list;
@@ -1295,11 +1651,11 @@ internal sealed class PortraitLayout
         dead.Clear();
         foreach (ulong id in _relicOriginalPos.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
-        foreach (ulong id in dead)
-        {
-            _relicOriginalPos.Remove(id);
-            _relicPages.Remove(id);
-        }
+        foreach (ulong id in dead) _relicOriginalPos.Remove(id);
+        dead.Clear();
+        foreach ((ulong id, RelicClipState state) in _relicClips)
+            if (!GodotObject.IsInstanceIdValid(id) || !GodotObject.IsInstanceValid(state.Clip)) dead.Add(id);
+        foreach (ulong id in dead) _relicClips.Remove(id);
         _combat.PruneDead();
         _between.PruneDead();
         _fit.PruneDead();

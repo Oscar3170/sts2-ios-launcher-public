@@ -27,7 +27,7 @@ internal static partial class PortraitProof
     {
         ClearNextStepFile();
         await EnsurePortraitAsync(tree, game);
-        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, pageTwo: false, addThreePotions: true, closeRelicHover: true);
+        object player = await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, addThreePotions: true, closeRelicHover: true);
         await WaitFramesAsync(tree, 90);
         Call(StaticProp(GameType(ScreensNs + "Map.NMapScreen"), "Instance")!, "Close", false);
         DismissFtues(tree, Sts2);

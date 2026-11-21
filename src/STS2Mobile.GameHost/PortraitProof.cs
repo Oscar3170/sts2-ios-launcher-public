@@ -47,13 +47,10 @@ internal static partial class PortraitProof
                     await StepPaginatorAsync(tree, "PhonePortraitMode", 0, expectPortrait: false);
                     break;
                 case "run-potion-5":
-                    await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: true, thirtyRelics: false, pageTwo: false);
+                    await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: true, thirtyRelics: false);
                     break;
                 case "run-relics-30":
-                    await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: true, pageTwo: false);
-                    break;
-                case "run-relics-30-page2":
-                    await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: true, pageTwo: true);
+                    await StartProofRunAsync(tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: true);
                     break;
                 case "combat-suite":
                     await RunCombatProofSuiteAsync(tree, game);
@@ -129,7 +126,7 @@ internal static partial class PortraitProof
 
         // 1. Ironclad run with 30 relics and 3 potions in Overgrowth 2-enemy combat.
         object ironcladPlayer = await StartProofRunAsync(
-            tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: true, pageTwo: false, addThreePotions: true, closeRelicHover: true);
+            tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: true, addThreePotions: true, closeRelicHover: true);
 
         await EnterEncounterAsync(sts2, tree, ironcladPlayer, "NIBBITS_NORMAL", 42UL);
 
@@ -192,7 +189,7 @@ internal static partial class PortraitProof
 
         int necroIndex = FindCharacterIndex(sts2, "Necrobinder");
         object necroPlayer = await StartProofRunAsync(
-            tree, game, characterIndex: necroIndex, fivePotions: false, thirtyRelics: false, pageTwo: false, addThreePotions: true, closeRelicHover: true);
+            tree, game, characterIndex: necroIndex, fivePotions: false, thirtyRelics: false, addThreePotions: true, closeRelicHover: true);
 
         await EnterEncounterAsync(sts2, tree, necroPlayer, "TWO_TAILED_RATS_NORMAL", 42UL);
         await SpawnExtraRatsUpToFiveAsync(sts2);
@@ -240,7 +237,7 @@ internal static partial class PortraitProof
         await BetweenStepAsync(tree, "main-menu");
 
         object player = await StartProofRunAsync(
-            tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, pageTwo: false, addThreePotions: true, closeRelicHover: true);
+            tree, game, characterIndex: 0, fivePotions: false, thirtyRelics: false, addThreePotions: true, closeRelicHover: true);
         await WaitFramesAsync(tree, 90);
         Type mapType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen")!;
         object? startMap = mapType.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)!.GetValue(null);
@@ -875,7 +872,6 @@ internal static partial class PortraitProof
         int characterIndex,
         bool fivePotions,
         bool thirtyRelics,
-        bool pageTwo,
         bool addThreePotions = false,
         bool closeRelicHover = false)
     {
@@ -966,13 +962,6 @@ internal static partial class PortraitProof
                     if (item.Name == "Icon" && item.Modulate.A < 0.99f)
                         item.Modulate = Colors.White;
                 }
-            }
-
-            if (pageTwo)
-            {
-                if (Descendants(tree.Root).FirstOrDefault(n => n.Name == "PortraitRelicPager") is Button pager)
-                    pager.EmitSignal(BaseButton.SignalName.Pressed);
-                await WaitFramesAsync(tree, 20);
             }
 
             if (!closeRelicHover)
