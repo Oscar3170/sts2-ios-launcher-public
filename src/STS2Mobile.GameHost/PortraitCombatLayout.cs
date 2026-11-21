@@ -430,6 +430,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private readonly Dictionary<ulong, ReducedCardEffects> _reducedCardEffects = new();
     private readonly List<ulong> _reduceRestoreIds = new();
     private bool _lastReduceEffects;
+    // Frames the hand has gone without any holder moving; what gives a reduced card its effects back (see ReducedSettleFrames).
+    private int _handStillFrames;
     private readonly HashSet<ulong> _wiredHolders = new();
     private readonly HashSet<ulong> _wiredSelectionHands = new();
     private readonly HashSet<ulong> _wiredSelectionContainers = new();
@@ -1212,22 +1214,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // last pass drew it at. The pass gate needs it, and so does the frame-rate governor, which must not cap a draw to
         // 30 fps (see HandMoving); the check is engine reads only.
         long frame = (long)Engine.GetProcessFrames();
-        bool handMoving = _handDrawBatch;
-        if (!handMoving)
+        // Motion the game applied before this pass (a native step, the hand's own slide). The pass's own writes below —
+        // the settled pin especially — move cards too, so HandMoving is published at the end of the loop from both.
+        bool handMovedBeforePass = false;
+        foreach (Control holder in activeHolders)
         {
-            foreach (Control holder in activeHolders)
-            {
-                if (!_stillness.Moved(holder))
-                    continue;
-                handMoving = true;
-                break;
-            }
+            if (!_stillness.Moved(holder))
+                continue;
+            handMovedBeforePass = true;
+            break;
         }
-        _handMoving = handMoving;
-        _handMovingFrame = (ulong)frame;
-        // A draw's first frame is already past the process step, where the frame cap was last decided and could not yet
-        // see the hand move; decide again now, with it moving, so not even that frame is held at the idle rate.
-        if (handMoving) PhoneFrameCap.Apply();
 
         // Everything below is reflective work per card, and the game only re-lays the hand out after an add, a focus, a
         // selection or a card-play change, all of which are signals or one cheap field. So the pass runs when one of those
@@ -1235,7 +1231,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // HandIdlePassFrames.
         ulong pressed = PhoneTouchCards.PressedHolder?.GetInstanceId() ?? 0UL;
         bool needsPass = _handDirty
-            || handMoving
+            || _handDrawBatch
+            || handMovedBeforePass
             // A card whose effects are still reduced needs the first frame it rests on, so it gets them back then, not on
             // the next idle pass.
             || _reducedCardEffects.Count > 0
@@ -1269,6 +1266,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
 
         HashSet<ulong> activeDimmedCardIds = _activeDimmedCardIds;
         activeDimmedCardIds.Clear();
+        bool anyMovedThisFrame = false;
 
         // The two state inputs a card's playability depends on, read once for the whole hand.
         (int energy, int stars) = refl.PlayerResources(hand);
@@ -1334,14 +1332,16 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             float restingAngle = isFocused ? 0f : slot.AngleDegrees;
             CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive, restingAngle);
             // Whether this frame moved the holder at all (a native step, the pin above, a press): read before the record
-            // below, which then stores where the frame drew it.
-            bool movedThisFrame = !ReduceEffects || _stillness.Moved(holder);
+            // below, which then stores where the frame drew it. The layout's own pin counts, which is why the hand's motion
+            // for the governor is taken from these, not from the pre-pass state only.
+            bool holderMoved = _stillness.Moved(holder);
+            anyMovedThisFrame |= holderMoved;
             _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale), restingAngle);
-            // A card rests on the first frame this pass neither moves it nor finds it off its slot: the frame it lands
-            // still counts as in flight (it moved), the frame after it does not. Anything short of that is in flight: the
-            // frame a draw arrives on (at the draw pile) and the glide toward its slot. Only Reduce Effects reads it (the
-            // pass runs on every drawn frame of a draw), so with the setting off the check is skipped.
-            bool resting = !ReduceEffects || (!movedThisFrame &&
+            // A card rests when this frame neither moved it nor found it off its slot: the frame it lands still counts as
+            // in flight (it moved), the frame after it does not. Anything short of that is in flight: the frame a draw
+            // arrives on (at the draw pile) and the glide toward its slot. Only Reduce Effects reads it (the pass runs on
+            // every drawn frame of a draw), so with the setting off the check is skipped.
+            bool resting = !ReduceEffects || (!holderMoved &&
                 (holder.Position - slotPosition).LengthSquared() <= 1f &&
                 MathF.Abs(holder.Scale.X - slot.Scale) <= 0.01f &&
                 MathF.Abs(holder.RotationDegrees - restingAngle) <= 0.5f);
@@ -1349,9 +1349,19 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             if (cardNode != null)
             {
                 ApplyCardPlayabilityVisuals(holder, cardNode, refl, combatInProgress, playable, activeDimmedCardIds, resting,
-                    movedThisFrame, frame);
+                    _handStillFrames >= ReducedSettleFrames);
             }
         }
+
+        // Publish the frame's motion once the layout has had its say: a draw's batch, a native step or the pass's own pin
+        // all count, so the frame-rate governor never caps a frame the player sees a card moving on. The count of still
+        // frames is what gives a card its effects back (two frames after the hand stops, like the observer's motion carry).
+        _handStillFrames = anyMovedThisFrame ? 0 : Math.Min(_handStillFrames + 1, 1000);
+        _handMoving = _handDrawBatch || anyMovedThisFrame;
+        _handMovingFrame = (ulong)frame;
+        // A draw's first frame is already past the process step, where the frame cap was last decided and could not yet
+        // see the hand move; decide again now, with it moving, so not even that frame is held at the idle rate.
+        if (_handMoving) PhoneFrameCap.Apply();
 
         if (DiagnoseHandDraw && _diagnoseFrames > 0)
         {
@@ -2239,8 +2249,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         bool playable,
         HashSet<ulong> activeDimmedCardIds,
         bool resting,
-        bool movedThisFrame,
-        long frame)
+        bool handStill)
     {
         ulong cardId = cardNode.GetInstanceId();
         CardVisualNodes nodes = CardVisualNodesOf(cardNode, refl);
@@ -2270,8 +2279,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                         mat.SetShaderParameter("width", 0.095f);
                 }
             }
-            ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting,
-                movedThisFrame, frame);
+            ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting, handStill);
             return;
         }
 
@@ -2323,8 +2331,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             }
         }
 
-        ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting,
-            movedThisFrame, frame);
+        ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting, handStill);
     }
 
     /// <summary>
@@ -2339,40 +2346,36 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         // The width the game's own half-second tween was heading to, written back once instead (see the restore).
         public float HighlightWidth;
         public ulong ShadowId;
-        // The frame this card last moved on: the effects come back once it has been still for ReducedSettleFrames.
-        public long LastMovedFrame;
     }
 
-    // How long after a card last moved its effects stay off. A glide can pause for a frame at an ease plateau, and a card
-    // that has just landed can be nudged by the next card of the draw; two frames also covers the frames an observer
-    // still reads as motion (a position sampled once a frame), so no frame that moved a card ever draws its glow.
-    private const long ReducedSettleFrames = 2;
+    // How many frames the hand must have been still before a card's effects come back. A glide can pause for a frame at an
+    // ease plateau, and a card that has just landed can be nudged by the next card of the draw; two frames also covers the
+    // frames an observer still reads as motion (a position sampled once a frame), so no frame that moved a card draws its
+    // glow. Counted for the hand, not per card: once nothing has moved for two frames nothing is in flight.
+    private const int ReducedSettleFrames = 2;
 
     /// <summary>
     /// Reduce Effects on the hand: a card in flight from a draw — its first frames at the draw pile, its glide to its
     /// slot, the row re-centring around the cards still arriving — draws without its glow and its shadow, and the glow's
     /// tween is killed rather than run: the game's half-second <c>AnimShow</c> writes the highlight's shader width on
-    /// every frame of it, for every drawn card. A card that once lost them keeps them off until it has been still at its
-    /// slot for <see cref="ReducedSettleFrames"/> frames, so the frame it lands on, a glide's paused frame and a nudge by
-    /// the next card all stay reduced. Then everything comes back, the width written once instead of tweened, so a
-    /// resting playable card looks exactly as it does with the setting off. "Moving" is on screen: the hand's own
-    /// enable/disable slide (the game moves the whole hand up or down 100 units over 0.2 s when the player's actions are
-    /// re-enabled or disabled) counts for every card in it, so a card carried by that slide is reduced too.
+    /// every frame of it, for every drawn card. A card that once lost them keeps them off until the whole hand has been
+    /// still for <see cref="ReducedSettleFrames"/> frames (<paramref name="handStill"/>), so the frame it lands on, a
+    /// glide's paused frame and a nudge by the next card all stay reduced — and a card can never be left hidden by a
+    /// motion test it cannot satisfy, because the count is the hand's, not the card's: no motion anywhere for two frames
+    /// puts everything back. Then the width is written once instead of tweened, so a resting playable card looks exactly
+    /// as it does with the setting off. "Moving" is on screen: the hand's own enable/disable slide (the game moves the
+    /// whole hand up or down 100 units over 0.2 s when the player's actions are re-enabled or disabled) counts for every
+    /// card in it, so a card carried by that slide is reduced too.
     /// </summary>
     private void ApplyReducedCardEffects(Control holder, ulong cardId, CombatReflection refl, bool combatInProgress,
-        bool playable, Control? body, Control? highlight, bool resting, bool movedThisFrame, long frame)
+        bool playable, Control? body, Control? highlight, bool resting, bool handStill)
     {
         ulong holderId = holder.GetInstanceId();
         if (_reducedCardEffects.TryGetValue(cardId, out ReducedCardEffects already))
         {
             if (already.HolderId == holderId)
             {
-                if (movedThisFrame)
-                {
-                    already.LastMovedFrame = frame;
-                    _reducedCardEffects[cardId] = already;
-                }
-                if (resting && frame - already.LastMovedFrame > ReducedSettleFrames)
+                if (!ReduceEffects || handStill)
                 {
                     RestoreReducedCardEffects(cardId);
                     return;
@@ -2383,8 +2386,9 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                     movedTween.Kill();
                 return;
             }
-            // The card node came back from the pool under a new holder: the old card's state is not this card's.
-            _reducedCardEffects.Remove(cardId);
+            // The card node came back from the pool under a new holder: put the old state back (the nodes are the same
+            // ones, now this card's) and decide for this card from scratch.
+            RestoreReducedCardEffects(cardId);
         }
 
         // A resting card was never hidden; anything in motion on screen — a drawn card, the row re-centring around one, the
@@ -2400,7 +2404,6 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         var state = new ReducedCardEffects
         {
             HolderId = holderId,
-            LastMovedFrame = frame,
             // The width the game would be showing at rest: the playable boost in a fight, the game's own AnimShow value
             // for a gold or red glow, nothing at all (a card's AnimHide target) for the rest.
             HighlightWidth = combatInProgress && playable ? 0.095f : glowGold || glowRed ? 0.075f : 0f,
@@ -2456,7 +2459,8 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 holder.GetParent() == container &&
                 GodotObject.InstanceFromId(cardId) is Control card &&
                 GodotObject.IsInstanceValid(card) &&
-                card.IsInsideTree();
+                card.IsInsideTree() &&
+                card.IsVisibleInTree();
             if (!stillInTheHand)
                 leaving.Add(cardId);
         }
