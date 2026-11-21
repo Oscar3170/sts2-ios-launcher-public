@@ -223,6 +223,13 @@ internal sealed class PhoneTouchCards
                 EndGesture(touch);
             }
         }
+        else if (input is InputEventMouseMotion { Device: >= 0 })
+        {
+            // A real mouse moving is proof the hover belongs to a pointer again: the engine's emulated mouse, which a touch
+            // drives, carries device -1, a real one does not. It also covers a touch release lost to backgrounding, which
+            // would otherwise leave the game's focus ignored until the next gesture.
+            HoverFromTouch = false;
+        }
         else if (input is InputEventScreenDrag drag && drag.Index == 0 && _down)
         {
             _fingerCanvas = ToCanvas(drag.Position);
