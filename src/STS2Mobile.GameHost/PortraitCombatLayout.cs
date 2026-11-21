@@ -339,6 +339,12 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     /// <summary>How much longer than the gap the draw is actually delivering at the next card may take.</summary>
     private const double HandDrawIntervalFactor = 1.5;
 
+    /// <summary>
+    /// How long a turn draw with a known size waits after its last arrival before giving up on the rest (the draw came up
+    /// short, e.g. the pile ran out): long enough that a slow device's gaps between arrivals never end the draw early.
+    /// </summary>
+    private const double TurnDrawQuietMsec = 3000.0;
+
     /// <summary>The largest single frame counted into the draw's clock, so one load hitch cannot end a draw early.</summary>
     private const double HandDrawMaxFrameMsec = 100.0;
 
@@ -397,6 +403,10 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private ulong _lastPressedHolder;
     private PortraitCombatBands? _lastHandBands;
     private bool _lastHandFlat;
+    // The open draw batch is a turn's draw with a known size (set by the turn-number block): only such a draw is
+    // direction-capped and waits TurnDrawQuietMsec for its next card; other batches (a card effect's draw, a refill of an
+    // emptied hand) follow the native animation and the adaptive quiet window.
+    private bool _turnDrawBatch;
     private PortraitCombatBands? _lastBands;
     private List<LabelRequest>? _pendingLabels;
     // The frame's label requests, refilled rather than allocated every frame (the batch only reads the list).
@@ -976,6 +986,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
             // TurnDrawCount for why it can only under-count; the innate bump is added at the first card, when the hand and
             // the draw pile hold exactly that draw's innate cards).
             _handDrawBatch = false;
+            _turnDrawBatch = false;
             _handCountLock = 0;
             _turnDrawCount = refl.TurnDrawCount(hand);
             _turnDrawInnate = playerTurn == 1;
@@ -993,6 +1004,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 _handDrawBatch = true;
                 _handAddIntervalMsec = 0.0;
                 _handCountLock = 0;
+                _turnDrawBatch = false;
             }
             else if (_handBatchMsec > 1.0)
             {
@@ -1009,6 +1021,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
                 if (expected < 0)
                     expected = refl.HandDrawCount();
                 _handCountLock = Math.Clamp(_lastHandHolderCount + expected, 0, HandCardLimit);
+                _turnDrawBatch = _handCountLock > 0;
                 if (DiagnoseHandDraw)
                 {
                     GD.Print($"[Portrait hand] turn={playerTurn} hook={_turnDrawCount} expected={expected} " +
@@ -1023,6 +1036,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         if (activeHolders.Count == 0)
         {
             _handDrawBatch = false;
+            _turnDrawBatch = false;
             _handCountLock = 0;
             _handAddIntervalMsec = 0.0;
         }
@@ -1149,12 +1163,13 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
         }
 
         if (_handDrawBatch && (_handCountLock > 0 && activeHolders.Count >= _handCountLock
-                || _handBatchMsec > QuietWindowMsec()))
+                || _handBatchMsec > (_turnDrawBatch ? TurnDrawQuietMsec : QuietWindowMsec())))
         {
             // The hand reached the draw size, or the draw stopped arriving. A hand that ended up smaller than the draw size
             // is centred now, from the left, which is the only direction it can move: nothing is ever sent right of where
             // it rests.
             _handDrawBatch = false;
+            _turnDrawBatch = false;
             _handCountLock = 0;
             _handAddIntervalMsec = 0.0;
         }
@@ -1253,7 +1268,7 @@ private void ForceNewlyVisiblePiles(Control ui, CombatReflection refl, PortraitH
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
         CombatReflection refl, bool interactive)
     {
-        if (interactive || !_handDrawBatch)
+        if (interactive || !_turnDrawBatch)
             return;
         if (holder.Scale.X > slot.Scale + 0.002f || holder.Scale.Y > slot.Scale + 0.002f)
         {
