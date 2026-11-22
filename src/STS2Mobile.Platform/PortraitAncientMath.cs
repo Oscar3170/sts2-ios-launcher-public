@@ -67,7 +67,10 @@ public static class PortraitAncientMath
     public const float ContentSideInset = 14.3f * UnitsPerPoint;
 
     /// <summary>While the dialogue runs its column's bottom sits this far above the art's cropped bottom.</summary>
-    public const float DialogueBottomGap = 34.6f * UnitsPerPoint;
+    public const float DialogueBottomGap = 7f * UnitsPerPoint;
+
+    /// <summary>During the dialogue (rewards hidden) the art reaches this far past where the reward rows will start.</summary>
+    public const float DialogueArtReach = 25f * UnitsPerPoint;
 
     /// <summary>Separation between the dialogue stack and the reward rows.</summary>
     public const float ContentSeparation = 6.25f * UnitsPerPoint;
@@ -170,7 +173,7 @@ public static class PortraitAncientMath
     /// </summary>
     public static AncientArtFrame FrameArt(
         float canvasWidth, float canvasHeight, float artTop, float nameplateTop, float optionsHeight, float lineReserve,
-        bool compact, float focusX)
+        bool compact, float focusX, bool dialogue = false)
     {
         float optionTop = nameplateTop - NativeRewardDrop - optionsHeight;
         float cameraBottom = Math.Clamp(optionTop - lineReserve - TallRewardGap, artTop, canvasHeight * CameraMaxFraction);
@@ -186,6 +189,8 @@ public static class PortraitAncientMath
             float bleed = BleedSource * (cameraBottom - artTop) / ArtSourceHeight;
             artBottom = MathF.Max(cameraBottom, MathF.Min(optionTop - TallRewardGap, cameraBottom + bleed));
         }
+        // The reward rows are hidden while the dialogue runs, so the painting may reach past where they will start.
+        if (dialogue) artBottom = MathF.Max(artBottom, optionTop + DialogueArtReach);
         // Cover the clip, not just the camera row: the painting must reach its bottom edge with no bare band.
         float scale = MathF.Max(canvasWidth / ArtSourceWidth, (artBottom - artTop) / ArtSourceHeight);
         float offsetX = Math.Clamp(canvasWidth * 0.5f - focusX * scale, canvasWidth - ArtSourceWidth * scale, 0f);
@@ -213,9 +218,12 @@ public static class PortraitAncientMath
         return EnergyIconTag.Replace(text, "[img=" + size + "x" + size + "]$1[/img]");
     }
 
-    /// <summary>The dialogue line's own width in portrait: the column's width less the speaker icon (56 units).</summary>
-    public static float DialogueLineWidth(float contentWidth) => contentWidth - 56f;
+    /// <summary>
+    /// The dialogue line's own width in portrait: the native 800 units, capped so the bubble keeps the reference's share of
+    /// the screen (about 640 units) rather than spanning the whole column.
+    /// </summary>
+    public static float DialogueLineWidth(float contentWidth) => MathF.Min(contentWidth - 56f, 760f);
 
-    /// <summary>How much wider the native 800 unit bubble and its parts become; all three grow by the same amount.</summary>
+    /// <summary>How much wider than the native 800 unit bubble the line becomes (nothing once it is capped).</summary>
     public static float DialogueWiden(float contentWidth) => MathF.Max(0f, DialogueLineWidth(contentWidth) - DialogueLineBase);
 }

@@ -57,6 +57,7 @@ internal sealed partial class PortraitBetweenLayout
         public Control? Back;
         public FieldInfo? BackShowField;
         public float BgBaseLeft;
+        public bool PaperLogged;
         public Control? Legend;
         public Button? Pill;
         public TextureRect? Backdrop;
@@ -114,7 +115,7 @@ internal sealed partial class PortraitBetweenLayout
                 _stretchModes.TryAdd(tile.GetInstanceId(), tile.StretchMode);
                 tile.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
             }
-            // The desktop art is 1920 wide and its parchment band is only about 1130 of that; a 1:1 crop would hide the
+            // The desktop art is 1920 wide and its parchment band is only about 1260 of that; a 1:1 crop would hide the
             // torn sides. Draw the sheet a little narrower so both ragged edges sit inside the canvas over the act cover.
             bg.PivotOffset = new Vector2((canvasWidth + 2f * PortraitBetweenMath.MaxMapCentreShift) * 0.5f, 0f);
             bg.Scale = new Vector2(PortraitBetweenMath.MapPaperScale(canvasWidth), 1f);
@@ -200,6 +201,12 @@ internal sealed partial class PortraitBetweenLayout
         float x = frame.BgBaseLeft - shiftX;
         if (!Mathf.IsEqualApprox(bg.Position.X, x))
             bg.Position = new Vector2(x, bg.Position.Y);
+        if (!frame.PaperLogged)
+        {
+            frame.PaperLogged = true;
+            GD.Print($"Portrait map paper: canvas={canvasWidth:F0} bg={bg.GetGlobalRect()} scale={bg.Scale.X:F3} " +
+                     $"pivot={bg.PivotOffset.X:F0} pos={bg.Position.X:F1}");
+        }
     }
 
     /// <summary>

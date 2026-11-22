@@ -130,10 +130,10 @@ public class PortraitAncientMathTests
     }
 
     [Fact]
-    public void DialogueWidensTheNativeBubbleToTheColumnsWidth()
+    public void DialogueBubbleIsCappedAtTheReferenceWidth()
     {
-        Assert.Equal(942f, PortraitAncientMath.DialogueLineWidth(998f), 2);
-        Assert.Equal(142f, PortraitAncientMath.DialogueWiden(998f), 2);
+        Assert.Equal(760f, PortraitAncientMath.DialogueLineWidth(998f), 2);
+        Assert.Equal(0f, PortraitAncientMath.DialogueWiden(998f), 2);
         Assert.Equal(0f, PortraitAncientMath.DialogueWiden(400f), 2);
     }
 

@@ -45,6 +45,7 @@ internal sealed partial class PortraitBetweenLayout
     private readonly Dictionary<ulong, bool> _ancientAutoSizes = new();
     private readonly Dictionary<ulong, TextServer.AutowrapMode> _ancientAutowraps = new();
     private readonly Dictionary<ulong, Control.MouseFilterEnum> _ancientMouseFilters = new();
+    private readonly Dictionary<ulong, Color> _ancientModulates = new();
     private readonly HashSet<ulong> _ancientPivots = new();
     private static Shader? _ancientFadeShader;
 
@@ -220,13 +221,13 @@ internal sealed partial class PortraitBetweenLayout
     {
         AncientState? state = AncientStateAbove(line);
         float contentWidth = state?.ContentWidth is > 100f ? state.ContentWidth : 1080f - 2f * PortraitAncientMath.ContentSideInset;
-        float widen = PortraitAncientMath.DialogueWiden(contentWidth);
-        foreach (string path in new[] { ".", "DialogueContainer", "DialogueContainer/TextContainer/Text" })
+        float lineWidth = PortraitAncientMath.DialogueLineWidth(contentWidth);
+        if (line.GetNodeOrNull<Control>(".") is { } own)
         {
-            if (line.GetNodeOrNull<Control>(path) is not { } part) continue;
-            PortraitControlSnapshot snap = Capture(part, captureVisible: false);
-            var minimum = new Vector2(snap.InitialCustomMinimumSize.X + widen, snap.InitialCustomMinimumSize.Y);
-            if (!part.CustomMinimumSize.IsEqualApprox(minimum)) part.CustomMinimumSize = minimum;
+            PortraitControlSnapshot snap = Capture(own, captureVisible: false);
+            var minimum = new Vector2(lineWidth, snap.InitialCustomMinimumSize.Y);
+            if (!own.CustomMinimumSize.IsEqualApprox(minimum)) own.CustomMinimumSize = minimum;
+            own.Size = new Vector2(own.Size.X, own.Size.Y);
         }
         if (line.GetNodeOrNull<Control>("DialogueContainer/TextContainer/Text") is { } text)
         {
@@ -259,9 +260,11 @@ internal sealed partial class PortraitBetweenLayout
         float optionsHeight = metrics.TotalHeight(Enumerable.Repeat(metrics.RowHeight, Math.Max(optionCount, 0)).ToArray());
         bool compact = state.Canvas.Y <= state.Canvas.X * (16f / 9f) + 1f;
         float focus = PortraitAncientMath.FocusX(AncientBackgroundScene(layout));
+        bool dialogue = layout.GetType().GetProperty("IsDialogueOnLastLine", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(layout) is not true;
         state.Frame = PortraitAncientMath.FrameArt(
             state.Canvas.X, state.Canvas.Y, PortraitAncientMath.ArtTop(state.HeaderBottom), nameplateTop, optionsHeight,
-            PortraitAncientMath.DialogueLineReserve, compact, focus);
+            PortraitAncientMath.DialogueLineReserve, compact, focus, dialogue);
 
         // The column holds the dialogue stack over the art; the game later grows it down to the nameplate for the rewards.
         state.ContentWidth = state.Canvas.X - 2f * PortraitAncientMath.ContentSideInset;
@@ -546,6 +549,18 @@ internal sealed partial class PortraitBetweenLayout
         // Narrow the native 42 unit title gap in portrait so the enlarged pair clears the reward rows.
         title.OffsetTop = -titleGap;
         title.OffsetBottom = -titleGap;
+        // The intro's own fade leaves the pair dim or transparent part-way; settle forces the readable state and stops
+        // any glyph-spacing ghost still tweened on the banner, and the pair is lifted above the room cover's fade.
+        if (!_ancientModulates.ContainsKey(title.GetInstanceId())) _ancientModulates[title.GetInstanceId()] = title.Modulate;
+        if (!_ancientModulates.ContainsKey(epithet.GetInstanceId())) _ancientModulates[epithet.GetInstanceId()] = epithet.Modulate;
+        if (!_ancientModulates.ContainsKey(banner.GetInstanceId())) _ancientModulates[banner.GetInstanceId()] = banner.Modulate;
+        title.Modulate = Colors.White;
+        epithet.Modulate = new Color(1f, 1f, 1f, 0.85f);
+        banner.Modulate = Colors.White;
+        foreach (string field in new[] { "_moveTween", "_tween" })
+            if (banner.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(banner) is Tween tween)
+                tween.Kill();
+        layout.MoveChild(banner, layout.GetChildCount() - 1);
         state.NameplateSettled = true;
         GD.Print($"Portrait ancient: nameplate settled, footer {PortraitAncientMath.NameplateFooter(state.Canvas.Y, state.SafeInset):F0} of {state.Canvas.Y:F0}.");
     }
@@ -756,6 +771,10 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control part && GodotObject.IsInstanceValid(part))
                 part.MouseFilter = filter;
         _ancientMouseFilters.Clear();
+        foreach ((ulong id, Color modulate) in _ancientModulates)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                control.Modulate = modulate;
+        _ancientModulates.Clear();
     }
 
     private void PruneAncientInstances()
@@ -767,6 +786,7 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _ancientAutowraps.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _ancientAutowraps.Remove(id);
         foreach (ulong id in _ancientMouseFilters.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _ancientMouseFilters.Remove(id);
         _ancientPivots.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _ancientModulates.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _ancientModulates.Remove(id);
     }
 
     private static void RemoveAncientNode(ulong id)

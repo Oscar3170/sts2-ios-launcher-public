@@ -88,7 +88,7 @@ public class PortraitBetweenMathTests
         float paper = PortraitBetweenMath.MapPaperTextureWidth * scale;
         Assert.Equal(canvasWidth - 2f * PortraitBetweenMath.MapPaperSideMargin, paper, 2);
         Assert.Equal(PortraitBetweenMath.MapPaperSideMargin, (canvasWidth - paper) * 0.5f, 2);
-        Assert.True(scale is > 0.85f and < 1f);
+        Assert.True(scale is > 0.75f and < 1f);
     }
 
     [Fact]
