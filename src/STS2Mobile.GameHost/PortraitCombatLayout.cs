@@ -308,13 +308,16 @@ internal sealed class PortraitCombatLayout
     internal static void SetFlatHandListener(Action? listener) => _flatHandChanged = listener;
 
     /// <summary>
-    /// The Graphics "Reduce Effects" choice, for the hand: a card still on its way to its slot draws without its glow
-    /// (the <c>NCardHighlight</c> shader quad over the whole card) and without its shadow, and the glow's tween — the
-    /// game's <c>AnimShow</c>, which writes the shader width on every frame of it — is stopped rather than run for half a
-    /// second on every drawn card. The moment the card rests in its slot it gets all of it back, at the width the game
-    /// would have left: the playable boost for a card that can be played, the game's own 0.075 for a gold or red glow,
-    /// 0 for nothing. PhoneGraphics writes it before the next hand pass and the test host may set it directly; the pass
-    /// runs every frame of a draw and after any change, so it takes effect on the next frame.
+    /// The Graphics "Reduce Effects" choice, for the hand: a card arriving from the draw pile draws without its glow (the
+    /// <c>NCardHighlight</c> shader quad over the whole card) and without its shadow, and the glow's tween — the game's
+    /// <c>AnimShow</c>, which writes the shader width on every frame of it — is stopped rather than run for half a second
+    /// on every drawn card. A card that only re-spaces within the hand (a play closing the row, a draw pushing the earlier
+    /// cards along, the hand's own enable/disable slide) keeps both: it restarts no tween. The hand decides once, not per
+    /// card: every card drawn while the hand's effects window is open stays hidden until the hand has settled, then they all
+    /// get their effects back on one frame, at the width the game would have left — the playable boost for a card that can
+    /// be played, the game's own 0.075 for a gold or red glow, 0 for nothing. PhoneGraphics writes it before the next hand
+    /// pass and the test host may set it directly; the pass runs every frame while the window is open and after any change,
+    /// so it takes effect on the next frame.
     /// </summary>
     public static bool ReduceEffects { get; set; }
 
@@ -440,15 +443,16 @@ internal sealed class PortraitCombatLayout
     private readonly HashSet<ulong> _enlargedPowerAmounts = new();
     private readonly Dictionary<ulong, Dictionary<ulong, Color>> _dimmedCardChildren = new();
     private readonly HashSet<ulong> _boostedHighlights = new();
-    // Hand cards whose glow and shadow ReduceEffects took away while they move, keyed by the card node, with what they
-    // were before, so the pass can put them back at rest (a card keeps its node for its whole life). The list is
-    // refilled per pass for the cards that left the hand.
+    // Hand cards drawn from the pile whose glow and shadow Reduce Effects took away while they arrive, keyed by the card
+    // node, with what they were before, so the pass can put them back together when the hand settles (a card keeps its
+    // node for its whole life). The list is refilled per pass for the cards that left the hand.
     private readonly Dictionary<ulong, ReducedCardEffects> _reducedCardEffects = new();
     private readonly List<ulong> _reduceRestoreIds = new();
     private readonly HashSet<ulong> _liveReducedCardIds = new();
     private bool _lastReduceEffects;
-    // The last frame any holder moved; the backstop bound that restores reduced cards (see ReducedHandQuietFrames).
-    private long _handLastMotionFrame = long.MinValue / 4;
+    // The hand's own decision for those entries: opened by a card arriving from the draw pile, closed on one frame once
+    // the hand has settled (see HandEffectsWindow). A card that merely re-spaces never opens it.
+    private HandEffectsWindow _effectsWindow;
     private readonly HashSet<ulong> _wiredHolders = new();
     private readonly HashSet<ulong> _wiredSelectionHands = new();
     private readonly HashSet<ulong> _wiredSelectionContainers = new();
@@ -711,7 +715,7 @@ internal sealed class PortraitCombatLayout
         _lastInCardPlay = false;
         _lastPressedHolder = 0;
         _lastReduceEffects = false;
-        _handLastMotionFrame = long.MinValue / 4;
+        _effectsWindow.Reset();
         _handDirty = true;
     }
 
@@ -1317,6 +1321,8 @@ internal sealed class PortraitCombatLayout
         HashSet<ulong> activeDimmedCardIds = _activeDimmedCardIds;
         activeDimmedCardIds.Clear();
         bool anyShiftedThisFrame = false;
+        // Whether any card arrived from the draw pile this pass: the hand hides its effects for the whole draw, not per card.
+        bool anyArrivalThisFrame = false;
         // The card nodes this pass laid out: a reduced entry whose card is not here (the node was replaced, pooled, its
         // holder was skipped, or it left the hand) belongs to no card on screen and is put back in the sweep below.
         HashSet<ulong> liveCards = _liveReducedCardIds;
@@ -1356,8 +1362,10 @@ internal sealed class PortraitCombatLayout
 
             // A card's first pass is its arrival: the game has just created the holder at the draw pile and stepped it once
             // toward its desktop target. Put it back at the pile, at its resting size, so the first drawn frame is the card
-            // it is; every later pass only ever caps what one frame may do.
-            if (!_stillness.HasRecord(holder))
+            // it is; every later pass only ever caps what one frame may do. A holder that has been through a pass belongs
+            // to a card that is already in the hand and can only re-space, which is what keeps its effects.
+            bool arrived = !_stillness.HasRecord(holder);
+            if (arrived)
             {
                 if (DrawPileLocalPoint(hand, container) is { } pilePoint)
                     holder.Position = pilePoint;
@@ -1385,36 +1393,27 @@ internal sealed class PortraitCombatLayout
             // slot's tilt. The settled pin below holds exactly this, and the record stores it.
             float restingAngle = isFocused ? 0f : slot.AngleDegrees;
             CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive, restingAngle);
-            // Whether this frame moved the holder at all (a native step, the pin above, a press): read before the record
-            // below, which then stores where the frame drew it. The layout's own pin counts, which is why the hand's motion
-            // for the governor is taken from these, not from the pre-pass state only.
-            bool holderMoved = _stillness.Moved(holder);
-            // Position only: what an observer watching the hand sees travel, and what the frame cap and the reset of a
-            // card's effects follow (a scale or angle animation is not the card going anywhere).
+            // Position only: what an observer watching the hand sees travel (a native step, the pin above, a press), read
+            // before the record below, which then stores where the frame drew it. Scale and angle do not count. The layout's
+            // own pin counts too, which is why the governor's motion and the effects window's settle count follow these,
+            // not the pre-pass state only.
             bool holderShifted = _stillness.MovedOnScreen(holder);
             anyShiftedThisFrame |= holderShifted;
+            anyArrivalThisFrame |= arrived;
             _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale), restingAngle);
-            // A card rests when this frame neither moved it nor found it off its slot: the frame it lands still counts as
-            // in flight (it moved), the frame after it does not. Anything short of that is in flight: the frame a draw
-            // arrives on (at the draw pile) and the glide toward its slot. Only Reduce Effects reads it (the pass runs on
-            // every drawn frame of a draw), so with the setting off the check is skipped.
-            bool resting = !ReduceEffects || (!holderMoved &&
-                (holder.Position - slotPosition).LengthSquared() <= 1f &&
-                MathF.Abs(holder.Scale.X - slot.Scale) <= 0.01f &&
-                MathF.Abs(holder.RotationDegrees - restingAngle) <= 0.5f);
 
             if (cardNode != null)
             {
                 liveCards.Add(cardNode.GetInstanceId());
-                ApplyCardPlayabilityVisuals(holder, cardNode, refl, combatInProgress, playable, activeDimmedCardIds, resting,
-                    holderShifted, frame);
+                ApplyCardPlayabilityVisuals(holder, cardNode, refl, combatInProgress, playable, activeDimmedCardIds, arrived,
+                    frame);
             }
         }
 
         // Publish the frame's motion once the layout has had its say: a draw's batch, a native step or the pass's own pin
-        // all count, so the frame-rate governor never caps a frame the player sees a card moving on. The last motion frame
-        // is the backstop that puts a card's effects back even if one holder's own signal never settles.
-        if (anyShiftedThisFrame) _handLastMotionFrame = frame;
+        // all count, so the frame-rate governor never caps a frame the player sees a card moving on. The same motion (and
+        // every arrival) restarts the effects window's settle count.
+        if (anyShiftedThisFrame || anyArrivalThisFrame) _effectsWindow.NoteMotion(frame);
         _handMoving = _handDrawBatch || anyShiftedThisFrame;
         _handMovingFrame = (ulong)frame;
         // A draw's first frame is already past the process step, where the frame cap was last decided and could not yet
@@ -1458,6 +1457,14 @@ internal sealed class PortraitCombatLayout
 
         // A reduced card that left the hand mid-draw gets its glow and shadow back before it is drawn anywhere else.
         RestoreReducedEffectsOfLostCards();
+
+        // The hand's effects come back together: the window closes on the first frame the hand has settled (or its quiet
+        // or hard bound), and the restore is one sweep over every entry, so no drawn card lights up on its own frame while
+        // its neighbours are still hidden. A card that only re-spaced was never hidden and is not touched here.
+        if (_reducedCardEffects.Count == 0)
+            _effectsWindow.Reset();
+        else if (_effectsWindow.ShouldRestore(ReduceEffects, _handDrawBatch, frame))
+            RestoreAllReducedCardEffects();
     }
 
     /// <summary>
@@ -2241,8 +2248,7 @@ internal sealed class PortraitCombatLayout
         bool combatInProgress,
         bool playable,
         HashSet<ulong> activeDimmedCardIds,
-        bool resting,
-        bool holderShifted,
+        bool arrived,
         long frame)
     {
         ulong cardId = cardNode.GetInstanceId();
@@ -2273,8 +2279,7 @@ internal sealed class PortraitCombatLayout
                         mat.SetShaderParameter("width", 0.095f);
                 }
             }
-            ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting,
-                holderShifted, frame);
+            ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, arrived, frame);
             return;
         }
 
@@ -2326,101 +2331,56 @@ internal sealed class PortraitCombatLayout
             }
         }
 
-        ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, resting, holderShifted, frame);
+        ApplyReducedCardEffects(holder, cardId, refl, combatInProgress, playable, body, highlight, arrived, frame);
     }
 
     /// <summary>
-    /// What Reduce Effects took away from a moving card. Both nodes are visible in the card scene and the game never
+    /// What Reduce Effects took away from a drawn card. Both nodes are visible in the card scene and the game never
     /// hides either — <c>AnimHide</c> only takes the glow's shader width to 0 — so putting them back is simply visible,
     /// with the width the game would have been showing at rest.
     /// </summary>
     private struct ReducedCardEffects
     {
-        public ulong HolderId;
         public ulong HighlightId;
         // The width the game's own half-second tween was heading to, written back once instead (see the restore).
         public float HighlightWidth;
         public ulong ShadowId;
-        // The last frame this card moved, and the frame it lost its effects: the restore is bounded by both.
-        public long LastMovedFrame;
-        public long HiddenFrame;
     }
 
-    // Frames a card stays reduced after it last moved. A glide can pause for a frame at an ease plateau, and a card that has
-    // just landed can be nudged by the next card of the draw; two frames also covers the frames an observer still reads as
-    // motion (a position sampled once a frame), so no frame that moved a card draws its glow.
-    private const long ReducedSettleFrames = 2;
-    // A card is put back as soon as the whole hand has been quiet this long, whatever one card's own motion signal says:
-    // the glow must come back even if a stray transform write keeps one holder "moving" for ever.
-    private const long ReducedHandQuietFrames = 20;
-    // And no card stays reduced longer than this, full stop (10 s at 60 fps): a playable glow never disappears for good,
-    // while a normal flight (under a second) is never cut short by the cap.
-    private const long ReducedMaxHiddenFrames = 600;
-
     /// <summary>
-    /// Reduce Effects on the hand: a card in flight from a draw — its first frames at the draw pile, its glide to its
-    /// slot, the row re-centring around the cards still arriving — draws without its glow and its shadow, and the glow's
-    /// tween is killed rather than run: the game's half-second <c>AnimShow</c> writes the highlight's shader width on
-    /// every frame of it, for every drawn card. A card that once lost them keeps them off until it has itself been still
-    /// for <see cref="ReducedSettleFrames"/> frames, so the frame it lands on, a glide's paused frame and a nudge by the
-    /// next card all stay reduced. The restore cannot be starved: besides that per-card settle, a card comes back once the
-    /// hand has been quiet for <see cref="ReducedHandQuietFrames"/> frames (a stray transform write must not keep a glow
-    /// off) and, whatever happens, after <see cref="ReducedMaxHiddenFrames"/> frames reduced. Then the width is written
-    /// once instead of tweened, so a resting playable card looks exactly as it does with the setting off. "Moving" is on
-    /// screen: the hand's own enable/disable slide (the game moves the whole hand up or down 100 units over 0.2 s when the
-    /// player's actions are re-enabled or disabled) counts for every card in it, so a card carried by that slide is
-    /// reduced too.
+    /// Reduce Effects on the hand, for the card this pass laid out. Only an arrival from the draw pile is hidden: its
+    /// first frames at the pile and its glide to its slot are the expensive case, because the game runs its half-second
+    /// <c>AnimShow</c> — the highlight's shader width written on every frame of it — for every card it draws. A card that
+    /// merely re-spaces (a play closing the row, a draw pushing the earlier cards along, the hand's own enable/disable
+    /// slide) restarts no tween and keeps its glow and shadow, so hiding it would lose the look and save nothing. The
+    /// decision is the hand's, not the card's: an arrival opens <see cref="HandEffectsWindow"/>, every card drawn while
+    /// it is open stays hidden, and the window's close restores them all on one frame in the pass's tail. A hidden card
+    /// whose glow tween the game starts again has it killed once more, since that tween would write the width of a
+    /// highlight nobody draws on every frame.
     /// </summary>
     private void ApplyReducedCardEffects(Control holder, ulong cardId, CombatReflection refl, bool combatInProgress,
-        bool playable, Control? body, Control? highlight, bool resting, bool holderShifted, long frame)
+        bool playable, Control? body, Control? highlight, bool arrived, long frame)
     {
-        ulong holderId = holder.GetInstanceId();
-        if (_reducedCardEffects.TryGetValue(cardId, out ReducedCardEffects already))
+        if (!ReduceEffects)
+            return;
+        if (!arrived)
         {
-            if (already.HolderId == holderId)
-            {
-                if (holderShifted)
-                {
-                    already.LastMovedFrame = frame;
-                    _reducedCardEffects[cardId] = already;
-                }
-                // Three ways back, all bounded: this card has been still for the observer's motion carry; the whole hand has
-                // been quiet for a long moment (a stray write must not keep a glow off); or the card has been reduced for
-                // the hard cap.
-                long still = frame - already.LastMovedFrame;
-                bool handQuiet = frame - _handLastMotionFrame >= ReducedHandQuietFrames;
-                bool capped = frame - already.HiddenFrame >= ReducedMaxHiddenFrames;
-                if (!ReduceEffects || still > ReducedSettleFrames || handQuiet || capped)
-                {
-                    RestoreReducedCardEffects(cardId);
-                    return;
-                }
-                // The game may start a new glow tween while the card is still moving (a cost change, a model update), and
-                // that tween would write the shader width of a highlight nobody draws on every frame: stop it again.
-                if (refl.HighlightTweenField?.GetValue(highlight) is Tween movedTween && movedTween.IsRunning())
-                    movedTween.Kill();
-                return;
-            }
-            // The card node came back from the pool under a new holder: put the old state back (the nodes are the same
-            // ones, now this card's) and decide for this card from scratch.
-            RestoreReducedCardEffects(cardId);
-        }
-
-        // A resting card was never hidden; anything in motion on screen — a drawn card, the row re-centring around one, the
-        // hand's own slide when it is enabled or disabled — loses its effects for as long as it moves.
-        if (!ReduceEffects || resting)
-        {
-            RestoreReducedCardEffects(cardId);
+            // A card already in the hand can only re-space between slots: its effects are left exactly as they are. The
+            // only work is stopping a tween the game restarted on a card that is still hidden.
+            if (highlight != null && _reducedCardEffects.ContainsKey(cardId) &&
+                refl.HighlightTweenField?.GetValue(highlight) is Tween running && running.IsRunning())
+                running.Kill();
             return;
         }
 
+        // A card node can come back from the pool under a new holder: put the old state back (the nodes are the same ones,
+        // now this card's) and hide this card's from scratch.
+        RestoreReducedCardEffects(cardId);
+        _effectsWindow.Begin(frame);
         bool glowGold = (bool)(refl.HolderGlowGoldProp?.GetValue(holder) ?? false);
         bool glowRed = (bool)(refl.HolderGlowRedProp?.GetValue(holder) ?? false);
         var state = new ReducedCardEffects
         {
-            HolderId = holderId,
-            LastMovedFrame = frame,
-            HiddenFrame = frame,
             // The width the game would be showing at rest: the playable boost in a fight, the game's own AnimShow value
             // for a gold or red glow, nothing at all (a card's AnimHide target) for the rest.
             HighlightWidth = combatInProgress && playable ? 0.095f : glowGold || glowRed ? 0.075f : 0f,
@@ -2462,7 +2422,7 @@ internal sealed class PortraitCombatLayout
     /// card left the hand, its node was pooled (the pool reset does not touch the highlight's visibility), or its holder
     /// was replaced while the entry stayed keyed to the old node. It gets its effects back here, before it is shown
     /// anywhere else. This is also what makes a held glow impossible: an entry the pass never sees is always restored on
-    /// the next pass, whatever its motion bookkeeping says.
+    /// the next pass, whatever the effects window says.
     /// </summary>
     private void RestoreReducedEffectsOfLostCards()
     {
@@ -2479,9 +2439,13 @@ internal sealed class PortraitCombatLayout
             RestoreReducedCardEffects(cardId);
     }
 
-    /// <summary>Every reduced card gets its effects back (Portrait Mode off, the setting off, or the layout giving up).</summary>
+    /// <summary>
+    /// Every reduced card gets its effects back on this one frame (the hand settling, Portrait Mode off, the setting off, or
+    /// the layout giving up), and the effects window closes with them.
+    /// </summary>
     private void RestoreAllReducedCardEffects()
     {
+        _effectsWindow.Reset();
         if (_reducedCardEffects.Count == 0)
             return;
         var cards = new List<ulong>(_reducedCardEffects.Keys);

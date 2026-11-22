@@ -74,7 +74,12 @@ internal sealed class HandStillness
     /// </summary>
     public void Clear() => _records.Clear();
 
-    /// <summary>Whether this holder has been through a pass (a returning card keeps its record; a brand-new one has none).</summary>
+    /// <summary>
+    /// Whether this holder has been through a pass (a returning card keeps its record; a brand-new one has none). The game
+    /// creates a holder per drawn card and frees it when the card leaves the hand, so a holder without a record is exactly a
+    /// card that has just arrived from the draw pile — which is what the Reduce Effects pass hides, and a holder with one
+    /// can only re-space, which keeps its effects.
+    /// </summary>
     public bool HasRecord(Control holder) => _records.ContainsKey(holder.GetInstanceId());
 
     /// <summary>Where the previous pass left the holder, for capping what one frame may move.</summary>
@@ -101,7 +106,7 @@ internal sealed class HandStillness
     /// <summary>
     /// Whether the holder has moved <b>on screen</b> since the last pass: its position, local or global, changed by more
     /// than half a unit. Scale and angle do not count — they are not the card travelling — so this is the measure an
-    /// observer watching the hand takes, and the one the effects and the frame cap follow. Engine reads only.
+    /// observer watching the hand takes, and the one the frame cap and the hand's effects window follow. Engine reads only.
     /// </summary>
     public bool MovedOnScreen(Control holder)
     {
