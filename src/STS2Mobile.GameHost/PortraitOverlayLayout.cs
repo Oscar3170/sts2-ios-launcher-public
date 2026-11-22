@@ -230,6 +230,8 @@ internal sealed class PortraitOverlayLayout
     private void PlacePeekButton(Control peek)
     {
         if (peek.GetParent()?.GetType().Namespace != CardSelectionNamespace) return;
+        // The choose a card screen places its peek with Skip in one footer row (PlaceCombatPeek).
+        if (peek.GetParent()?.GetType().FullName == ChooseCardTypeName) return;
         Capture(peek);
         float size = peek.OffsetRight - peek.OffsetLeft;
         if (size < 1f) size = 128f;
@@ -344,16 +346,24 @@ internal sealed class PortraitOverlayLayout
     private const float ChoiceSideMargin = 24f;
     private const float ChoiceMaxFontGrowth = 1.5f;
 
-    // Choose a card: the card reward's own portrait numbers (PortraitBetweenLayout), so both screens read alike.
+    // Choose a card: the card reward's own portrait numbers (PortraitBetweenLayout), so both screens read alike. Its footer
+    // row holds the peek button at the left and Skip at the right, below the cards; the row is as tall as the larger control.
     private const float ChoiceCardWidth = 300f;
     private const float ChoiceCardHeight = 422f;
     private const float ChoiceCardGapX = 48f;
-    private const float ChoiceCardGapY = 40f;
+    private const float ChoiceCardGapY = 32f;
     private const float ChoiceMaxCardScale = 1.5f;
     private const float ChoiceHolderScale = 0.8f;
+    private const float ChoiceCardSideMargin = 30f;
     private const float ChoiceBannerBottom = 172f;
+    private const float ChoiceBannerGap = 24f;
+    private const float ChoiceFooterGap = 24f;
+    private const float ChoiceBottomMargin = 24f;
+    private const float ChoiceRightMargin = PortraitBetweenMath.ActionRightMargin;
     private const float ChoiceCardRowSpacing = 340f;
     private const float PeekSize = 128f;
+    private const float PeekScale = 1.6f;
+    private const float PeekLeft = 46f;
 
     // The relic choice: 68 unit holders drawn at twice their size about their middle, 200 units apart.
     private const float RelicHolderSize = 68f;
@@ -387,7 +397,6 @@ internal sealed class PortraitOverlayLayout
     private readonly HashSet<ulong> _chooseRelicScreens = new();
     private readonly Dictionary<ulong, (Vector2 Centre, float Width)> _buttonRows = new();
     private readonly Dictionary<ulong, List<ulong>> _cardOrders = new();
-    private readonly Dictionary<ulong, bool> _besidePeek = new();
     private readonly HashSet<ulong> _choiceSnapshots = new();
     private readonly HashSet<ulong> _potionPopups = new();
     private readonly Dictionary<ulong, (Vector2 Position, Vector2 Scale, bool TopLevel)> _fittedPopups = new();
@@ -640,9 +649,9 @@ internal sealed class PortraitOverlayLayout
 
     /// <summary>
     /// The choose a card screen puts its cards in one row at 0.8 of their size, 340 units apart: three cards are small on the
-    /// tall screen and four run off it. In portrait they stand as the card reward's do (two to a row, an odd last card centred,
-    /// up to 1.2 of their size) under the banner, with Skip in the row under them. In a fight the peek button keeps the bottom
-    /// left corner, so when the row comes down to it it takes the rest of that row.
+    /// tall screen and four run off it. In portrait they stand as the card reward's do (two to a row, an odd last card centred)
+    /// under the banner, with one footer row under them: the peek button at the left and Skip's right edge a stone margin in
+    /// from the canvas. The footer row is as tall as the larger of the two, and the cards take what is left above it.
     /// </summary>
     private void LayoutChooseCard(Control screen, Vector2 canvas)
     {
@@ -655,19 +664,22 @@ internal sealed class PortraitOverlayLayout
 
         Vector2 size = ScreenSize(screen, canvas);
         Vector2 centre = size / 2f;
-        int rows = count <= 2 ? 1 : (count + 1) / 2;
         // The banner rises to just under the relic strip, as on the card reward, so the cards can grow.
         float lift = (Engine.GetMainLoop() as SceneTree)?.Root is { } root
             ? PortraitBetweenLayout.BannerLift(size, PortraitLayout.ComputeCapHeight(root)) : 0f;
         PortraitBetweenLayout.LiftBanner(screen.GetNodeOrNull<Control>("Banner"), size, lift, _liftedChoiceBanners);
-        float top = centre.Y - ChoiceBannerBottom - lift + 30f;
-        float buttonsLimit = size.Y - PeekBottomMargin;
-        float byHeight = (buttonsLimit - PortraitBands.MinTarget - 30f - top - (rows - 1) * ChoiceCardGapY) / (rows * ChoiceCardHeight);
-        float byWidth = (size.X - 60f - ChoiceCardGapX) / (2f * ChoiceCardWidth);
-        float cardScale = Math.Clamp(Math.Min(byHeight, byWidth), 0.4f, ChoiceMaxCardScale);
+
+        bool peekShown = PeekShown(screen);
+        float footerHeight = peekShown ? Math.Max(PortraitBands.MinTarget, PeekSize * PeekScale) : PortraitBands.MinTarget;
+        float cardTop = centre.Y - ChoiceBannerBottom - lift + ChoiceBannerGap;
+        float blockBottom = size.Y - ChoiceBottomMargin - ChoiceFooterGap - footerHeight;
+        CardGridFit grid = PortraitBetweenMath.CardGrid(
+            count, size.X, cardTop, blockBottom, ChoiceCardWidth, ChoiceCardHeight,
+            ChoiceCardGapX, ChoiceCardGapY, ChoiceMaxCardScale, ChoiceCardSideMargin);
+        float cardScale = grid.Scale;
         float rowScale = cardScale / ChoiceHolderScale;
-        float blockHeight = rows * ChoiceCardHeight * cardScale + (rows - 1) * ChoiceCardGapY;
-        float blockCentreY = top + blockHeight / 2f;
+        float blockHeight = grid.BlockHeight;
+        float blockCentreY = cardTop + blockHeight / 2f;
 
         CaptureChoice(row);
         var scale = new Vector2(rowScale, rowScale);
@@ -679,15 +691,22 @@ internal sealed class PortraitOverlayLayout
             row.OffsetBottom = rowY;
         }
 
-        float buttonsTop = blockCentreY + blockHeight / 2f + 30f;
-        float peekTop = size.Y - PeekBottomMargin - PeekSize;
-        // The peek button comes and goes with the screen's own visibility: decide only while the screen shows.
-        if (!_besidePeek.TryGetValue(screenId, out bool besidePeek) || screen.IsVisibleInTree())
-            _besidePeek[screenId] = besidePeek = PeekShown(screen) && buttonsTop + PortraitBands.MinTarget > peekTop - ChoiceSideMargin;
-        float left = besidePeek ? PeekSideMargin + PeekSize + ChoiceSideMargin : ChoiceSideMargin;
-        float right = size.X - ChoiceSideMargin;
-        _buttonRows[screenId] = (new Vector2((left + right) / 2f - centre.X, buttonsTop + PortraitBands.MinTarget / 2f - centre.Y), right - left);
-        PlaceSkip(screen, _buttonRows[screenId].Centre, canvas);
+        float footerTop = blockCentreY + blockHeight / 2f + ChoiceFooterGap;
+        float footerRight = size.X - ChoiceRightMargin;
+        float footerLeft = peekShown ? PeekLeft + PeekSize * PeekScale + ChoiceSideMargin : ChoiceSideMargin;
+        _buttonRows[screenId] = (
+            new Vector2((footerLeft + footerRight) / 2f - centre.X, footerTop + footerHeight / 2f - centre.Y),
+            footerRight - footerLeft);
+        if (screen.GetNodeOrNull<Control>("SkipButton") is { } skip)
+        {
+            Vector2 skipSize = GrowChoiceButton(skip, canvas);
+            PlaceSkip(
+                screen,
+                new Vector2(footerRight - skipSize.X / 2f - centre.X, footerTop + skipSize.Y / 2f - centre.Y),
+                canvas);
+        }
+        if (peekShown && screen.GetNodeOrNull<Control>("%PeekButton") is { } peek)
+            PlaceCombatPeek(peek, PeekLeft, footerTop);
 
         if (holders.Count == 0) return;
         // A card keeps its slot: the game moves a hovered card to the end of the row, so the row's order is not the cards'.
@@ -717,7 +736,8 @@ internal sealed class PortraitOverlayLayout
             }
             if (tweenField != null && tweenField.FieldType.IsAssignableFrom(typeof(Tween))) tweenField.SetValue(screen, tween);
             if (_logged.Add(screenId))
-                GD.Print($"Portrait overlay: choose a card laid out, {order.Count} cards at {cardScale:F2} in {rows} row(s), buttons {(besidePeek ? "beside the peek button" : "centred")} at y {buttonsTop:F0}.");
+                GD.Print($"Portrait overlay: choose a card laid out, {order.Count} cards at {cardScale:F2} under the banner, " +
+                         $"skip right-aligned at y {footerTop:F0}{(peekShown ? ", peek at the left" : "")}.");
             return;
         }
         if (tweenField?.GetValue(screen) is Tween { } running && running.IsValid() && running.IsRunning()) return;
@@ -727,6 +747,35 @@ internal sealed class PortraitOverlayLayout
             var position = new Vector2(slot.CenterX / rowScale, slot.CenterY / rowScale);
             if (holder.Position.DistanceSquaredTo(position) > 0.25f) holder.Position = position;
         }
+    }
+
+    /// <summary>
+    /// The peek button in a fight: drawn at 1.6 of its 128 units (the reference's phone size) in the footer row's left end,
+    /// clear of Skip at the right. Its control keeps the scene's 128 units; the scale grows its picture and its touch area.
+    /// </summary>
+    private void PlaceCombatPeek(Control peek, float left, float top)
+    {
+        if (!GodotObject.IsInstanceValid(peek)) return;
+        Capture(peek);
+        var scale = new Vector2(PeekScale, PeekScale);
+        if (peek.PivotOffset != Vector2.Zero) peek.PivotOffset = Vector2.Zero;
+        if (peek.Scale != scale) peek.Scale = scale;
+        if (peek.AnchorLeft != 0f || peek.AnchorRight != 0f || peek.AnchorTop != 0f || peek.AnchorBottom != 0f)
+        {
+            peek.AnchorLeft = 0f;
+            peek.AnchorRight = 0f;
+            peek.AnchorTop = 0f;
+            peek.AnchorBottom = 0f;
+        }
+        if (Math.Abs(peek.OffsetLeft - left) < 0.25f && Math.Abs(peek.OffsetTop - top) < 0.25f &&
+            Math.Abs(peek.OffsetRight - (left + PeekSize)) < 0.25f && Math.Abs(peek.OffsetBottom - (top + PeekSize)) < 0.25f)
+            return;
+        peek.OffsetLeft = left;
+        peek.OffsetRight = left + PeekSize;
+        peek.OffsetTop = top;
+        peek.OffsetBottom = top + PeekSize;
+        if (_logged.Add(peek.GetInstanceId()))
+            GD.Print($"Portrait overlay: peek button of {peek.GetParent()?.GetType().Name} at the footer's left, {PeekScale:F1}x.");
     }
 
     /// <summary>
@@ -1024,7 +1073,6 @@ internal sealed class PortraitOverlayLayout
             if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
                 RestoreChooseCard(screen);
         _buttonRows.Clear();
-        _besidePeek.Clear();
         PortraitBetweenLayout.RestoreBanners(_liftedChoiceBanners);
         foreach (ulong id in _choiceSnapshots)
             if (_snapshots.TryGetValue(id, out PortraitControlSnapshot? snapshot) && GodotObject.InstanceFromId(id) is Control control &&
@@ -1060,7 +1108,6 @@ internal sealed class PortraitOverlayLayout
         foreach (ulong id in _choiceButtons.Keys.Where(Dead).ToList()) _choiceButtons.Remove(id);
         foreach (ulong id in _buttonRows.Keys.Where(Dead).ToList()) _buttonRows.Remove(id);
         foreach (ulong id in _cardOrders.Keys.Where(Dead).ToList()) _cardOrders.Remove(id);
-        foreach (ulong id in _besidePeek.Keys.Where(Dead).ToList()) _besidePeek.Remove(id);
         foreach (ulong id in _fittedPopups.Keys.Where(Dead).ToList()) _fittedPopups.Remove(id);
         foreach (ulong id in _confirmPads.Keys.Where(Dead).ToList()) _confirmPads.Remove(id);
     }

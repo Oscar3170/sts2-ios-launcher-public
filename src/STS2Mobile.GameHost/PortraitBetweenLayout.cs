@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Godot;
+using MegaCrit.Sts2.Core.Nodes;
 using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
@@ -37,7 +38,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName, DeckCardSelectTypeName,
         MerchantInventoryTypeName, FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
-        BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, AncientDialogueLineTypeName,
+        BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, TreasureRoomTypeName, AncientDialogueLineTypeName,
         MerchantRoomTypeName, BlitzMerchantRoomTypeName, FakeMerchantRoomTypeName,
         EventRoomTypeName, CombatEventLayoutTypeName,
     };
@@ -57,18 +58,23 @@ internal sealed partial class PortraitBetweenLayout
 
     // Sizes for a finger. 127 units are 44 points and a font of 32 units is 11 points (PortraitBands).
     private const string HitPadHolderName = PhoneHitArea.HolderName;
-    private const float RewardsScale = 1.5f;
-    private const float RewardsPivotY = 400f;
     private const int EventTextFontSize = 32;
-    private const float RestChoicesMaxScale = 1.35f;
-    private const float RestChoicesMinScale = 0.6f;
-    private const float RestChoicesPivotY = 80f;
     private static readonly string[] RichFontSizeNames =
         ["normal_font_size", "bold_font_size", "bold_italics_font_size", "italics_font_size", "mono_font_size"];
     private const float CardRowSpacing = 350f;
     private const float RewardCardWidth = 300f;
     private const float RewardCardHeight = 422f;
     private const float RewardMaxCardScale = 1.5f;
+    private const float RewardCardGapX = 48f;
+    private const float RewardCardGapY = 32f;
+    private const float RewardCardSideMargin = 30f;
+    // The banner sits above the cards; the alternatives (the card reward's Reroll and Skip) form one row under them, its right
+    // edge a stone margin in from the canvas. Loot rows are 88 tall inside the window and their labels read at 15 points.
+    private const float RewardBannerGap = 24f;
+    private const float RewardAlternativeGap = 30f;
+    private const float RewardAlternativeSeparation = 21f;
+    private const float RewardBottomMargin = 80f;
+    private const int RewardRowFontSize = 28;
     private const float GridScale = 1.8f;
     // The shared banner ("Choose a Card") is 162 units tall, 172 to 334 above the screen's middle; in portrait it rises to just
     // under the relic strip so the cards under it can grow.
@@ -96,6 +102,64 @@ internal sealed partial class PortraitBetweenLayout
     private readonly Dictionary<ulong, int> _labelMinFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
+
+    // ---- Spoils, the action lane and the reward rows ---------------------------------------------------------------------
+
+    /// <summary>One loot screen's window, the list's mask and the list, with the lane its action hangs from.</summary>
+    private sealed class LootScreenState(Control screen, Control window, Control mask, Control list, Control? action, bool blitz)
+    {
+        public readonly Control Screen = screen;
+        public readonly Control Window = window;
+        public readonly Control Mask = mask;
+        public readonly Control List = list;
+        public readonly Control? Action = action;
+        public readonly bool Blitz = blitz;
+        public int RowCount = -1;
+        public float ContentHeight;
+        public Tween? Fade;
+    }
+
+    /// <summary>One proceed/skip ribbon's owned slide, so its centre is the lane's after every enable.</summary>
+    private sealed class ProceedLaneState
+    {
+        public bool Blitz;
+        public bool Footer;
+        public Tween? Owned;
+    }
+
+    private static Type? _proceedType;
+    private static PropertyInfo? _proceedIsSkip;
+    private static PropertyInfo? _proceedEnabled;
+    private static FieldInfo? _proceedAnimTween;
+    private static FieldInfo? _proceedImage;
+    private static FieldInfo? _rewardsFadeTween;
+
+    private static void ResolveProceedApi(Type type)
+    {
+        if (_proceedType == type) return;
+        _proceedType = type;
+        _proceedIsSkip = type.GetProperty("IsSkip", BindingFlags.Instance | BindingFlags.Public);
+        _proceedEnabled = type.GetProperty("IsEnabled", BindingFlags.Instance | BindingFlags.Public);
+        _proceedAnimTween = type.GetField("_animTween", BindingFlags.Instance | BindingFlags.NonPublic);
+        _proceedImage = type.GetField("_buttonImage", BindingFlags.Instance | BindingFlags.NonPublic);
+    }
+
+    private static FieldInfo? RewardsFadeTween(Type screenType)
+    {
+        _rewardsFadeTween ??= screenType.GetField("_fadeTween", BindingFlags.Instance | BindingFlags.NonPublic);
+        return _rewardsFadeTween;
+    }
+
+    private readonly Dictionary<ulong, LootScreenState> _lootScreens = new();
+    private readonly Dictionary<ulong, ProceedLaneState> _proceedLanes = new();
+    private readonly HashSet<ulong> _lootRows = new();
+    private readonly HashSet<ulong> _lootSkipsHidden = new();
+    private readonly Dictionary<ulong, (bool Had, bool Value)> _rewardAutoSizes = new();
+    private readonly Dictionary<ulong, BoxContainer.AlignmentMode> _alternativeAlignments = new();
+
+    private static MethodInfo? _runStateGetter;
+    private static PropertyInfo? _gameModeProperty;
+    private static object? _blitzMode;
 
     // ---- entry points from PortraitLayout -------------------------------------------------------------------------------
 
@@ -126,10 +190,13 @@ internal sealed partial class PortraitBetweenLayout
                 LayoutAncientDialogueLinePortrait(control);
                 break;
             case RestSiteRoomTypeName:
-                _restSites.Add(control.GetInstanceId());
+                TrackRestSite(control, canvasWidth, canvasHeight);
+                break;
+            case TreasureRoomTypeName:
+                UpdateTreasurePortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
                 break;
             case RewardsScreenTypeName:
-                LayoutRewardsPortrait(control);
+                LayoutRewardsPortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
                 break;
             case CardRewardTypeName:
                 _cardRewards.Add(control.GetInstanceId());
@@ -192,6 +259,7 @@ internal sealed partial class PortraitBetweenLayout
         }
         if (typeName == EventOptionTypeName) return ApplyEventOption(control);
         if (typeName == EventLayoutTypeName) return HoldEventArtUntilFramed(control);
+        if (typeName == TreasureRoomTypeName) return BeginTreasureRoom(control);
         return false;
     }
 
@@ -208,9 +276,13 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _maps)
             if (GodotObject.InstanceFromId(id) is Control map && GodotObject.IsInstanceValid(map) && map.IsVisibleInTree())
                 UpdateMapPortrait(map, root, canvas);
+        KeepLootSkipsClearOfCardReward(CardRewardShown());
         foreach (ulong id in _proceedButtons)
             if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button) && button.IsVisibleInTree())
                 UpdateProceedButtonPortrait(button, canvas);
+        foreach (LootScreenState state in _lootScreens.Values)
+            if (GodotObject.IsInstanceValid(state.Screen) && state.Screen.IsVisibleInTree())
+                UpdateLootPortrait(state, canvas, capHeight);
         foreach (ulong id in _cardRewards)
             if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) && screen.IsInsideTree())
                 UpdateCardRewardPortrait(screen, canvas, capHeight);
@@ -229,6 +301,9 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _restSites)
             if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
                 UpdateRestSitePortrait(room, canvas);
+        foreach (ulong id in _treasures)
+            if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
+                UpdateTreasurePortrait(room, capHeight, canvas);
         UpdateAncientPortraits(capHeight, canvas);
         foreach (ulong id in _shops)
             if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop) && shop.IsVisibleInTree())
@@ -243,9 +318,31 @@ internal sealed partial class PortraitBetweenLayout
         _laidOutRewardHolders.Clear();
         RestoreEventsLandscape();
 
+        // The loot window's entrance and the ribbons' slides are ours while portrait; kill them before the snapshots put the
+        // game's own layout back.
+        foreach (LootScreenState loot in _lootScreens.Values)
+            if (loot.Fade is { } fade && GodotObject.IsInstanceValid(fade)) fade.Kill();
+        _lootScreens.Clear();
+        _lootRows.Clear();
+        foreach (ProceedLaneState lane in _proceedLanes.Values)
+            if (lane.Owned is { } owned && GodotObject.IsInstanceValid(owned)) owned.Kill();
+        _proceedLanes.Clear();
+        foreach (ulong id in _lootSkipsHidden)
+            if (GodotObject.InstanceFromId(id) is Control hidden && GodotObject.IsInstanceValid(hidden) && !hidden.Visible)
+                hidden.Show();
+        _lootSkipsHidden.Clear();
+
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
+
+        foreach ((ulong id, BoxContainer.AlignmentMode alignment) in _alternativeAlignments)
+            if (GodotObject.InstanceFromId(id) is BoxContainer box && GodotObject.IsInstanceValid(box))
+                box.Alignment = alignment;
+        _alternativeAlignments.Clear();
+
+        RestoreTreasureLandscape();
+        RestoreRestLandscape();
 
         RestoreMapLandscape();
 
@@ -296,6 +393,11 @@ internal sealed partial class PortraitBetweenLayout
             }
         }
         _richFontSizes.Clear();
+        foreach ((ulong id, (bool Had, bool Value)) in _rewardAutoSizes)
+            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
+                label.GetType().GetProperty("AutoSizeEnabled", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?.SetValue(label, Value);
+        _rewardAutoSizes.Clear();
         // After the snapshots: the painting goes back into the layout and the game's own window rule places it.
         RestoreAncientLandscape();
     }
@@ -317,34 +419,94 @@ internal sealed partial class PortraitBetweenLayout
         _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _events.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _restSites.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        PruneRestInstances();
+        PruneTreasureInstances();
         PruneAncientInstances();
         foreach (ulong id in _labelMaxFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMaxFontSizes.Remove(id);
         foreach (ulong id in _labelMinFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMinFontSizes.Remove(id);
         foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
         foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
+        _lootRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        _lootSkipsHidden.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _lootScreens.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _lootScreens.Remove(id);
+        foreach (ulong id in _proceedLanes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _proceedLanes.Remove(id);
+        foreach (ulong id in _rewardAutoSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _rewardAutoSizes.Remove(id);
+        foreach (ulong id in _alternativeAlignments.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _alternativeAlignments.Remove(id);
         PruneEventInstances();
     }
 
     // ---- Proceed button (rewards, shop, rest site, treasure) ------------------------------------------------------------
 
-    private void UpdateProceedButtonPortrait(Control button, Vector2 canvas)
+    /// <summary>
+    /// The ribbon keeps one centre per screen. It is 108 units tall natively and the game slides it by its position, so growing
+    /// it for a finger extends it downwards: the game's shown Y stays its top edge and the centre of a grown ribbon is the
+    /// same before and after every Skip/Proceed re-enable. A Blitz run instead gives both labels one lane at 0.625 of the
+    /// canvas height, and the treasure room's ribbon hangs from the canvas's bottom edge, clear of the chest and its relic
+    /// holders; the game's own slide to its desktop place is taken over there so it ends in that lane without a correction
+    /// once it settles.
+    /// </summary>
+    private void UpdateProceedButtonPortrait(Control proceed, Vector2 canvas)
     {
-        // ShowPos is a fraction of the canvas (1583/1920 across), which leaves the button partly off the narrow portrait edge.
-        if (button.GetType().GetField("_animTween", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(button) is Tween { } tween &&
-            tween.IsValid() && tween.IsRunning())
-            return;
-        // The ribbon is 108 units tall natively; its rectangle grows to the phone's smallest touch target, keeping its centre
-        // (the game animates the position, not the size, so the slide is untouched).
-        if (button.Size.Y < PortraitBands.MinTarget)
+        ResolveProceedApi(proceed.GetType());
+        ulong id = proceed.GetInstanceId();
+        if (!_proceedLanes.TryGetValue(id, out ProceedLaneState? lane))
         {
-            Capture(button, captureVisible: false);
-            float grow = PortraitBands.MinTarget - button.Size.Y;
-            button.Size = new Vector2(button.Size.X, PortraitBands.MinTarget);
-            button.Position -= new Vector2(0f, grow / 2f);
+            string? parentType = proceed.GetParent()?.GetType().FullName;
+            _proceedLanes[id] = lane = new ProceedLaneState
+            {
+                Blitz = parentType == BlitzMerchantRoomTypeName ||
+                        (parentType == RewardsScreenTypeName && IsBlitzRun()),
+                Footer = parentType == TreasureRoomTypeName,
+            };
         }
-        float width = button.Size.X * button.Scale.X;
-        if (button.Position.X >= canvas.X - 1f || button.Position.X + width <= canvas.X - 16f) return;
-        button.Position = new Vector2(canvas.X - width - 24f, button.Position.Y);
+
+        if (proceed.Size.Y < PortraitBands.MinTarget)
+        {
+            Capture(proceed, captureVisible: false);
+            Vector2 topLeft = proceed.Position;
+            proceed.Size = new Vector2(proceed.Size.X, PortraitBands.MinTarget);
+            // Whatever direction the engine grows a control in, the ribbon's top stays where the game puts it.
+            if (proceed.Position != topLeft) proceed.Position = topLeft;
+        }
+
+        bool enabled = _proceedEnabled?.GetValue(proceed) is true;
+        float height = proceed.Size.Y;
+        float centre = lane.Footer
+            ? PortraitBetweenMath.ActionFooterCentreY(canvas.Y, height)
+            : PortraitBetweenMath.ActionLaneCentreY(lane.Blitz, canvas.Y, height);
+        float width = proceed.Size.X * proceed.Scale.X;
+        var target = new Vector2(canvas.X - width - PortraitBetweenMath.ActionRightMargin, centre - height / 2f);
+
+        Tween? native = _proceedAnimTween?.GetValue(proceed) as Tween;
+        if (native != null && native.IsValid() && native.IsRunning() && lane.Owned != native)
+        {
+            if (!enabled)
+            {
+                // The game hides the ribbon towards its desktop lane; the Blitz and treasure lanes are elsewhere, so the
+                // ribbon leaves from its own place instead of sliding back across the screen.
+                if (!lane.Blitz && !lane.Footer) return;
+                native.Kill();
+                Tween leave = proceed.CreateTween();
+                leave.TweenProperty(proceed, "position", new Vector2(canvas.X + width, target.Y), 0.8)
+                    .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Expo);
+                _proceedAnimTween?.SetValue(proceed, leave);
+                lane.Owned = leave;
+                return;
+            }
+            // The game slides the ribbon to its desktop place on enable; take the slide over so it ends in the phone's lane.
+            native.Kill();
+            Tween owned = proceed.CreateTween().SetParallel(true);
+            owned.TweenProperty(proceed, "position", target, 0.5).SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Expo);
+            if (_proceedImage?.GetValue(proceed) is CanvasItem image)
+                owned.TweenProperty(image, "self_modulate", Colors.White, 0.5);
+            _proceedAnimTween?.SetValue(proceed, owned);
+            lane.Owned = owned;
+            return;
+        }
+        if (lane.Owned != null && lane.Owned.IsValid() && lane.Owned.IsRunning()) return;
+        lane.Owned = null;
+        if (!enabled) return;
+        if (proceed.Position.DistanceSquaredTo(target) > 0.25f) proceed.Position = target;
     }
 
     private static void RestoreProceedButtonLandscape(Control button)
@@ -355,18 +517,189 @@ internal sealed partial class PortraitBetweenLayout
             button.Position = target;
     }
 
+    /// <summary>Whether the run is the Blitz run, whose loot and merchant share one action lane.</summary>
+    private static bool IsBlitzRun()
+    {
+        try
+        {
+            Type? manager = typeof(NGame).Assembly.GetType("MegaCrit.Sts2.Core.Runs.RunManager");
+            object? instance = manager?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            _runStateGetter ??= manager?.GetMethod("DebugOnlyGetState", BindingFlags.Public | BindingFlags.Instance);
+            object? state = _runStateGetter?.Invoke(instance, null);
+            if (state == null) return false;
+            _gameModeProperty ??= state.GetType().GetProperty("GameMode", BindingFlags.Public | BindingFlags.Instance);
+            object? mode = _gameModeProperty?.GetValue(state);
+            if (mode == null) return false;
+            _blitzMode ??= Enum.Parse(mode.GetType(), "Blitz");
+            return mode.Equals(_blitzMode);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     // ---- Spoils screen --------------------------------------------------------------------------------------------------
 
-    private void LayoutRewardsPortrait(Control screen)
+    /// <summary>
+    /// The loot window is 526 x 640 with a banner that overhangs its top; in portrait it is scaled so the banner fits the
+    /// phone's width (75 % of the canvas for the panel, 93 % for the banner) and its banner is kept under the stone header
+    /// while its bottom stays above the screen's action, shrinking the window and re-cutting the list's mask when the tall
+    /// canvas is too short for the whole panel. The list keeps scrolling: the game's own rule counts the rows' height.
+    /// </summary>
+    private void LayoutRewardsPortrait(Control screen, float capHeight, Vector2 canvas)
     {
         if (screen.GetNodeOrNull<Control>("Rewards") is not { } window) return;
+        if (screen.GetNodeOrNull<Control>("%RewardContainerMask") is not { } mask) return;
+        if (screen.GetNodeOrNull<Control>("%RewardsContainer") is not { } list) return;
+        ulong id = screen.GetInstanceId();
+        if (!_lootScreens.TryGetValue(id, out LootScreenState? state))
+            _lootScreens[id] = state = new LootScreenState(
+                screen, window, mask, list, screen.GetNodeOrNull<Control>("ProceedButton"), IsBlitzRun());
         Capture(window, captureVisible: false);
-        // The Loot panel is 526 wide with a 652 wide banner and rows of 402 x 86 units: at 1.5 the banner is 978 of the
-        // canvas's 1080 and a row is 129 units (44 points) with 12 point text. The list is part of the panel, so as many
-        // rows show as before and the rest scroll. The pivot is below the middle so the panel grows more up than down and
-        // its list stays clear of the Proceed button.
-        window.PivotOffset = new Vector2(window.Size.X / 2f, RewardsPivotY);
-        window.Scale = new Vector2(RewardsScale, RewardsScale);
+        Capture(mask, captureVisible: false);
+        Capture(list, captureVisible: false);
+        // Rows are two units taller and 14 apart (was 86 and 10), so a loot row is at least 44 points deep.
+        if (!list.HasThemeConstantOverride("separation") || list.GetThemeConstant("separation") != (int)LootRowSeparation)
+            list.AddThemeConstantOverride("separation", (int)LootRowSeparation);
+        UpdateLootPortrait(state, canvas, capHeight);
+    }
+
+    private const float LootRowSeparation = 14f;
+
+    private void UpdateLootPortrait(LootScreenState state, Vector2 canvas, float capHeight)
+    {
+        float laneTop = PortraitBetweenMath.ActionLaneTop(state.Blitz, canvas.Y, PortraitBands.MinTarget);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(
+            canvas.X, PortraitBands.HeaderBottom(capHeight), laneTop, NativeLootWidth, NativeLootHeight);
+        Control window = state.Window;
+
+        if (Math.Abs(window.Scale.X - fit.Scale) > 0.0005f)
+        {
+            window.PivotOffset = Vector2.Zero;
+            window.Scale = new Vector2(fit.Scale, fit.Scale);
+        }
+        if (Math.Abs(window.Size.Y - fit.WindowHeight) > 0.25f)
+            window.Size = new Vector2(window.Size.X, fit.WindowHeight);
+        // The mask is re-cut from the window's edges, as the game's own 640-tall window no longer bounds the list.
+        Control mask = state.Mask;
+        if (mask.AnchorLeft != 0f || mask.AnchorTop != 0f || mask.AnchorRight != 1f || mask.AnchorBottom != 1f ||
+            Math.Abs(mask.OffsetLeft - LootMaskLeft) > 0.01f || Math.Abs(mask.OffsetRight + LootMaskRight) > 0.01f ||
+            Math.Abs(mask.OffsetTop - LootMaskTop) > 0.01f || Math.Abs(mask.OffsetBottom + LootMaskBottom) > 0.01f)
+        {
+            mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
+            mask.OffsetLeft = LootMaskLeft;
+            mask.OffsetRight = -LootMaskRight;
+            mask.OffsetTop = LootMaskTop;
+            mask.OffsetBottom = -LootMaskBottom;
+        }
+
+        var target = new Vector2(fit.X, fit.Y);
+        FieldInfo? fadeField = RewardsFadeTween(state.Screen.GetType());
+        Tween? fadeTween = fadeField?.GetValue(state.Screen) as Tween;
+        if (fadeTween != null && fadeTween.IsValid() && fadeTween.IsRunning() && state.Fade != fadeTween)
+        {
+            // The game's entrance slides the window to its desktop place and fades it in; take the slide over so it ends at
+            // the portrait place (the window starts transparent, so nothing is seen at the desktop place).
+            fadeTween.Kill();
+            Tween fade = window.CreateTween().SetParallel(true);
+            fade.TweenProperty(window, "modulate", Colors.White, 0.5);
+            fade.TweenProperty(window, "position:y", fit.Y, 0.5)
+                .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Back).From(fit.Y + 100f);
+            window.Position = new Vector2(target.X, window.Position.Y);
+            fadeField?.SetValue(state.Screen, fade);
+            state.Fade = fade;
+        }
+        else if (state.Fade == null || !state.Fade.IsValid() || !state.Fade.IsRunning())
+        {
+            if (window.Position.DistanceSquaredTo(target) > 0.25f) window.Position = target;
+        }
+
+        // The rows keep one size; their labels read at 15 points. The list is walked only when its rows change.
+        int rowCount = state.List.GetChildCount();
+        if (rowCount != state.RowCount) ApplyLootRows(state, rowCount);
+
+        // The game's scroll engages when the list is 400 units tall; a list that overflows this shorter mask is made tall
+        // enough for the drag to reach its last row (see LootScrollMinimumHeight).
+        float maskHeight = mask.Size.Y;
+        float minimum = PortraitBetweenMath.LootScrollMinimumHeight(state.ContentHeight, maskHeight);
+        if (Math.Abs(state.List.CustomMinimumSize.Y - minimum) > 0.5f)
+            state.List.CustomMinimumSize = new Vector2(state.List.CustomMinimumSize.X, minimum);
+    }
+
+    private void ApplyLootRows(LootScreenState state, int rowCount)
+    {
+        state.RowCount = rowCount;
+        float content = 0f;
+        int rows = 0;
+        foreach (Node node in state.List.GetChildren())
+        {
+            if (node is not Control row || row.IsQueuedForDeletion()) continue;
+            if (_lootRows.Add(row.GetInstanceId()))
+            {
+                Capture(row, captureVisible: false);
+                if (row.CustomMinimumSize.Y < PortraitBetweenMath.LootRowMinHeight)
+                    row.CustomMinimumSize = new Vector2(
+                        row.CustomMinimumSize.X, PortraitBetweenMath.LootRowMinHeight);
+                if (row.GetNodeOrNull<Control>("%Label") is { } label)
+                {
+                    SetRichFontSize(label, RewardRowFontSize);
+                    PropertyInfo? autoSize = label.GetType().GetProperty(
+                        "AutoSizeEnabled", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (autoSize?.GetValue(label) is bool autoSizing)
+                    {
+                        ulong labelId = label.GetInstanceId();
+                        if (!_rewardAutoSizes.ContainsKey(labelId)) _rewardAutoSizes[labelId] = (true, autoSizing);
+                        if (autoSizing) autoSize.SetValue(label, false);
+                    }
+                }
+            }
+            content += row.GetCombinedMinimumSize().Y;
+            rows++;
+        }
+        if (rows > 1) content += (rows - 1) * state.List.GetThemeConstant("separation");
+        state.ContentHeight = content;
+    }
+
+    private const float NativeLootWidth = 526f;
+    private const float NativeLootHeight = 640f;
+    private const float LootMaskLeft = 26f;
+    private const float LootMaskRight = 26f;
+    private const float LootMaskTop = 103f;
+    private const float LootMaskBottom = 36f;
+
+    /// <summary>Whether a card reward is open over the loot screen.</summary>
+    private bool CardRewardShown()
+    {
+        foreach (ulong id in _cardRewards)
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) &&
+                screen.IsInsideTree() && screen.IsVisibleInTree())
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The loot screen's own Skip stays under a card reward otherwise: the screen below only disables it (its slide takes most
+    /// of a second) and the reward screen is transparent. It is hidden while the reward is open and shown again when the loot
+    /// screen comes back, with its place kept.
+    /// </summary>
+    private void KeepLootSkipsClearOfCardReward(bool cardRewardOpen)
+    {
+        foreach (LootScreenState state in _lootScreens.Values)
+        {
+            if (state.Action is not { } action || !GodotObject.IsInstanceValid(action)) continue;
+            ResolveProceedApi(action.GetType());
+            ulong actionId = action.GetInstanceId();
+            if (cardRewardOpen && state.Screen.IsVisibleInTree() && _proceedIsSkip?.GetValue(action) is true && action.Visible)
+            {
+                action.Hide();
+                _lootSkipsHidden.Add(actionId);
+            }
+            else if (_lootSkipsHidden.Remove(actionId) && !action.Visible)
+            {
+                action.Show();
+            }
+        }
     }
 
     // ---- Card reward: 2 x 2 grid ----------------------------------------------------------------------------------------
@@ -385,19 +718,20 @@ internal sealed partial class PortraitBetweenLayout
         float lift = BannerLift(canvas, capHeight);
         LiftBanner(screen.GetNodeOrNull<Control>("UI/Banner"), canvas, lift, _liftedBanners);
         float bannerBottom = centreY - BannerBottomOffset - lift;
-        // The alternatives are 44 points tall in portrait (PortraitOverlayLayout grows them).
+        // The banner sits above the cards; the alternatives (44 points tall, grown by PortraitOverlayLayout) keep one row
+        // under them, right-aligned a stone margin in from the canvas, and the block takes what is left between.
         float altHeight = PortraitBands.MinTarget;
-        float bottomLimit = canvas.Y - 120f - altHeight - 30f;
-        int rows = holders.Count <= 2 ? 1 : (holders.Count + 1) / 2;
-        const float gapX = 48f, gapY = 40f;
-        float maxScaleByHeight = ((bottomLimit - (bannerBottom + 30f)) - (rows - 1) * gapY) / (rows * RewardCardHeight);
-        float maxScaleByWidth = (canvas.X - 60f - gapX) / (2f * RewardCardWidth);
-        float cardScale = Math.Min(RewardMaxCardScale, Math.Min(maxScaleByHeight, maxScaleByWidth));
+        float cardTop = bannerBottom + RewardBannerGap;
+        float blockBottom = canvas.Y - RewardBottomMargin - altHeight - RewardAlternativeGap;
+        CardGridFit grid = PortraitBetweenMath.CardGrid(
+            holders.Count, canvas.X, cardTop, blockBottom, RewardCardWidth, RewardCardHeight,
+            RewardCardGapX, RewardCardGapY, RewardMaxCardScale, RewardCardSideMargin);
+        float cardScale = grid.Scale;
         float holderScale = 0.8f;
         float rowScale = cardScale / holderScale;
 
-        float blockHeight = rows * RewardCardHeight * cardScale + (rows - 1) * gapY;
-        float blockCentreY = bannerBottom + 30f + blockHeight / 2f;
+        float blockHeight = grid.BlockHeight;
+        float blockCentreY = cardTop + blockHeight / 2f;
 
         Capture(row, captureVisible: false);
         row.Scale = new Vector2(rowScale, rowScale);
@@ -406,10 +740,27 @@ internal sealed partial class PortraitBetweenLayout
 
         if (screen.GetNodeOrNull<Control>("UI/RewardAlternatives") is { } alts)
         {
+            // The game slides the row up as the screen opens; it is placed here instead, so that slide is taken over.
+            if (type.GetField("_buttonTween", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(screen) is Tween { } slide &&
+                slide.IsValid() && slide.IsRunning())
+                slide.Kill();
             Capture(alts, captureVisible: false);
-            float top = blockCentreY + blockHeight / 2f + 30f - centreY;
+            float top = blockCentreY + blockHeight / 2f + RewardAlternativeGap - centreY;
             alts.OffsetTop = top;
             alts.OffsetBottom = top + altHeight;
+            alts.OffsetLeft = 0f;
+            alts.OffsetRight = -PortraitBetweenMath.ActionRightMargin;
+            if (alts is BoxContainer box)
+            {
+                if (box.Alignment != BoxContainer.AlignmentMode.End)
+                {
+                    _alternativeAlignments.TryAdd(alts.GetInstanceId(), box.Alignment);
+                    box.Alignment = BoxContainer.AlignmentMode.End;
+                }
+                if (!alts.HasThemeConstantOverride("separation") ||
+                    alts.GetThemeConstant("separation") != (int)RewardAlternativeSeparation)
+                    alts.AddThemeConstantOverride("separation", (int)RewardAlternativeSeparation);
+            }
         }
 
         // A card keeps its slot: the game moves a hovered card to the end of the row so it draws on top, so the
@@ -431,7 +782,7 @@ internal sealed partial class PortraitBetweenLayout
             fresh = true;
         }
         IReadOnlyList<GridSlot> slots = PortraitBetweenMath.RewardSlots(
-            order.Count, RewardCardWidth * cardScale, RewardCardHeight * cardScale, gapX, gapY);
+            order.Count, RewardCardWidth * cardScale, RewardCardHeight * cardScale, RewardCardGapX, RewardCardGapY);
         Vector2 SlotOf(Control holder)
         {
             GridSlot slot = slots[order.IndexOf(holder.GetInstanceId())];
@@ -639,27 +990,6 @@ internal sealed partial class PortraitBetweenLayout
 
     private int GameLabelFontSize(Control label) =>
         _labelFontSizes.TryGetValue(label.GetInstanceId(), out (bool Had, int Size) kept) ? kept.Size : label.GetThemeFontSize("font_size");
-
-    // ---- Rest site -------------------------------------------------------------------------------------------------------
-
-    /// <summary>
-    /// The rest site's options are a row of 247 x 163 buttons, 100 apart, with a 28 unit (10 point) label under each, in
-    /// the middle of an empty screen. The row is drawn as large as its buttons fit the width, up to a third larger (two
-    /// options), and smaller when four or more would pass the screen's edges. The pivot is above the row's middle, so
-    /// the row stays under the question above it and its labels stay above the description below.
-    /// </summary>
-    private void UpdateRestSitePortrait(Control room, Vector2 canvas)
-    {
-        if (room.GetNodeOrNull<Control>("%ChoicesContainer") is not { } choices) return;
-        float width = choices.GetCombinedMinimumSize().X;
-        float scale = Math.Clamp(
-            PortraitBetweenMath.FitScale(width, canvas.X - 40f, RestChoicesMaxScale), RestChoicesMinScale, RestChoicesMaxScale);
-        var pivot = new Vector2(choices.Size.X / 2f, RestChoicesPivotY);
-        if (Mathf.IsEqualApprox(choices.Scale.X, scale) && choices.PivotOffset.IsEqualApprox(pivot)) return;
-        Capture(choices, captureVisible: false);
-        choices.PivotOffset = pivot;
-        choices.Scale = new Vector2(scale, scale);
-    }
 
     // ---- shared --------------------------------------------------------------------------------------------------------
 
