@@ -160,7 +160,10 @@ internal sealed class PhoneHoverTips
                 return;
             }
             Rect2 canvas = tree.Root.GetVisibleRect();
-            float stageTop = PortraitLayout.ComputeCapHeight(tree.Root) + PortraitBands.RunContentTop;
+            float safeTop = PortraitLayout.ComputeCapHeight(tree.Root);
+            // Tips stay inside the phone's safe area: above the safe top is under the island/notch.
+            var fitArea = new Rect2(0f, safeTop, canvas.Size.X, Math.Max(0f, canvas.Size.Y - safeTop));
+            float stageTop = safeTop + PortraitBands.RunContentTop;
             float railTop = PortraitCombatMath.ComputeCombatBands(canvas.Size.Y, 0f).RailTopY;
             (float Top, float Bottom) handBand = TouchCardMath.HandTipBand(stageTop, railTop);
             foreach (Node child in container.GetChildren())
@@ -173,7 +176,7 @@ internal sealed class PhoneHoverTips
                 }
                 try
                 {
-                    FitSet(set, canvas, PortraitTipScale, handBand);
+                    FitSet(set, fitArea, PortraitTipScale, handBand);
                 }
                 catch (Exception error)
                 {
@@ -229,6 +232,10 @@ internal sealed class PhoneHoverTips
         // A potion's popup is drawn over the middle of the screen; its description is never allowed to cover the Use and
         // Discard buttons, so a column with no room beside the popup is put under it.
         Rect2? popup = PotionPopupOf(ownerControl)?.GetGlobalRect();
+        // Carry the phone scale on the tip set itself; every column is placed relative to it below.
+        float setScale = Mathf.Max(scale, 0.01f);
+        if (!Mathf.IsEqualApprox(set.Scale.X, setScale) || !Mathf.IsEqualApprox(set.Scale.Y, setScale))
+            set.Scale = new Vector2(setScale, setScale);
         Transform2D toCanvas = set.GetGlobalTransformWithCanvas();
         Control? text = _textField!.GetValue(set) as Control;
         Control? cards = _cardField!.GetValue(set) as Control;
@@ -393,7 +400,9 @@ internal sealed class PhoneHoverTips
         }
 
         Vector2 local = toCanvas.AffineInverse() * placed.Position;
-        column.Scale = new Vector2(s, s);
+        // The set carries the phone scale; the column keeps only what is left so the drawn size is the fitted one.
+        float totalScale = Mathf.Max(Mathf.Abs(toCanvas.Scale.X), 0.01f);
+        column.Scale = new Vector2(s / totalScale, s / totalScale);
         column.Position = local;
         state.Written = local;
         state.WrittenScale = column.Scale;

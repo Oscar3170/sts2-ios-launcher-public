@@ -75,14 +75,14 @@ public static class PortraitAncientMath
     /// <summary>The native column ends the reward rows 10 units above its clipped box's bottom.</summary>
     public const float NativeRewardDrop = 10f;
 
-    /// <summary>The nameplate's footer: the home indicator's 31.25 points plus its 4 point inset.</summary>
-    public const float NameplateBottom = 35.25f * UnitsPerPoint;
+    /// <summary>The nameplate's footer sits this far above the bottom of the safe frame.</summary>
+    public const float NameplateBottomInset = 4f * UnitsPerPoint;
 
     /// <summary>
-    /// Room kept for the nameplate once it settles: the native title is 54 units (18.75 points) tall and enlarges by 1.32,
-    /// with the epithet under it. 43 points leaves the title clear of the reward rows.
+    /// Room kept for the nameplate once it settles: its title (54 units, 18.75 points, enlarged by 1.32) and the epithet
+    /// under it take about 50 points once scaled, so 48.6 points leaves the title clear of the reward rows.
     /// </summary>
-    public const float NameplateReserve = 43f * UnitsPerPoint;
+    public const float NameplateReserve = 48.6f * UnitsPerPoint;
 
     /// <summary>How much the settled epithet is enlarged; its pivot is its bottom-left corner.</summary>
     public const float EpithetScale = 1.32f;
@@ -136,18 +136,20 @@ public static class PortraitAncientMath
     /// <summary>Top of the art: just under the run's header.</summary>
     public static float ArtTop(float headerBottom) => headerBottom + ArtTopGap;
 
-    /// <summary>Top of the nameplate's room at the screen's bottom; the reward rows end above it.</summary>
-    public static float NameplateTop(float canvasHeight) => canvasHeight - NameplateBottom - NameplateReserve;
+    /// <summary>Top of the nameplate's room inside the safe frame; the reward rows end above it.</summary>
+    public static float NameplateTop(float canvasHeight, float safeInset) =>
+        NameplateFooter(canvasHeight, safeInset) - NameplateReserve;
 
-    /// <summary>The settled nameplate's footer line.</summary>
-    public static float NameplateFooter(float canvasHeight) => canvasHeight - NameplateBottom;
+    /// <summary>The settled nameplate's footer line, inside the bottom of the safe frame.</summary>
+    public static float NameplateFooter(float canvasHeight, float safeInset) =>
+        canvasHeight - safeInset - NameplateBottomInset;
 
     /// <summary>
     /// The settled epithet's local y inside the banner: its bottom-left pivot (0, its own height) is its footer, so scaling
     /// it leaves the text where it is put.
     /// </summary>
-    public static float EpithetLocalY(float canvasHeight, float bannerGlobalY, float epithetHeight) =>
-        NameplateFooter(canvasHeight) - bannerGlobalY - epithetHeight;
+    public static float EpithetLocalY(float canvasHeight, float safeInset, float bannerGlobalY, float epithetHeight) =>
+        NameplateFooter(canvasHeight, safeInset) - bannerGlobalY - epithetHeight;
 
     /// <summary>The reward rows: 62.5 point rows, 37.5 point icons and 13.4 point text.</summary>
     public static AncientOptionMetrics Options { get; } = new(
@@ -163,8 +165,8 @@ public static class PortraitAncientMath
     /// <summary>
     /// The art crop for a portrait canvas. The camera row starts at 68.5 % of the screen and is pulled up so the last
     /// dialogue line and the reward rows stay on the art; a tall phone keeps a gap between art and rows, a 9:16 phone lets
-    /// the art reach the rows and extends the camera into the painting's bleed instead. The scale covers the canvas width
-    /// and reaches the camera row, and the horizontal offset centres <paramref name="focusX"/> under the canvas's middle.
+    /// the art reach the rows and extends the camera into the painting's bleed instead. The scale covers the whole clip,
+    /// so the painting never leaves a band inside it, and the horizontal offset centres <paramref name="focusX"/>
     /// </summary>
     public static AncientArtFrame FrameArt(
         float canvasWidth, float canvasHeight, float artTop, float nameplateTop, float optionsHeight, float lineReserve,
@@ -184,7 +186,8 @@ public static class PortraitAncientMath
             float bleed = BleedSource * (cameraBottom - artTop) / ArtSourceHeight;
             artBottom = MathF.Max(cameraBottom, MathF.Min(optionTop - TallRewardGap, cameraBottom + bleed));
         }
-        float scale = MathF.Max(canvasWidth / ArtSourceWidth, (cameraBottom - artTop) / ArtSourceHeight);
+        // Cover the clip, not just the camera row: the painting must reach its bottom edge with no bare band.
+        float scale = MathF.Max(canvasWidth / ArtSourceWidth, (artBottom - artTop) / ArtSourceHeight);
         float offsetX = Math.Clamp(canvasWidth * 0.5f - focusX * scale, canvasWidth - ArtSourceWidth * scale, 0f);
         float fadeEnd = artBottom - FadeEdge;
         float fadeStart = fadeEnd - MathF.Min(FadeLength, (artBottom - artTop) * FadeFraction);

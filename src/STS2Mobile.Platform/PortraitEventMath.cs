@@ -199,7 +199,9 @@ public static class PortraitEventMath
     /// <summary>The next smaller copy size, down to the readable minimum.</summary>
     public static int NextTextFont(int font) => Math.Max(MinTextFont, font - TextFontStep);
 
-    /// <summary>The title's size for a copy size, and the shared-event note's.</summary>
+    /// <summary>
+    /// The title's size (from the copy's full size, not a shrunk one), and the shared-event note's size for a copy size.
+    /// </summary>
     public static int TitleFont(int font) => font + TitleExtra;
     public static int SharedFont(int font) => Math.Max(MinTextFont - 4, font + SharedDelta);
 

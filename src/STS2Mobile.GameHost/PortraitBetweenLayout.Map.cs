@@ -31,11 +31,14 @@ internal sealed partial class PortraitBetweenLayout
     // Share is 64 units tall natively; its mount grows it to the same 44 points without touching its own hover tween.
     // The footer controls stay inside this bottom margin, and the graph clip stops above them.
     private const float MapFooterBand = 150f;
-    // Share keeps the game's own 48-unit bottom margin; its right edge sits 32 units from the canvas edge.
+    // Share and the drawing tools sit this far above the canvas bottom; Share's right edge is 32 units from the edge.
     private const float MapFooterInset = 32f;
-    private const float MapShareBottomInset = 48f;
+    private const float MapFooterBottomInset = 24f;
     private const float MapLegendInset = 20f;
     private const float MapToolGap = 6f;
+    // The Back ribbon's shown top sits 354 units above the canvas bottom (native scene offsets); keep a little clearance
+    // if its own position field is unavailable.
+    private const float MapBackReserve = 360f;
     private const float MapToastGap = 8f;
     // Native legend is 340 x 454 at scale 1; the phone reference draws it at 2.3 on a 1680-wide canvas, which is
     // 2.3 * 1080 / 1680 at ours (about 1.48: 13-22 point text).
@@ -49,7 +52,11 @@ internal sealed partial class PortraitBetweenLayout
         public Control? Shift;
         public Control? Map;
         public Control? Points;
+        public Control? Bg;
         public Control? Tools;
+        public Control? Back;
+        public FieldInfo? BackShowField;
+        public float BgBaseLeft;
         public Control? Legend;
         public Button? Pill;
         public TextureRect? Backdrop;
@@ -107,6 +114,10 @@ internal sealed partial class PortraitBetweenLayout
                 _stretchModes.TryAdd(tile.GetInstanceId(), tile.StretchMode);
                 tile.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
             }
+            // The desktop art is 1920 wide and its parchment band is only about 1130 of that; a 1:1 crop would hide the
+            // torn sides. Draw the sheet a little narrower so both ragged edges sit inside the canvas over the act cover.
+            bg.PivotOffset = new Vector2((canvasWidth + 2f * PortraitBetweenMath.MaxMapCentreShift) * 0.5f, 0f);
+            bg.Scale = new Vector2(PortraitBetweenMath.MapPaperScale(canvasWidth), 1f);
         }
         if (graph?.GetNodeOrNull<Control>("Drawings") is { } drawings)
         {
@@ -143,23 +154,96 @@ internal sealed partial class PortraitBetweenLayout
             Capture(tools, captureVisible: false);
             tools.PivotOffset = new Vector2(0f, tools.Size.Y);
             tools.Scale = new Vector2(DrawingToolsScale, DrawingToolsScale);
+            PlaceMapTools(tools, canvasHeight);
         }
-        EnsureMapFrame(map, new Vector2(canvasWidth, canvasHeight), PortraitBands.HeaderBottom(capHeight),
-            MapClipBottom(canvasHeight, map.GetNodeOrNull<Control>("%DrawingTools")));
+        Vector2 canvas = new(canvasWidth, canvasHeight);
+        float clipTop = PortraitBands.HeaderBottom(capHeight);
+        MapFrame? frame = EnsureMapFrame(map, canvas, clipTop, MapClipBottom(map, null, canvasHeight));
+        if (frame != null)
+        {
+            float shiftX = MapCentreShift(map, frame, canvasWidth);
+            PlaceMapBg(frame, shiftX, canvasWidth);
+            UpdateMapFrame(map, frame, canvas, clipTop, MapClipBottom(map, frame, canvasHeight));
+        }
     }
 
     /// <summary>
-    /// The graph's visible band. It starts under the stone header (the relic strip floats over the map art) and stops
-    /// above the drawing tools: the game draws paths, points, the marker and free strokes in the map container, so clipping
-    /// the whole container keeps all of them out of the header and the footer at once.
+    /// Puts the untouched drawing bar's visible bottom <see cref="MapFooterBottomInset"/> above the canvas bottom, using the
+    /// same canvas height the rest of the portrait layout reads (the native bar is positioned from the design height).
     /// </summary>
-    private static float MapClipBottom(float canvasHeight, Control? tools)
+    private static void PlaceMapTools(Control? tools, float canvasHeight)
+    {
+        if (tools is not { } bar || !GodotObject.IsInstanceValid(bar) || bar.Size.Y <= 0f) return;
+        float y = canvasHeight - MapFooterBottomInset - bar.Size.Y;
+        if (!Mathf.IsEqualApprox(bar.Position.Y, y)) bar.Position = new Vector2(bar.Position.X, y);
+    }
+
+    /// <summary>
+    /// Frames the parchment: the sheet is drawn slightly narrower than the desktop art, centred on the canvas, so its torn
+    /// left and right edges stay visible over the act cover. The point columns keep their own centring shift; only the paper
+    /// is reframed (the graph itself is never scaled).
+    /// </summary>
+    private void PlaceMapBg(MapFrame frame, float shiftX, float canvasWidth)
+    {
+        if (frame.Bg is not { } bg || !GodotObject.IsInstanceValid(bg))
+        {
+            frame.Bg = frame.Map?.GetNodeOrNull<Control>("MapBg");
+            bg = frame.Bg;
+            if (bg == null || !GodotObject.IsInstanceValid(bg)) return;
+        }
+        float scale = PortraitBetweenMath.MapPaperScale(canvasWidth);
+        if (!Mathf.IsEqualApprox(bg.Scale.X, scale) || bg.Scale.Y != 1f)
+            bg.Scale = new Vector2(scale, 1f);
+        float pivot = (canvasWidth + 2f * PortraitBetweenMath.MaxMapCentreShift) * 0.5f;
+        if (!Mathf.IsEqualApprox(bg.PivotOffset.X, pivot) || bg.PivotOffset.Y != 0f)
+            bg.PivotOffset = new Vector2(pivot, 0f);
+        float x = frame.BgBaseLeft - shiftX;
+        if (!Mathf.IsEqualApprox(bg.Position.X, x))
+            bg.Position = new Vector2(x, bg.Position.Y);
+    }
+
+    /// <summary>
+    /// The graph's visible band. It starts under the stone header (the relic strip floats over the map art) and stops above
+    /// the footer: the Back ribbon and the drawing tools are native siblings of the map, so the chart ends above the higher
+    /// of the two. The game draws paths, points, the marker and free strokes in the map container, so clipping the whole
+    /// container keeps all of them out of the header and the footer at once.
+    /// </summary>
+    private static float MapClipBottom(Control map, MapFrame? frame, float canvasHeight)
     {
         float bottom = canvasHeight - MapFooterBand;
+        Control? tools = frame?.Tools;
+        if (tools == null || !GodotObject.IsInstanceValid(tools))
+        {
+            tools = map.GetNodeOrNull<Control>("%DrawingTools");
+            if (frame != null) frame.Tools = tools;
+        }
         if (tools is { } bar && GodotObject.IsInstanceValid(bar) && bar.Size.Y > 0f && bar.Scale.Y > 0f)
         {
             float top = bar.Position.Y - bar.Size.Y * (bar.Scale.Y - 1f);
             bottom = Math.Min(bottom, top - MapToolGap);
+        }
+        Control? back = frame?.Back;
+        if (back == null || !GodotObject.IsInstanceValid(back))
+        {
+            back = map.GetNodeOrNull<Control>("Back");
+            if (frame != null) frame.Back = back;
+        }
+        if (back is { } button && GodotObject.IsInstanceValid(button))
+        {
+            FieldInfo? show = frame?.BackShowField;
+            if (show == null)
+            {
+                show = button.GetType().GetField("_showPos", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (frame != null) frame.BackShowField = show;
+            }
+            float top = show?.GetValue(button) is Vector2 shown
+                ? shown.Y - map.GlobalPosition.Y
+                : canvasHeight - MapBackReserve;
+            bottom = Math.Min(bottom, top - MapToolGap);
+        }
+        else
+        {
+            bottom = Math.Min(bottom, canvasHeight - MapBackReserve - MapToolGap);
         }
         return bottom;
     }
@@ -211,7 +295,10 @@ internal sealed partial class PortraitBetweenLayout
 
         // The act's own top illustration fills the bands the torn paper does not reach.
         frame.Points = theMap.GetNodeOrNull<Control>("Points");
+        frame.Bg = theMap.GetNodeOrNull<Control>("MapBg");
+        frame.BgBaseLeft = frame.Bg?.Position.X ?? -PortraitBetweenMath.MaxMapCentreShift;
         frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
+        frame.Back = map.GetNodeOrNull<Control>("Back");
         frame.Legend = map.GetNodeOrNull<Control>("%MapLegend");
         EnsureMapBackdrop(map, frame, ActMapTexture());
         MountMapShare(map, frame, canvas);
@@ -312,7 +399,7 @@ internal sealed partial class PortraitBetweenLayout
         float scale = PortraitBands.MinTarget / Math.Max(1f, share.Size.Y);
         if (mount.Scale.X != scale) mount.Scale = new Vector2(scale, scale);
         Vector2 drawn = share.Size * scale;
-        Vector2 position = new(canvas.X - MapFooterInset - drawn.X, canvas.Y - MapShareBottomInset - drawn.Y);
+        Vector2 position = new(canvas.X - MapFooterInset - drawn.X, canvas.Y - MapFooterBottomInset - drawn.Y);
         if (mount.Position != position) mount.Position = position;
     }
 
@@ -331,7 +418,7 @@ internal sealed partial class PortraitBetweenLayout
             frame.Toast = toast;
             frame.ToastSnapshot ??= Capture(toast, captureVisible: false);
         }
-        FieldInfo? field = share.GetType().GetField("_toastPosition", BindingFlags.Instance | BindingFlags.NonPublic);
+        FieldInfo? field = share.GetType().GetField("_toastPosition", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         if (field == null) return;
         if (!frame.HasToastTarget && field.GetValue(share) is Vector2 original)
         {
@@ -348,10 +435,13 @@ internal sealed partial class PortraitBetweenLayout
         float cap = PortraitLayout.ComputeCapHeight(root);
         float clipTop = PortraitBands.HeaderBottom(cap);
         MapFrame? probe = _mapFrames.TryGetValue(map.GetInstanceId(), out MapFrame? current) ? current : null;
-        float clipBottom = MapClipBottom(canvas.Y, probe?.Tools);
+        PlaceMapTools(probe?.Tools, canvas.Y);
+        float clipBottom = MapClipBottom(map, probe, canvas.Y);
         MapFrame? frame = EnsureMapFrame(map, canvas, clipTop, clipBottom);
         if (frame != null && frame.Tools == null)
             frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
+        PlaceMapTools(frame?.Tools, canvas.Y);
+        clipBottom = MapClipBottom(map, frame, canvas.Y);
         // The game's scroll limits (-600..1800) were made for a 1080-tall canvas; keep its target inside the portrait range.
         MapScrollRange range = MapScrollLimits(map, root, clipBottom, frame?.Map);
         Type type = map.GetType();
@@ -374,6 +464,7 @@ internal sealed partial class PortraitBetweenLayout
         }
         if ((frame?.Map ?? MapGraph(map)) is { } theMap && theMap.Position.X != shiftX)
             theMap.Position = new Vector2(shiftX, theMap.Position.Y);
+        if (frame != null) PlaceMapBg(frame, shiftX, canvas.X);
         UpdateMapPointsPortrait(map, frame);
         if (frame is { } stack)
         {
@@ -588,7 +679,7 @@ internal sealed partial class PortraitBetweenLayout
         {
             frame.ToastSnapshot?.Restore(toast);
             if (frame.HasToastTarget && frame.Share is { } toastShare && GodotObject.IsInstanceValid(toastShare) &&
-                toastShare.GetType().GetField("_toastPosition", BindingFlags.Instance | BindingFlags.NonPublic) is { } toastField)
+                toastShare.GetType().GetField("_toastPosition", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) is { } toastField)
                 toastField.SetValue(toastShare, frame.ToastNativeTarget);
         }
         if (frame.Share is { } share && GodotObject.IsInstanceValid(share))
@@ -661,7 +752,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         float canvasHeight = Math.Max(root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
         return MapScrollLimits(map, root,
-            MapClipBottom(canvasHeight, map.GetNodeOrNull<Control>("%DrawingTools")),
+            MapClipBottom(map, null, canvasHeight),
             map.GetNodeOrNull<Control>("TheMap") ?? map.FindChild("TheMap", true, false) as Control);
     }
 

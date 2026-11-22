@@ -45,7 +45,6 @@ internal sealed partial class PortraitBetweenLayout
     private readonly Dictionary<ulong, bool> _ancientAutoSizes = new();
     private readonly Dictionary<ulong, TextServer.AutowrapMode> _ancientAutowraps = new();
     private readonly Dictionary<ulong, Control.MouseFilterEnum> _ancientMouseFilters = new();
-    private readonly HashSet<ulong> _ancientIconTexts = new();
     private readonly HashSet<ulong> _ancientPivots = new();
     private static Shader? _ancientFadeShader;
 
@@ -53,8 +52,12 @@ internal sealed partial class PortraitBetweenLayout
     {
         public ulong Id;
         public Vector2 Canvas;
-        /// <summary>Bottom of the run's header, relic strip included: the art starts just under it.</summary>
+        /// <summary>The safe area's top and bottom inset measured for this screen.</summary>
+        public float SafeInset;
+        /// <summary>Bottom of the stone header: the art starts just under it, with the relic strip over the art.</summary>
         public float HeaderBottom;
+        /// <summary>Frames left to retry the energy-icon rewrite while a rebuilt page settles its text.</summary>
+        public int IconPassesLeft;
         public AncientArtFrame Frame;
         public float ContentTop;
         public float ContentWidth;
@@ -93,7 +96,8 @@ internal sealed partial class PortraitBetweenLayout
             _ancientStates[id] = state;
         }
         state.Canvas = new Vector2(canvasWidth, canvasHeight);
-        state.HeaderBottom = capHeight + PortraitBands.RunContentTop;
+        state.SafeInset = capHeight;
+        state.HeaderBottom = capHeight + PortraitBands.TopBarHeight;
         ShiftAncientNextButton(layout, canvasWidth);
         // Framed once, from the event's option list; rebuilding the rows later never touches the crop.
         if (state.Frame.ClipBottom <= state.Frame.ClipTop)
@@ -120,7 +124,8 @@ internal sealed partial class PortraitBetweenLayout
         if (state.Frame.ClipBottom <= state.Frame.ClipTop)
         {
             state.Canvas = canvas;
-            state.HeaderBottom = capHeight + PortraitBands.RunContentTop;
+            state.SafeInset = capHeight;
+            state.HeaderBottom = capHeight + PortraitBands.TopBarHeight;
             ConfigureAncientFrame(state, layout, AncientOptionCount(layout));
         }
         if (state.ClipId == 0 || GodotObject.InstanceFromId(state.ClipId) is not Control existing || !GodotObject.IsInstanceValid(existing))
@@ -129,6 +134,11 @@ internal sealed partial class PortraitBetweenLayout
         EnsureAncientFade(state, layout);
         HookAncientBanner(state, layout);
         KeepAncientHitboxBelowColumn(state, layout);
+        if (state.IconPassesLeft > 0)
+        {
+            state.IconPassesLeft--;
+            RewriteAncientPageIcons(state);
+        }
     }
 
     /// <summary>
@@ -192,6 +202,13 @@ internal sealed partial class PortraitBetweenLayout
             if (option.GetNodeOrNull<NinePatchRect>(name) is { } effect) StretchAncientOptionEffect(effect);
 
         if (option.GetParent() is Control options) SizeAncientOptions(options, rowWidth, metrics);
+        // A rebuilt page (new dialogue or new rows) must have its column ready in the same frame the game measures it,
+        // and the page's text may only be final after its labels are ready, so the rewrite is retried for a few frames.
+        if (state != null && AncientLayoutAbove(option) is { } layout)
+        {
+            state.IconPassesLeft = 3;
+            ApplyAncientColumn(state, layout, -1f);
+        }
     }
 
     /// <summary>
@@ -238,7 +255,7 @@ internal sealed partial class PortraitBetweenLayout
     private void ConfigureAncientFrame(AncientState state, Control layout, int optionCount)
     {
         AncientOptionMetrics metrics = PortraitAncientMath.Options;
-        float nameplateTop = PortraitAncientMath.NameplateTop(state.Canvas.Y);
+        float nameplateTop = PortraitAncientMath.NameplateTop(state.Canvas.Y, state.SafeInset);
         float optionsHeight = metrics.TotalHeight(Enumerable.Repeat(metrics.RowHeight, Math.Max(optionCount, 0)).ToArray());
         bool compact = state.Canvas.Y <= state.Canvas.X * (16f / 9f) + 1f;
         float focus = PortraitAncientMath.FocusX(AncientBackgroundScene(layout));
@@ -273,7 +290,10 @@ internal sealed partial class PortraitBetweenLayout
         container.AnchorRight = 0f;
         container.AnchorBottom = 0f;
         container.Position = new Vector2(state.ContainerLeft, state.ContentTop);
-        container.Size = new Vector2(state.ContainerWidth, state.DialogueHeight);
+        // The game grows the box to its reward height only for the last dialogue line; a rebuilt page asks again.
+        bool lastLine = layout.GetType().GetProperty("IsDialogueOnLastLine", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(layout) is true;
+        container.Size = new Vector2(state.ContainerWidth, lastLine ? state.RewardHeight : state.DialogueHeight);
         if (container.GetNodeOrNull<Control>("Content") is { } content)
         {
             Capture(content, captureVisible: false);
@@ -505,12 +525,29 @@ internal sealed partial class PortraitBetweenLayout
         if (GodotObject.InstanceFromId(state.EpithetId) is not Control epithet || !GodotObject.IsInstanceValid(epithet)) return;
         if (GodotObject.InstanceFromId(state.BannerId) is not Control banner || !GodotObject.IsInstanceValid(banner)) return;
         Capture(epithet, captureVisible: true);
-        epithet.PivotOffset = new Vector2(0f, epithet.Size.Y);
+        Capture(title, captureVisible: false);
+        // The native epithet is a full-screen label; scaled about its bottom edge its rect would reach far above the screen.
+        // Give it the size of the text it actually draws (plus the title's room above) and scale that.
+        Vector2 textSize = epithet.GetCombinedMinimumSize();
+        float titleHeight = title.GetContentHeight();
+        const float titleGap = 32f;
+        float height = MathF.Max(60f, titleHeight + titleGap + MathF.Max(textSize.Y, 22f) + 8f);
+        float width = Math.Clamp(MathF.Max(80f, textSize.X + 8f), 80f, 760f);
+        float left = epithet.Position.X;
+        epithet.AnchorLeft = 0f;
+        epithet.AnchorTop = 0f;
+        epithet.AnchorRight = 0f;
+        epithet.AnchorBottom = 0f;
+        epithet.Size = new Vector2(width, height);
+        epithet.Position = new Vector2(left,
+            PortraitAncientMath.EpithetLocalY(state.Canvas.Y, state.SafeInset, banner.GlobalPosition.Y, height));
+        epithet.PivotOffset = new Vector2(0f, height);
         epithet.Scale = new Vector2(PortraitAncientMath.EpithetScale, PortraitAncientMath.EpithetScale);
-        epithet.Position = new Vector2(
-            epithet.Position.X, PortraitAncientMath.EpithetLocalY(state.Canvas.Y, banner.GlobalPosition.Y, epithet.Size.Y));
+        // Narrow the native 42 unit title gap in portrait so the enlarged pair clears the reward rows.
+        title.OffsetTop = -titleGap;
+        title.OffsetBottom = -titleGap;
         state.NameplateSettled = true;
-        GD.Print($"Portrait ancient: nameplate settled at {epithet.GlobalPosition.Y + epithet.Size.Y:F0} of {state.Canvas.Y:F0}.");
+        GD.Print($"Portrait ancient: nameplate settled, footer {PortraitAncientMath.NameplateFooter(state.Canvas.Y, state.SafeInset):F0} of {state.Canvas.Y:F0}.");
     }
 
     // ---- reward row internals -------------------------------------------------------------------------------------------
@@ -594,13 +631,31 @@ internal sealed partial class PortraitBetweenLayout
         if (text.AutowrapMode != mode) text.AutowrapMode = mode;
     }
 
-    /// <summary>The native formatter emits bare [img] tags; rewrite the energy sprites once per label for the larger text.</summary>
+    /// <summary>
+    /// The native formatter emits bare [img] tags; rewrite the energy sprites for the larger text. The native option labels
+    /// fill their text in as they become ready, so this is retried per page and is a no-op once the tags carry a size.
+    /// </summary>
     private void RewriteAncientEnergyIcons(Control label)
     {
         if (label is not RichTextLabel text) return;
-        if (!_ancientIconTexts.Add(label.GetInstanceId())) return;
-        string rewritten = PortraitAncientMath.RewriteEnergyIcons(text.Text, PortraitAncientMath.FontSize);
-        if (rewritten != text.Text) text.Text = rewritten;
+        string current = text.Text;
+        if (!current.Contains("_energy_icon.png", StringComparison.Ordinal)) return;
+        string rewritten = PortraitAncientMath.RewriteEnergyIcons(current, PortraitAncientMath.FontSize);
+        if (rewritten != current) text.Text = rewritten;
+    }
+
+    /// <summary>Rewrites every reward row's and dialogue bubble's text on the open page.</summary>
+    private void RewriteAncientPageIcons(AncientState state)
+    {
+        if (state.ContainerId == 0 || GodotObject.InstanceFromId(state.ContainerId) is not Control container) return;
+        if (container.GetNodeOrNull<Control>("%OptionsContainer") is { } options)
+            foreach (Node child in options.GetChildren())
+                if (child is Control option && option.GetNodeOrNull<RichTextLabel>("%Text") is { } text)
+                    RewriteAncientEnergyIcons(text);
+        if (container.GetNodeOrNull<Control>("%DialogueContainer") is { } dialogue)
+            foreach (Node child in dialogue.GetChildren())
+                if (child is Control line && line.GetNodeOrNull<RichTextLabel>("DialogueContainer/TextContainer/Text") is { } text)
+                    RewriteAncientEnergyIcons(text);
     }
 
     private void ForwardAncientLineRelease(Control line)
@@ -685,7 +740,6 @@ internal sealed partial class PortraitBetweenLayout
         }
         _ancientStates.Clear();
         _ancientPivots.Clear();
-        _ancientIconTexts.Clear();
         foreach ((ulong id, Callable callable) in _ancientLineForwards)
             if (GodotObject.InstanceFromId(id) is Node line && GodotObject.IsInstanceValid(line) && line.IsConnected("Released", callable))
                 line.Disconnect("Released", callable);
@@ -712,7 +766,6 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _ancientAutoSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _ancientAutoSizes.Remove(id);
         foreach (ulong id in _ancientAutowraps.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _ancientAutowraps.Remove(id);
         foreach (ulong id in _ancientMouseFilters.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _ancientMouseFilters.Remove(id);
-        _ancientIconTexts.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _ancientPivots.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
     }
 

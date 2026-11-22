@@ -30,7 +30,7 @@ public class PortraitAncientMathTests
     [Fact]
     public void TallArtStopsAboveTheRewardRowsAndCoversTheCanvasWidth()
     {
-        float nameplateTop = PortraitAncientMath.NameplateTop(TallCanvas);
+        float nameplateTop = PortraitAncientMath.NameplateTop(TallCanvas, 162f);
         AncientArtFrame frame = PortraitAncientMath.FrameArt(
             canvasWidth: 1080f, canvasHeight: TallCanvas, artTop: ArtTop, nameplateTop: nameplateTop,
             optionsHeight: Rows(3), lineReserve: PortraitAncientMath.DialogueLineReserve, compact: false, focusX: 995f);
@@ -54,7 +54,7 @@ public class PortraitAncientMathTests
     {
         AncientArtFrame frame = PortraitAncientMath.FrameArt(
             canvasWidth: 1080f, canvasHeight: CompactCanvas, artTop: ArtTop,
-            nameplateTop: PortraitAncientMath.NameplateTop(CompactCanvas), optionsHeight: Rows(3),
+            nameplateTop: PortraitAncientMath.NameplateTop(CompactCanvas, 162f), optionsHeight: Rows(3),
             lineReserve: PortraitAncientMath.DialogueLineReserve, compact: true, focusX: 995f);
 
         Assert.InRange(frame.OptionTop - frame.ClipBottom, -24f, 0f);
@@ -71,7 +71,7 @@ public class PortraitAncientMathTests
     [InlineData(4)]
     public void MoreRewardRowsRaiseTheCameraAndKeepTheArtAboveThem(int count)
     {
-        float nameplateTop = PortraitAncientMath.NameplateTop(TallCanvas);
+        float nameplateTop = PortraitAncientMath.NameplateTop(TallCanvas, 162f);
         AncientArtFrame two = PortraitAncientMath.FrameArt(
             1080f, TallCanvas, ArtTop, nameplateTop, Rows(2), PortraitAncientMath.DialogueLineReserve, false, 995f);
         AncientArtFrame frame = PortraitAncientMath.FrameArt(
@@ -80,13 +80,13 @@ public class PortraitAncientMathTests
         Assert.True(frame.CameraBottom <= two.CameraBottom);
         Assert.True(frame.ClipBottom <= two.ClipBottom);
         Assert.InRange(frame.OptionTop - frame.ClipBottom, 0f, 250f);
-        Assert.True(frame.OptionTop >= PortraitAncientMath.NameplateTop(TallCanvas) - Rows(4) - 10f - 1f);
+        Assert.True(frame.OptionTop >= PortraitAncientMath.NameplateTop(TallCanvas, 162f) - Rows(4) - 10f - 1f);
     }
 
     [Fact]
     public void FramingIsStableForTheSameInputs()
     {
-        float nameplateTop = PortraitAncientMath.NameplateTop(TallCanvas);
+        float nameplateTop = PortraitAncientMath.NameplateTop(TallCanvas, 162f);
         AncientArtFrame first = PortraitAncientMath.FrameArt(1080f, TallCanvas, ArtTop, nameplateTop, Rows(3), 80f, false, 1050f);
         AncientArtFrame second = PortraitAncientMath.FrameArt(1080f, TallCanvas, ArtTop, nameplateTop, Rows(3), 80f, false, 1050f);
         Assert.Equal(first, second);
@@ -120,13 +120,13 @@ public class PortraitAncientMathTests
     [Fact]
     public void NameplateSitsInsideTheBottomSafeAreaAndItsReserveClearsTheRewardRows()
     {
-        float footer = PortraitAncientMath.NameplateFooter(TallCanvas);
-        Assert.Equal(2238.48f, footer, 2);
-        Assert.True(PortraitAncientMath.NameplateTop(TallCanvas) < footer);
-        Assert.True(footer - PortraitAncientMath.NameplateTop(TallCanvas) >= 100f);
+        float footer = PortraitAncientMath.NameplateFooter(TallCanvas, 162f);
+        Assert.Equal(2166.48f, footer, 2);
+        Assert.True(PortraitAncientMath.NameplateTop(TallCanvas, 162f) < footer);
+        Assert.True(footer - PortraitAncientMath.NameplateTop(TallCanvas, 162f) >= 100f);
         // The settled epithet's pivot is its own bottom, which is put on the footer line.
-        Assert.Equal(198.48f, PortraitAncientMath.EpithetLocalY(TallCanvas, -300f, TallCanvas), 2);
-        Assert.Equal(footer, PortraitAncientMath.EpithetLocalY(TallCanvas, -300f, 2340f) - 300f + 2340f, 1);
+        Assert.Equal(126.48f, PortraitAncientMath.EpithetLocalY(TallCanvas, 162f, -300f, TallCanvas), 2);
+        Assert.Equal(footer, PortraitAncientMath.EpithetLocalY(TallCanvas, 162f, -300f, 2340f) - 300f + 2340f, 1);
     }
 
     [Fact]

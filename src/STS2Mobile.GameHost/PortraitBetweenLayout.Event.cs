@@ -978,7 +978,9 @@ internal sealed partial class PortraitBetweenLayout
         float y = 0f;
         if (title != null && title.Visible)
         {
-            SetEventFont(title, PortraitEventMath.TitleFont(font), rich: false);
+            // The title keeps the full size while the copy shrinks to fit: it stays the page's heading, and a slot that
+            // has to give up its heading to fit a long passage reads worse than one whose body got smaller.
+            SetEventFont(title, PortraitEventMath.TitleFont(PortraitEventMath.TextFont), rich: false);
             title.Position = new Vector2(0f, y);
             title.Size = new Vector2(width, title.Size.Y);
             float height = title.GetMinimumSize().Y + PortraitEventMath.InkGutter;

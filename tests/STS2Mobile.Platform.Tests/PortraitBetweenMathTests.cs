@@ -80,6 +80,17 @@ public class PortraitBetweenMathTests
         Assert.InRange(PortraitBetweenMath.MapLegendScale, 1.46f, 1.5f);
     }
 
+    [Theory]
+    [InlineData(1080f)]
+    public void MapPaperScaleLeavesTheTornEdgesInsideTheCanvas(float canvasWidth)
+    {
+        float scale = PortraitBetweenMath.MapPaperScale(canvasWidth);
+        float paper = PortraitBetweenMath.MapPaperTextureWidth * scale;
+        Assert.Equal(canvasWidth - 2f * PortraitBetweenMath.MapPaperSideMargin, paper, 2);
+        Assert.Equal(PortraitBetweenMath.MapPaperSideMargin, (canvasWidth - paper) * 0.5f, 2);
+        Assert.True(scale is > 0.85f and < 1f);
+    }
+
     [Fact]
     public void FourRewardCardsFormTwoByTwoGridAroundCentre()
     {

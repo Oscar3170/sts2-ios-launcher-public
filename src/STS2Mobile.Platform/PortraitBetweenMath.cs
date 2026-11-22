@@ -43,6 +43,20 @@ public static class PortraitBetweenMath
     /// </summary>
     public const float MapLegendScale = 2.3f * 1080f / 1680f;
 
+    /// <summary>The act's map art is a 1920-wide sheet; its parchment body measures about 1130 units across.</summary>
+    public const float MapPaperTextureWidth = 1130f;
+
+    /// <summary>How far the parchment's torn side edges should sit inside the portrait canvas.</summary>
+    public const float MapPaperSideMargin = 20f;
+
+    /// <summary>
+    /// Horizontal scale for the map background so the torn-scroll sheet is framed inside the canvas with
+    /// <see cref="MapPaperSideMargin"/> on each side. Only the paper is scaled (the point columns keep their own centring),
+    /// and the vertical scale is left at 1 so the sheet still covers every scroll position.
+    /// </summary>
+    public static float MapPaperScale(float canvasWidth) =>
+        Math.Clamp((canvasWidth - 2f * MapPaperSideMargin) / MapPaperTextureWidth, 0.5f, 1f);
+
     /// <summary>
     /// How far the map container may scroll in portrait so the boss medallion can be brought just under the top bar and the
     /// starting point just above the bottom edge. <paramref name="bossTop"/> and <paramref name="startBottom"/> are in the map
