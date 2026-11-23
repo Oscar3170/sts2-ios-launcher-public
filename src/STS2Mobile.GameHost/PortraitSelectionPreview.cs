@@ -59,6 +59,7 @@ internal sealed class PortraitSelectionPreview
         public Vector2 PairFit;
         public float RowScale;
         public float RowCentreY;
+        public int RowSettle;
     }
 
     /// <summary>A preview or Back button: where the game shows it, how it was grown, and its own move tween.</summary>
@@ -321,12 +322,12 @@ internal sealed class PortraitSelectionPreview
                     ? PortraitPreviewMath.EnchantCenterFraction
                     : PortraitPreviewMath.UpgradeCenterFraction));
         }
-        if (panel.Row != null) FitRow(panel, width, PortraitPreviewMath.PreviewCenterY(
-            state.CapHeight, height, PortraitPreviewMath.RowCenterFraction));
-        if (panel.Row != null && state.Kind == Kind.Select)
+        if (panel.Row != null)
         {
-            // The generic deck select sets its row's pivot and its count-based scale deferred, after its own input: fit once
-            // more after that call, so the first frame it is drawn already carries the portrait fit.
+            FitRow(panel, width, PortraitPreviewMath.PreviewCenterY(
+                state.CapHeight, height, PortraitPreviewMath.RowCenterFraction));
+            // The cards are added in the same call that shows the panel and are placed by their row's deferred sort, so fit
+            // once more after that sort (and after the game's own deferred pivot/scale on the deck select) before the draw.
             Callable.From(() =>
             {
                 if (panel.Shown && GodotObject.IsInstanceValid(panel.Container) && panel.Container.Visible)
@@ -378,6 +379,12 @@ internal sealed class PortraitSelectionPreview
                 panel.Row.PivotOffset != Vector2.Zero || Math.Abs(panel.RowCentreY - centre) > 0.5f ||
                 Math.Abs(panel.Row.Size.X - PortraitPreviewMath.RowLocalWidth(width, count)) > 0.5f)
                 FitRow(panel, width, centre);
+            else if (panel.RowSettle > 0)
+            {
+                // The row's own sort may land after the frame it opened on: keep centring from the cards for a few frames.
+                panel.RowSettle--;
+                CenterRow(panel.Row, width, centre, 0);
+            }
         }
         if (panel.Transform != null)
         {
@@ -455,6 +462,7 @@ internal sealed class PortraitSelectionPreview
         panel.RowCount = count;
         panel.RowScale = row.Scale.X;
         panel.RowCentreY = centerY;
+        panel.RowSettle = 2;
     }
 
     /// <summary>
@@ -467,6 +475,11 @@ internal sealed class PortraitSelectionPreview
     {
         if (CardDefaultSize() is not { } cardSize) return;
         if (!CardUnion(row, cardSize, out Rect2 union)) return;
+        // Only a laid-out row is measurable: the cards a row was just handed still stand where the previous layout left them
+        // until the row's own deferred sort runs, and their drawn width is then the one the fit asks for.
+        float expected = (PortraitPreviewMath.RowCardWidth +
+            PortraitPreviewMath.RowPitch * Math.Max(0, RowCards(row) - 1)) * row.Scale.X;
+        if (Math.Abs(union.Size.X - expected) > 2f) return;
         float room = width - PortraitPreviewMath.RowMargin;
         if (union.Size.X > room + 0.5f)
         {
@@ -479,10 +492,16 @@ internal sealed class PortraitSelectionPreview
         float dx = width * 0.5f - union.GetCenter().X;
         float dy = centerY - union.GetCenter().Y;
         if (Math.Abs(dx) < 0.25f && Math.Abs(dy) < 0.25f) return;
-        Vector2 parentScale = row.GetParent() is Control parent && parent.IsInsideTree()
-            ? parent.GetGlobalTransform().Scale.Abs()
-            : Vector2.One;
-        row.Position += new Vector2(dx / Math.Max(parentScale.X, 0.01f), dy / Math.Max(parentScale.Y, 0.01f));
+        // Move the row by exactly this much on the canvas: convert the new canvas point of its own origin through its
+        // parent's transform, so no assumption about that transform's scale is needed.
+        Vector2 moved = row.GlobalPosition + new Vector2(dx, dy);
+        if (row.GetParent() is Control parent && parent.IsInsideTree())
+            row.Position = parent.GetGlobalTransform().AffineInverse() * moved;
+        else
+            row.Position += new Vector2(dx, dy);
+        if (_logged.Add(row.GetInstanceId()))
+            GD.Print($"Portrait selection preview: {RowCards(row)}-card row {union.Size.X:F0}x{union.Size.Y:F0} at " +
+                     $"({union.GetCenter().X:F0}, {union.GetCenter().Y:F0}) moved {dx:F0},{dy:F0}.");
     }
 
     /// <summary>The cards' drawn rectangle in canvas coordinates, as the harness measures them (a card is centred on its node).</summary>
