@@ -609,7 +609,9 @@ internal sealed partial class PortraitBetweenLayout
         else if (state.Fade == null || !state.Fade.IsValid() || !state.Fade.IsRunning())
         {
             if (window.Position.DistanceSquaredTo(target) > 0.25f) window.Position = target;
-            state.Placed = true;
+            // The place is known after a fade of ours has finished; a layout that ran before the game's entrance still gets
+            // its slide.
+            if (state.Fade != null) state.Placed = true;
         }
 
         // The rows keep one size; their labels read at 15 points. The list is walked only when its rows change.
