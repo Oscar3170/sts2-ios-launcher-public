@@ -65,6 +65,7 @@ internal sealed partial class PortraitBetweenLayout
         public bool Compact;
         public bool Built;
         public bool Framed;
+        public ulong LayoutNode;
         public ulong TextureId;
         public EventChoiceBand Band;
         public EventTextSlot TextSlot;
@@ -441,6 +442,7 @@ internal sealed partial class PortraitBetweenLayout
         RecordEventNode(choices);
 
         state.Built = true;
+        state.LayoutNode = layout.GetInstanceId();
         _eventDrag ??= new PhoneDragScroll();
         if (layout.GetWindow() is { } window) _eventDrag.Attach(window);
         _eventDrag.SetTargets(textScroll, choices, layout);
@@ -526,7 +528,7 @@ internal sealed partial class PortraitBetweenLayout
         if (clip == null || fade == null || slot == null || choices == null) return;
 
         float bandTop = state.Cap + PortraitBands.TopBarHeight;
-        EventChoiceBand band = PortraitEventMath.ChoiceBand(state.Canvas.Y, bandTop, state.Compact, tight: false);
+        EventChoiceBand band = PortraitEventMath.ChoiceBand(state.Canvas.Y, bandTop, state.Compact, state.Tight);
         EventTextSlot textSlot = PortraitEventMath.TextSlot(state.Canvas.Y, bandTop, band.Top);
         state.Band = band;
         state.TextSlot = textSlot;
@@ -658,11 +660,17 @@ internal sealed partial class PortraitBetweenLayout
         {
             state.Tight = false;
             state.Reduced = false;
+            // A new page always starts from the full-row band, so a page that follows a tight one gets the full-row
+            // reserve back.
+            ReframeEventPage(state);
         }
         CollectEventRows(state);
         if (!LayoutEventOptions(state, state.Tight, state.Reduced) && !state.Tight)
         {
             state.Tight = true;
+            // The tight rows are shorter than the band reserved for full rows; recompute the band so the rows still end
+            // at the band bottom and the height they free goes to the illustration, not to an empty strip under them.
+            ReframeEventPage(state);
             LayoutEventOptions(state, tight: true, state.Reduced);
         }
         if (!LayoutEventOptions(state, state.Tight, state.Reduced) && !state.Reduced)
@@ -672,6 +680,17 @@ internal sealed partial class PortraitBetweenLayout
         }
         ApplyEventCopy(state);
         if (newPage) ResetEventScrolls(state);
+    }
+
+    /// <summary>
+    /// Recompute the art frame, the copy slot and the choice band for the current row size, then re-crop the picture to
+    /// the new frame. Called when a page's row size changes, since the band and slot were measured for the other size.
+    /// </summary>
+    private void ReframeEventPage(EventState state)
+    {
+        if (ResolveEventNode(state.LayoutNode) is not Control layout) return;
+        PlaceEventFrames(state, layout);
+        FrameEventArt(state);
     }
 
     private void ResetEventScrolls(EventState state)
