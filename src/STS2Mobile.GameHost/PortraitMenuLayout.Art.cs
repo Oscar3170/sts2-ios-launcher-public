@@ -168,6 +168,9 @@ internal sealed partial class PortraitMenuLayout
         }
         else if (spine != null && ReadBounds(spine) is { } bounds && bounds.Size.X > 1f && bounds.Size.Y > 1f)
         {
+            // Ironclad, Regent and Defect: the figure and scenery share one Spine, and the reference splits them. Frame the
+            // separated figure once its second playback is ready; until then the whole composition covers the screen.
+            if (TryFrameSplitFigure(art, spine, name, viewport, toCanvas)) goto Emitters;
             // One composition (backdrop and figure in the same Spine): cover the screen. A small left bias brings the
             // right-of-centre figure closer to the middle of the narrow screen.
             if (!art.HasMeta(CoverMeta)) art.SetMeta(CoverMeta, bounds);
@@ -186,6 +189,7 @@ internal sealed partial class PortraitMenuLayout
             if (art.HasMeta(FigureFrameMeta)) art.RemoveMeta(FigureFrameMeta);
         }
 
+        Emitters:
         // Dread draws its art in a SubViewport, a canvas of its own: points there are local, not canvas, coordinates.
         bool inSubViewport = art.GetViewport() is SubViewport;
         Vector2 CanvasPoint(Vector2 point) => inSubViewport ? point : toCanvas * point;

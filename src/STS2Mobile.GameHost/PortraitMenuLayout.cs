@@ -186,6 +186,7 @@ internal sealed partial class PortraitMenuLayout
     {
         foreach ((ulong id, ScreenState state) in _screens) state.ResetPortrait();
         RestoreArt();
+        RestoreFigures();
         RestoreFocus();
         PortraitTargetPads.ReleaseAll();
         PortraitMenuText.Release();
