@@ -13,6 +13,8 @@ internal sealed partial class PortraitMenuLayout
     private const float ModeTop = 100f;
     // Space kept under the cards for the mode screen's own title and the back button.
     private const float ModeReserved = 430f;
+    // Room between a right-aligned header icon and the safe edge, so its pad can reach 127 units on both sides.
+    private const float HeaderRightMargin = 32f;
 
     /// <summary>
     /// The singleplayer and multiplayer-host mode cards: the native buttons stay in their own row (their input connections,
@@ -68,7 +70,6 @@ internal sealed partial class PortraitMenuLayout
             }
             state.FocusCount = cards.Count;
         }
-        PortraitMenuText.Apply(screen);
     }
 
     /// <summary>
@@ -97,14 +98,14 @@ internal sealed partial class PortraitMenuLayout
 
             Place(card.GetNodeOrNull<Control>("BgPanel"), 11f, 0f, 340f, ModeCardHeight);
             Place(card.GetNodeOrNull<Control>("Title"), 28f, 30f, 306f, 61f);
-            // The mode art gives up height so the description has room for 11 point text: 184 x 140 keeps the
-            // native portrait aspect and the card does not grow.
-            Place(card.GetNodeOrNull<Control>("SubmenuPortrait"), 89f, 104f, 184f, 140f);
+            // The reference card's own interior, scaled with the card: the art, its frame, the title and the description
+            // keep their native proportions, so nothing spills out of the card and the rows need no extra gap.
+            Place(card.GetNodeOrNull<Control>("SubmenuPortrait"), 42f, 108f, 252f, 192f);
             if (card.GetNodeOrNull<RichTextLabel>("Description") is { } description)
             {
                 if (description.AutowrapMode != TextServer.AutowrapMode.WordSmart)
                     description.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-                Place(description, 43f, 258f, 276f, ModeCardHeight - 266f);
+                Place(description, 43f, 331f, 276f, ModeCardHeight - 381f);
             }
         }
     }
@@ -131,8 +132,10 @@ internal sealed partial class PortraitMenuLayout
         Vector2 safeTop = xf * new Vector2(0f, safe.Position.Y);
         float safeRight = (xf * new Vector2(safe.Size.X, 0f)).X;
         Rect2 rect = control.GetGlobalRect();
+        // A right-aligned icon keeps a wide inset: its touch pad has to grow towards the edge, and at 8 units the edge
+        // capped the pad before the target reached 127. The centred title cannot be reached from here.
         Vector2 target = right
-            ? new Vector2(safeRight - rect.Size.X - 8f, safeTop.Y + 8f)
+            ? new Vector2(safeRight - rect.Size.X - HeaderRightMargin, safeTop.Y + 8f)
             : new Vector2(8f, safeTop.Y + 8f);
         Vector2 delta = target - rect.Position;
         if (delta.LengthSquared() > 0.5f) control.GlobalPosition += delta;

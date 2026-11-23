@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using Godot;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
@@ -21,6 +22,9 @@ internal sealed class PortraitNavigationPads
     private const string EnabledField = "_isEnabled";
     private const string MoveTweenField = "_moveTween";
     private const string PosOffsetField = "_posOffset";
+    private const string HoverTweenField = "_hoverTween";
+    /// <summary>The reference Back drawn 1.8 times its 1680 canvas size on the 1080 canvas: 230 units across.</summary>
+    private const float DrawnWidth = 230f;
     private const float HideOffsetX = -180f;
     private const float FooterBottomMargin = 8f;
     private const BindingFlags AnyField = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
@@ -31,18 +35,55 @@ internal sealed class PortraitNavigationPads
     private readonly HashSet<ulong> _loggedInput = new();
     private readonly Dictionary<ulong, Vector2> _paddedAt = new();
     private readonly List<ulong> _dead = new();
-    private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _originalPositions = new();
+    private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide, Vector2 Pivot, Vector2 Scale)> _originalPositions = new();
+    private readonly Dictionary<ulong, float> _backScales = new();
+    private readonly HashSet<ulong> _hoveredBacks = new();
+    private readonly HashSet<ulong> _hoverWired = new();
     private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _placedTargets = new();
     private static Type? _backType;
-    private static FieldInfo? _showPos, _hidePos, _enabled, _moveTween, _posOffset;
+    private static FieldInfo? _showPos, _hidePos, _enabled, _moveTween, _posOffset, _hoverTween;
 
     public static bool Handles(string? typeName) => typeName == BackTypeName || typeName == ArrowTypeName;
+
+    public void Attach() => RenderingServer.FramePreDraw += OnPreDraw;
+
+    public void Detach() => RenderingServer.FramePreDraw -= OnPreDraw;
+
+    /// <summary>
+    /// The Back is drawn larger than its native rect: the game owns Scale for the hover/press animation (and resets it to one
+    /// on every enable), so the reference size is applied after the game's tweens and before the draw, re-based onto whatever
+    /// hover factor the game's own hover tween left for this frame.
+    /// </summary>
+    private void OnPreDraw()
+    {
+        if (!SafeAreaCanvas.IsPortrait) return;
+        foreach ((ulong id, float scale) in _backScales)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+            if (!control.IsVisibleInTree()) continue;
+            float factor = 1f;
+            if (_hoverTween?.GetValue(control) is Tween hover && hover.IsValid() && hover.IsRunning())
+                factor = Math.Clamp(control.Scale.X, 1f, 1.05f);
+            else if (_hoveredBacks.Contains(id)) factor = 1.05f;
+            var target = new Vector2(scale * factor, scale * factor);
+            if (!control.Scale.IsEqualApprox(target)) control.Scale = target;
+            var pivot = new Vector2(0f, control.Size.Y);
+            if (!control.PivotOffset.IsEqualApprox(pivot)) control.PivotOffset = pivot;
+        }
+    }
 
     public void Track(Control control)
     {
         ulong id = control.GetInstanceId();
         if (!_tracked.Add(id)) return;
-        if (!InputLog || !IsBack(control) || !_loggedInput.Add(id)) return;
+        if (!IsBack(control)) return;
+        if (_hoverWired.Add(id))
+        {
+            // The game's hover tween writes absolute 1/1.05 scale values; the pre-draw pass needs to know the hover state.
+            control.Connect("Focused", Callable.From<NClickableControl>(_ => { if (SafeAreaCanvas.IsPortrait) _hoveredBacks.Add(id); }));
+            control.Connect("Unfocused", Callable.From<NClickableControl>(_ => _hoveredBacks.Remove(id)));
+        }
+        if (!InputLog || !_loggedInput.Add(id)) return;
         // Gated one-line trace (STS2_PORTRAIT_BACK_LOG=1): which Back received a press/release, where it is, and what the
         // engine says is under the pointer, so a lost tap can be attributed to the press or to the hit test.
         control.Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(input => NoteBackInput(control, input)));
@@ -105,12 +146,16 @@ internal sealed class PortraitNavigationPads
             PhoneHitArea.Remove(control);
             if (_moveTween?.GetValue(control) is Tween tween && tween.IsValid()) tween.Kill();
             _moveTween?.SetValue(control, null);
-            if (_originalPositions.TryGetValue(id, out (Vector2 Show, Vector2 Hide) original)) RestoreBack(control, original);
+            if (_originalPositions.TryGetValue(id, out (Vector2 Show, Vector2 Hide, Vector2 Pivot, Vector2 Scale) original))
+                RestoreBack(control, original);
         }
         _tracked.Clear();
         _paddedAt.Clear();
         _originalPositions.Clear();
         _placedTargets.Clear();
+        _backScales.Clear();
+        _hoveredBacks.Clear();
+        _hoverWired.Clear();
     }
 
     /// <summary>Whether this is a back button (they are the only buttons that cache a slide position).</summary>
@@ -126,24 +171,30 @@ internal sealed class PortraitNavigationPads
     private void PlaceBack(Control control)
     {
         if (!EnsureBackFields(control.GetType()) || _showPos is null) return;
-        Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
-        if (scale.X < 0.01f || scale.Y < 0.01f) return;
+        Vector2 parentScale = control.GetParent() is Control parent ? parent.GetGlobalTransform().Scale.Abs() : Vector2.One;
+        if (parentScale.X < 0.01f || parentScale.Y < 0.01f) return;
         Rect2 canvas = control.GetViewport().GetVisibleRect();
-        float sizeY = control.Size.Y * scale.Y;
+        // The reference Back is 1.8 times the game's 1680 canvas size: 230 units across on the 1080 canvas, whatever the
+        // screen's own scale. The button's own Scale is ours (the game's hover tween is re-based in OnPreDraw).
+        float scale = DrawnWidth / (control.Size.X * parentScale.X);
+        _backScales[control.GetInstanceId()] = scale;
+        // Set it now too, so this frame's pad measurement sees the drawn size; OnPreDraw re-bases the hover factor after the
+        // game's own scale tweens have run.
+        control.PivotOffset = new Vector2(0f, control.Size.Y);
+        if (!control.Scale.IsEqualApprox(new Vector2(scale, scale))) control.Scale = new Vector2(scale, scale);
         Vector2 offset = _posOffset?.GetValue(control) is Vector2 value ? value : new Vector2(40f, 354f);
-        // The native footer gap below the screen's bottom edge (the button's own bottom before the screen edge).
-        float gap = Math.Max(0f, offset.Y - control.Size.Y) * scale.Y;
-        // The native back is anchored to ContentScaleSize.Y, the canvas bottom, not to its screen's own rect.
+        // The native footer gap below the canvas bottom (the button's own bottom before the screen edge), mapped to the canvas.
+        float gap = Math.Max(0f, offset.Y - control.Size.Y) * parentScale.Y;
         float bottom = Math.Min(canvas.End.Y - FooterBottomMargin, canvas.End.Y - gap);
-        float top = Math.Max(canvas.Position.Y, bottom - sizeY);
-        var show = new Vector2(canvas.Position.X, top);
-        var hide = show + new Vector2(HideOffsetX * scale.X, 0f);
+        var show = new Vector2(canvas.Position.X, bottom);
+        // The slide is one scaled button width plus the native 80: -180 local units, in canvas space.
+        var hide = show + new Vector2(HideOffsetX * scale * parentScale.X, 0f);
         ulong id = control.GetInstanceId();
         if (!_originalPositions.ContainsKey(id))
         {
             var currentShow = (Vector2)_showPos.GetValue(control)!;
             var currentHide = _hidePos is null ? currentShow : (Vector2)_hidePos.GetValue(control)!;
-            _originalPositions[id] = (currentShow, currentHide);
+            _originalPositions[id] = (currentShow, currentHide, control.PivotOffset, control.Scale);
         }
         bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed)
             || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
@@ -176,11 +227,13 @@ internal sealed class PortraitNavigationPads
         if (control.GlobalPosition.DistanceTo(target) > 0.5f) control.GlobalPosition = target;
     }
 
-    private static void RestoreBack(Control control, (Vector2 Show, Vector2 Hide) original)
+    private static void RestoreBack(Control control, (Vector2 Show, Vector2 Hide, Vector2 Pivot, Vector2 Scale) original)
     {
         if (!EnsureBackFields(control.GetType())) return;
         _showPos?.SetValue(control, original.Show);
         _hidePos?.SetValue(control, original.Hide);
+        control.PivotOffset = original.Pivot;
+        control.Scale = original.Scale;
     }
 
     private static bool EnsureBackFields(Type type)
@@ -192,6 +245,7 @@ internal sealed class PortraitNavigationPads
         _enabled = type.GetField(EnabledField, AnyField);
         _moveTween = type.GetField(MoveTweenField, AnyField);
         _posOffset = type.GetField(PosOffsetField, AnyField);
+        _hoverTween = type.GetField(HoverTweenField, AnyField);
         return _showPos is not null;
     }
 
@@ -205,5 +259,9 @@ internal sealed class PortraitNavigationPads
         foreach (ulong id in new List<ulong>(_placedTargets.Keys))
             if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _placedTargets.Remove(id);
         _loggedInput.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        _hoveredBacks.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        _hoverWired.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in new List<ulong>(_backScales.Keys))
+            if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _backScales.Remove(id);
     }
 }

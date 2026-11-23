@@ -123,6 +123,7 @@ internal sealed class PortraitLayout
         tree.ProcessFrame += OnProcessFrame;
         RenderingServer.FramePreDraw += OnHeaderPreDraw;
         _headerSwipe.Attach(tree);
+        _navPads.Attach();
         _settings.Attach(tree);
         PortraitCombatLayout.SetFlatHandListener(ApplyImmediate);
         QueueApply();
@@ -135,6 +136,7 @@ internal sealed class PortraitLayout
         _combat.Detach();
         RenderingServer.FramePreDraw -= OnHeaderPreDraw;
         _headerSwipe.Detach();
+        _navPads.Detach();
         _settings.Detach();
         _tree.Root.SizeChanged -= OnRootSizeChanged;
         _tree.NodeAdded -= OnNodeAdded;
