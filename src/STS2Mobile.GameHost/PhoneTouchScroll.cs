@@ -45,6 +45,12 @@ internal sealed class PhoneTouchScroll
     /// <summary>The loot list's own top resting position, as the game sets it (<c>_targetDragPos</c> starts at 35).</summary>
     private const float LootTopRest = 35f;
 
+    /// <summary>How long a finished swipe's scroll is held on the view's own limits, while its last row allocates.</summary>
+    private const ulong SettleMs = 600;
+
+    /// <summary>A correction this small (about 3 points) is applied exactly; a bigger one is left to the game's lerp.</summary>
+    private const float SnapDistance = 8f;
+
     /// <summary>How many touches became a scroll since launch (for the proof runs).</summary>
     public static int ScrollsStarted { get; private set; }
 
@@ -70,6 +76,8 @@ internal sealed class PhoneTouchScroll
     private bool _screenSwiped;
     private ulong _view;
     private ulong _screen;
+    private ulong _settleView;
+    private ulong _settleUntil;
     private Vector2 _start;
 
     public PhoneTouchScroll()
@@ -116,6 +124,7 @@ internal sealed class PhoneTouchScroll
         _tree = tree;
         tree.NodeAdded += OnNodeAdded;
         tree.Root.WindowInput += OnWindowInput;
+        tree.ProcessFrame += OnProcessFrame;
     }
 
     public void Detach()
@@ -125,7 +134,38 @@ internal sealed class PhoneTouchScroll
             _tree.NodeAdded -= OnNodeAdded;
             _tree.Root.WindowInput -= OnWindowInput;
         }
+        if (_tree != null && GodotObject.IsInstanceValid(_tree)) _tree.ProcessFrame -= OnProcessFrame;
         _tree = null;
+        _settleView = 0;
+    }
+
+    /// <summary>
+    /// Holds a finished swipe's scroll on the view's own limits for a moment. The grid's content grows and its limit moves as
+    /// the last row is allocated while the list settles, so a value clamped once at the finger's lift can be a few units
+    /// outside the limit a few frames later; the game's own bounce is an asymptotic lerp that would take a second to follow.
+    /// Nothing runs between swipes: this clears itself, and a new press clears it at once.
+    /// </summary>
+    private void OnProcessFrame()
+    {
+        if (_settleView == 0) return;
+        if (Time.GetTicksMsec() >= _settleUntil || GodotObject.InstanceFromId(_settleView) is not Control view ||
+            !GodotObject.IsInstanceValid(view) || !view.IsInsideTree())
+        {
+            _settleView = 0;
+            return;
+        }
+        try
+        {
+            // No finger is down: a drag flag still set on the view (the game's own press, whose release went to the card
+            // under the finger) would keep its bounce off for good.
+            if (Dragging(view)) SetDragging(view, false);
+            ClampTarget(view, exact: true);
+        }
+        catch (Exception error)
+        {
+            _settleView = 0;
+            GD.PrintErr("Phone touch scroll: the scroll could not be settled: ", error.Message);
+        }
     }
 
     private void OnNodeAdded(Node node)
@@ -260,13 +300,22 @@ internal sealed class PhoneTouchScroll
         return view;
     }
 
-    /// <summary>The touch is over: the view springs back inside its ends, as after the game's own drag.</summary>
+    /// <summary>
+    /// The touch is over: the view springs back inside its ends, as after the game's own drag, and its scroll is held on its
+    /// limits for <see cref="SettleMs"/> while the grid allocates its last row and its limit moves.
+    /// </summary>
     private void End()
     {
         if (_scrolling && GodotObject.InstanceFromId(_view) is Control view && GodotObject.IsInstanceValid(view))
         {
-            ClampTarget(view);
+            ClampTarget(view, exact: true);
             SetDragging(view, false);
+            _settleView = _view;
+            _settleUntil = Time.GetTicksMsec() + SettleMs;
+        }
+        else
+        {
+            _settleView = 0;
         }
         _down = false;
         _scrolling = false;
@@ -337,27 +386,36 @@ internal sealed class PhoneTouchScroll
     }
 
     /// <summary>
-    /// Puts the view's scroll target back inside its own limits when the finger lifts. The game settles an overscrolled drag
-    /// by an asymptotic lerp, which stops a unit or two short of the end, so a swipe to the first or last row could leave it
-    /// a few units off the edge for good. A grid's limits are its own (<c>ScrollLimitTop</c> / <c>ScrollLimitBottom</c>, the
-    /// pair its bounce settles between); a list's are its scrollbar's range.
+    /// Puts the view's scroll back inside its own limits. The game settles an overscrolled drag by an asymptotic lerp and a
+    /// grid's limit moves as its last row is allocated, so a swipe to the first or last row left the content a few units off
+    /// the edge for good. A grid's limits are its own (<c>ScrollLimitTop</c> / <c>ScrollLimitBottom</c>, the pair its bounce
+    /// settles between); a list's are its scrollbar's range. A small correction (the limit having moved by a few units, which
+    /// a tap cannot see) is applied through the game's own exact call (<c>SetScrollPosition</c>, the one <c>InitGrid</c>
+    /// makes) so the landing is where the limit is; a big one stays a target for the game's lerp, so an overscrolled drag
+    /// still springs back smoothly. Returns whether anything had to be moved.
     /// </summary>
-    private void ClampTarget(Control view)
+    private bool ClampTarget(Control view, bool exact)
     {
         if (IsGrid(view))
         {
-            if (_gridTarget?.GetValue(view) is not float target) return;
+            if (_gridTarget?.GetValue(view) is not float target) return false;
             float top = _gridLimitTop?.GetValue(view) is float a ? a : 0f;
             float bottom = _gridLimitBottom?.GetValue(view) is float b ? b : 0f;
             float clamped = Math.Clamp(target, MathF.Min(top, bottom), MathF.Max(top, bottom));
-            if (clamped != target) _gridTarget.SetValue(view, clamped);
-            return;
+            if (clamped == target) return false;
+            _gridTarget.SetValue(view, clamped);
+            if (exact && MathF.Abs(clamped - target) <= SnapDistance)
+                view.Call("SetScrollPosition", clamped);
+            return true;
         }
-        if (_listTarget?.GetValue(view) is not float y || view is not ScrollContainer list) return;
+        if (_listTarget?.GetValue(view) is not float y || view is not ScrollContainer list) return false;
         ScrollBar bar = list.GetVScrollBar();
         float limit = MathF.Max(0f, (float)(bar.MaxValue - bar.Page));
         float inside = Math.Clamp(y, 0f, limit);
-        if (inside != y) _listTarget.SetValue(view, inside);
+        if (inside == y) return false;
+        _listTarget.SetValue(view, inside);
+        if (exact && MathF.Abs(inside - y) <= SnapDistance) list.ScrollVertical = (int)MathF.Round(inside);
+        return true;
     }
 
     /// <summary>The control under the finger is the view or inside it: no other screen covers the view there.</summary>

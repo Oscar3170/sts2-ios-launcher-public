@@ -332,14 +332,23 @@ internal sealed partial class PortraitBetweenLayout
     private static void RelayoutGrid(Control grid)
     {
         ResolveGridReflection();
-        try
+        if (_initGridMethod != null)
         {
-            _initGridMethod?.Invoke(grid, null);
+            try
+            {
+                _initGridMethod.Invoke(grid, null);
+                return;
+            }
+            catch (Exception error)
+            {
+                GD.PrintErr("Portrait between layout: the card grid could not lay itself out: ", error.Message);
+            }
         }
-        catch (Exception error)
-        {
-            GD.PrintErr("Portrait between layout: the card grid could not lay itself out: ", error.Message);
-        }
+        // No way in this frame: ask the grid to lay itself out on its next one, as its own resize notification does.
+        if (_needsReinitField == null)
+            GD.PrintErr("Portrait between layout: the card grid's layout method was not found; cards keep the game's size.");
+        else
+            _needsReinitField.SetValue(grid, true);
     }
 
     /// <summary>
@@ -574,22 +583,37 @@ internal sealed partial class PortraitBetweenLayout
         return PortraitGridScreen.DeckSelect;
     }
 
-    /// <summary>Resolves the grid's private card size, its layout method and the holders' fields once.</summary>
+    /// <summary>
+    /// Resolves the grid's private members once. Each member is resolved on its own and a failure is reported, never left
+    /// half-done: NCardGrid has two InitGrid methods (the protected parameterless one the grid's _Process calls, and a
+    /// private one that takes a Task), so the parameterless overload has to be asked for by its empty signature.
+    /// </summary>
     private static void ResolveGridReflection()
     {
-        if (_cardGridType != null) return;
+        if (_cardSizeField != null && _initGridMethod != null && _gridHolderType != null) return;
         Assembly game = typeof(NGame).Assembly;
-        _cardGridType = game.GetType(CardGridTypeName);
-        Type? type = _cardGridType;
-        if (type == null) return;
-        _cardSizeField = type.GetField("_cardSize", BindingFlags.Instance | BindingFlags.NonPublic);
-        _needsReinitField = type.GetField("_needsReinit", BindingFlags.Instance | BindingFlags.NonPublic);
-        _yOffsetProperty = type.GetProperty("YOffset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        for (Type? level = type; level != null && _initGridMethod == null; level = level.BaseType)
-            _initGridMethod = level.GetMethod("InitGrid", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
-        _gridHolderType = game.GetType(GridHolderTypeName);
+        Type? type = _cardGridType ??= game.GetType(CardGridTypeName);
+        if (type != null)
+        {
+            _cardSizeField ??= type.GetField("_cardSize", BindingFlags.Instance | BindingFlags.NonPublic);
+            _needsReinitField ??= type.GetField("_needsReinit", BindingFlags.Instance | BindingFlags.NonPublic);
+            _yOffsetProperty ??= type.GetProperty("YOffset", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            for (Type? level = type; level != null && _initGridMethod == null; level = level.BaseType)
+            {
+                try
+                {
+                    _initGridMethod = level.GetMethod("InitGrid",
+                        BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly, null, Type.EmptyTypes, null);
+                }
+                catch (AmbiguousMatchException)
+                {
+                    // An overload set without a filter: nothing below can be trusted, so wait for the next pass.
+                }
+            }
+        }
+        _gridHolderType ??= game.GetType(GridHolderTypeName);
         if (_gridHolderType == null) return;
-        _hoverTweenField = FindField(_gridHolderType, "_hoverTween");
+        _hoverTweenField ??= FindField(_gridHolderType, "_hoverTween");
         // NCardHolder.smallScale: the scale the game gives a grid card (0.8 at every size it ships).
         for (Type? level = _gridHolderType; level != null && level != typeof(object); level = level.BaseType)
         {
