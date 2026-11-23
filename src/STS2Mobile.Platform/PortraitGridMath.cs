@@ -117,6 +117,16 @@ public static class PortraitGridMath
     /// </summary>
     public const float ColumnSlack = 1f;
 
+    /// <summary>
+    /// The band the grid starts from: the top bar's bottom, or below the relic rows when the strip reaches lower (the deck and
+    /// every selection screen keep the run's relics on screen; a relic holder over a sort button or a card is not acceptable).
+    /// </summary>
+    public static float HeaderBottom(float topBarBottom, float lowestRelicBottom) =>
+        lowestRelicBottom > 0.01f ? Math.Max(topBarBottom, lowestRelicBottom + RelicGap) : topBarBottom;
+
+    /// <summary>The gap between the lowest visible relic holder and the grid's header band (the reference layout's 16).</summary>
+    public const float RelicGap = 16f;
+
     /// <summary>The cards' scrolling width: the canvas less the grid's own side margins.</summary>
     public static float ScrollWidth(float canvasWidth) => Math.Max(0f, canvasWidth - 2f * SideInset);
 

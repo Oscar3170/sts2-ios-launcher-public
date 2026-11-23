@@ -56,6 +56,7 @@ internal sealed class PortraitSelectionPreview
         public int RowCount = -1;
         public Vector2 PairFit;
         public float RowScale;
+        public float RowCentreY;
     }
 
     /// <summary>A preview or Back button: where the game shows it, how it was grown, and its own move tween.</summary>
@@ -203,6 +204,14 @@ internal sealed class PortraitSelectionPreview
     private static Control? ConfirmOf(Control screen) =>
         screen.GetNodeOrNull<Control>("%Confirm") ?? screen.GetNodeOrNull<Control>("Confirm");
 
+    /// <summary>
+    /// A preview panel's button: "Confirm"/"Cancel" in the upgrade, enchant and transform panels, and the deck select's
+    /// scene-unique "%PreviewConfirm"/"%PreviewCancel".
+    /// </summary>
+    private static Control? PreviewButton(Control container, string name, string uniqueName) =>
+        container.GetNodeOrNull<Control>(name) ?? container.GetNodeOrNull<Control>("%" + uniqueName) ??
+        container.GetNodeOrNull<Control>(uniqueName);
+
     private void AddPanel(ScreenState state, string containerName, string? pairName, string? rowName, string? transformName = null)
     {
         if (state.Screen.GetNodeOrNull<Control>(containerName) is not { } container) return;
@@ -216,8 +225,8 @@ internal sealed class PortraitSelectionPreview
         }
         if (rowName != null) panel.Row = container.GetNodeOrNull<Control>(rowName);
         if (transformName != null) panel.Transform = container.GetNodeOrNull<Control>(transformName);
-        panel.Confirm = TrackButton(container.GetNodeOrNull<Control>("Confirm"));
-        panel.Cancel = TrackButton(container.GetNodeOrNull<Control>("Cancel"));
+        panel.Confirm = TrackButton(PreviewButton(container, "Confirm", "PreviewConfirm"));
+        panel.Cancel = TrackButton(PreviewButton(container, "Cancel", "PreviewCancel"));
         state.Panels.Add(panel);
     }
 
@@ -362,7 +371,7 @@ internal sealed class PortraitSelectionPreview
             int count = RowCards(panel.Row);
             float centre = PortraitPreviewMath.PreviewCenterY(state.CapHeight, height, PortraitPreviewMath.RowCenterFraction);
             if (count != panel.RowCount || Math.Abs(panel.Row.Scale.X - panel.RowScale) > 0.0005f ||
-                panel.Row.PivotOffset != Vector2.Zero ||
+                panel.Row.PivotOffset != Vector2.Zero || Math.Abs(panel.RowCentreY - centre) > 0.5f ||
                 Math.Abs(panel.Row.Size.X - PortraitPreviewMath.RowLocalWidth(width, count)) > 0.5f)
                 FitRow(panel, width, centre);
         }
@@ -434,11 +443,67 @@ internal sealed class PortraitSelectionPreview
         if (count <= 0) return;
         PreviewRowFit fit = PortraitPreviewMath.PreviewRow(width, count, centerY);
         Capture(row);
-        PlaceTopLeft(row, ToLocal(row, new Vector2(fit.FirstCenterX, centerY)), fit.Scale, fit.LocalWidth);
+        PlaceTopLeft(row, ToLocal(row, new Vector2(PortraitPreviewMath.RowLeft(width, count), centerY)),
+            fit.Scale, fit.LocalWidth);
         if (row.GetThemeConstant("separation") != (int)PortraitPreviewMath.RowSeparation)
             row.AddThemeConstantOverride("separation", (int)PortraitPreviewMath.RowSeparation);
+        CenterRow(row, width, centerY, 0);
         panel.RowCount = count;
-        panel.RowScale = fit.Scale;
+        panel.RowScale = row.Scale.X;
+        panel.RowCentreY = centerY;
+    }
+
+    /// <summary>
+    /// Centres a preview row from the cards it actually draws: the game's rows place their holders around their own rect
+    /// (a container that centres its children, and a preview container whose origin is not the canvas origin), so the
+    /// fitted row is measured and moved so the cards' union is the canvas middle. A union wider than the design margin is
+    /// scaled down and measured again; both are one-shot per open (or count change), never per frame.
+    /// </summary>
+    private void CenterRow(Control row, float width, float centerY, int attempt)
+    {
+        if (CardDefaultSize() is not { } cardSize) return;
+        if (!RowBounds(row, cardSize, out Rect2 union)) return;
+        float room = width - PortraitPreviewMath.RowMargin;
+        if (union.Size.X > room + 0.5f)
+        {
+            if (attempt >= 2) return;
+            float shrink = room / union.Size.X;
+            row.Scale = new Vector2(row.Scale.X * shrink, row.Scale.Y * shrink);
+            CenterRow(row, width, centerY, attempt + 1);
+            return;
+        }
+        float dx = width * 0.5f - union.GetCenter().X;
+        float dy = centerY - union.GetCenter().Y;
+        if (Math.Abs(dx) < 0.25f && Math.Abs(dy) < 0.25f) return;
+        Vector2 parentScale = row.GetParent() is Control parent && parent.IsInsideTree()
+            ? parent.GetGlobalTransform().Scale.Abs()
+            : Vector2.One;
+        row.Position += new Vector2(dx / Math.Max(parentScale.X, 0.01f), dy / Math.Max(parentScale.Y, 0.01f));
+    }
+
+    /// <summary>The cards' drawn rectangle in canvas coordinates, as the harness measures them (a card is centred on its node).</summary>
+    private static bool RowBounds(Node node, Vector2 cardSize, out Rect2 union)
+    {
+        union = default;
+        bool any = false;
+        CollectBounds(node, cardSize, ref union, ref any);
+        return any;
+    }
+
+    private static void CollectBounds(Node node, Vector2 cardSize, ref Rect2 union, ref bool any)
+    {
+        for (int i = 0; i < node.GetChildCount(); i++)
+        {
+            Node child = node.GetChild(i);
+            if (child.GetType().FullName == CardTypeName && child is Control card)
+            {
+                Vector2 size = cardSize * card.GetGlobalTransform().Scale.Abs();
+                var rect = new Rect2(card.GlobalPosition - size * 0.5f, size);
+                union = any ? union.Merge(rect) : rect;
+                any = true;
+            }
+            CollectBounds(child, cardSize, ref union, ref any);
+        }
     }
 
     /// <summary>The cards a preview row shows, ignoring ones the game has queued for freeing.</summary>

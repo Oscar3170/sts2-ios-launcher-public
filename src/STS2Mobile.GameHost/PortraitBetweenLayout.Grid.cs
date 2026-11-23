@@ -33,6 +33,7 @@ internal sealed partial class PortraitBetweenLayout
     private const string SimpleSelectTypeName = CardSelectionNamespace + ".NSimpleCardSelectScreen";
     private const string CombatPileSelectTypeName = CardSelectionNamespace + ".NCombatPileCardSelectScreen";
     private const string GridHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NGridCardHolder";
+    private const string RelicInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Relics.NRelicInventory";
     private const string ViewUpgradesBoxName = "ViewUpgrades";
     private const string SortRowName = "SortingOptions";
     private const string DeckInfoTextName = "BottomText";
@@ -54,6 +55,7 @@ internal sealed partial class PortraitBetweenLayout
         public ulong HeaderParent;
         public int HeaderIndex;
         public ulong ScreenId;
+        public ulong RelicRow;
         public ulong Scroll;
         public ulong Prompt;
         public ulong InfoText;
@@ -108,7 +110,7 @@ internal sealed partial class PortraitBetweenLayout
     private void KeepGridPortrait(Control grid, float capHeight, Vector2 canvas)
     {
         if (!_gridStates.TryGetValue(grid.GetInstanceId(), out GridState? state)) return;
-        float top = GridTopFor(state.Screen, capHeight);
+        float top = GridTopFor(state, capHeight);
         float bottom = GridBottomFor(state, canvas);
         bool drifted = Math.Abs(grid.OffsetTop - top) > 0.5f || Math.Abs(grid.OffsetBottom - bottom) > 0.5f ||
             Math.Abs(grid.OffsetRight - canvas.X) > 0.5f || grid.AnchorBottom != 0f || grid.AnchorRight != 0f ||
@@ -187,7 +189,10 @@ internal sealed partial class PortraitBetweenLayout
             state.ClipSaved = true;
         }
         if (state.NativeCardSize.X < 50f && _cardSizeField?.GetValue(grid) is Vector2 native) state.NativeCardSize = native;
-        float top = GridTopFor(state.Screen, capHeight);
+        ResolveRelicRow(state, grid);
+        float headerBottom = PortraitGridMath.HeaderBottom(capHeight + PortraitBands.TopBarHeight, VisibleRelicBottom(state));
+        float sortTop = headerBottom + PortraitGridMath.SortHeaderGap;
+        float top = PortraitGridMath.GridTop(headerBottom, state.Screen == PortraitGridScreen.DeckView);
         float bottom = GridBottomFor(state, canvas);
         if (bottom - top < 300f) return;
 
@@ -241,11 +246,15 @@ internal sealed partial class PortraitBetweenLayout
             relayout = true;
         }
         if (relayout) RelayoutGrid(grid);
+        // A sort re-lays the grid out at its top; the game's own lerp can leave a fraction of a unit behind, so put the
+        // scroll exactly on the top limit (the same call InitGrid makes, with nothing between here and the frame drawn).
+        if (yOffset != 0 && GridScroll(grid, state) is { } topScroll && Math.Abs(topScroll.Position.Y) < 8f)
+            grid.Call("SetScrollPosition", 0f);
 
         state.AppliedTop = top;
         state.AppliedBottom = bottom;
         if (header != null)
-            LayoutSortRowPortrait(header, state, canvas, capHeight + PortraitBands.TopBarHeight + PortraitGridMath.SortHeaderGap);
+            LayoutSortRowPortrait(header, state, canvas, sortTop);
         // The footer box is a sibling of the grid: track it here too, so turning portrait on with the screen already open
         // places it as well as the screen's own tickbox node being added does.
         if ((state.Screen is PortraitGridScreen.DeckView or PortraitGridScreen.Upgrade or PortraitGridScreen.Transform) &&
@@ -264,8 +273,45 @@ internal sealed partial class PortraitBetweenLayout
         }
     }
 
-    private static float GridTopFor(PortraitGridScreen screen, float capHeight) =>
-        PortraitGridMath.GridTop(capHeight + PortraitBands.TopBarHeight, screen == PortraitGridScreen.DeckView);
+    /// <summary>
+    /// The grid's top edge: below the top bar and below the relic rows when the strip reaches lower, then below the deck
+    /// view's sort row where there is one. The relic strip is live (it scrolls and grows), so this is read each frame.
+    /// </summary>
+    private static float GridTopFor(GridState state, float capHeight) =>
+        PortraitGridMath.GridTop(
+            PortraitGridMath.HeaderBottom(capHeight + PortraitBands.TopBarHeight, VisibleRelicBottom(state)),
+            state.Screen == PortraitGridScreen.DeckView);
+
+    /// <summary>The lowest visible relic holder's bottom, clamped to the strip it scrolls in (0 when there is none).</summary>
+    private static float VisibleRelicBottom(GridState state)
+    {
+        if (state.RelicRow == 0 || GodotObject.InstanceFromId(state.RelicRow) is not Control row ||
+            !GodotObject.IsInstanceValid(row) || !row.IsVisibleInTree()) return 0f;
+        Rect2 strip = row.GetParent() is Control parent && parent.ClipContents ? parent.GetGlobalRect() : new Rect2();
+        float bottom = 0f;
+        for (int i = 0; i < row.GetChildCount(); i++)
+        {
+            if (row.GetChild(i) is not Control holder || !holder.IsVisibleInTree()) continue;
+            Rect2 rect = holder.GetGlobalRect();
+            if (strip.HasArea()) rect = rect.Intersection(strip);
+            if (rect.HasArea()) bottom = Math.Max(bottom, rect.End.Y);
+        }
+        return bottom;
+    }
+
+    /// <summary>Finds the run's relic inventory once per grid: its holders decide how far the grid's header descends.</summary>
+    private static void ResolveRelicRow(GridState state, Control grid)
+    {
+        if (state.RelicRow != 0 && GodotObject.IsInstanceIdValid(state.RelicRow)) return;
+        state.RelicRow = 0;
+        if (grid.GetTree()?.Root is not Node root) return;
+        foreach (Node node in Descendants(root))
+            if (node is Control control && control.GetType().FullName == RelicInventoryTypeName)
+            {
+                state.RelicRow = control.GetInstanceId();
+                return;
+            }
+    }
 
     private float GridBottomFor(GridState state, Vector2 canvas)
     {

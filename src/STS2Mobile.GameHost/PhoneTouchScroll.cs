@@ -61,7 +61,7 @@ internal sealed class PhoneTouchScroll
     private readonly Type[] _screenTypes = [];
     private readonly Type? _rewardsType;
     private readonly FieldInfo? _gridTarget, _gridDragging, _listTarget, _listDragging, _listContent, _rewardsTarget;
-    private readonly PropertyInfo? _gridCanScroll, _listScrollbar, _rewardsCanScroll, _rewardsLimit;
+    private readonly PropertyInfo? _gridCanScroll, _gridLimitTop, _gridLimitBottom, _listScrollbar, _rewardsCanScroll, _rewardsLimit;
     private readonly bool _failed;
     private SceneTree? _tree;
 
@@ -82,6 +82,8 @@ internal sealed class PhoneTouchScroll
             _gridTarget = _gridType?.GetField("_targetDrag", InstAll);
             _gridDragging = _gridType?.GetField("_isDragging", InstAll);
             _gridCanScroll = _gridType?.GetProperty("CanScroll", InstAll);
+            _gridLimitTop = _gridType?.GetProperty("ScrollLimitTop", InstAll);
+            _gridLimitBottom = _gridType?.GetProperty("ScrollLimitBottom", InstAll);
             _listTarget = _listType?.GetField("_targetDragPosY", InstAll);
             _listDragging = _listType?.GetField("_isDragging", InstAll);
             _listContent = _listType?.GetField("_content", InstAll);
@@ -262,7 +264,10 @@ internal sealed class PhoneTouchScroll
     private void End()
     {
         if (_scrolling && GodotObject.InstanceFromId(_view) is Control view && GodotObject.IsInstanceValid(view))
+        {
+            ClampTarget(view);
             SetDragging(view, false);
+        }
         _down = false;
         _scrolling = false;
         _screenSwiped = false;
@@ -329,6 +334,30 @@ internal sealed class PhoneTouchScroll
         FieldInfo? target = IsGrid(view) ? _gridTarget : _listTarget;
         if (target?.GetValue(view) is float y)
             target.SetValue(view, y + dy);
+    }
+
+    /// <summary>
+    /// Puts the view's scroll target back inside its own limits when the finger lifts. The game settles an overscrolled drag
+    /// by an asymptotic lerp, which stops a unit or two short of the end, so a swipe to the first or last row could leave it
+    /// a few units off the edge for good. A grid's limits are its own (<c>ScrollLimitTop</c> / <c>ScrollLimitBottom</c>, the
+    /// pair its bounce settles between); a list's are its scrollbar's range.
+    /// </summary>
+    private void ClampTarget(Control view)
+    {
+        if (IsGrid(view))
+        {
+            if (_gridTarget?.GetValue(view) is not float target) return;
+            float top = _gridLimitTop?.GetValue(view) is float a ? a : 0f;
+            float bottom = _gridLimitBottom?.GetValue(view) is float b ? b : 0f;
+            float clamped = Math.Clamp(target, MathF.Min(top, bottom), MathF.Max(top, bottom));
+            if (clamped != target) _gridTarget.SetValue(view, clamped);
+            return;
+        }
+        if (_listTarget?.GetValue(view) is not float y || view is not ScrollContainer list) return;
+        ScrollBar bar = list.GetVScrollBar();
+        float limit = MathF.Max(0f, (float)(bar.MaxValue - bar.Page));
+        float inside = Math.Clamp(y, 0f, limit);
+        if (inside != y) _listTarget.SetValue(view, inside);
     }
 
     /// <summary>The control under the finger is the view or inside it: no other screen covers the view there.</summary>

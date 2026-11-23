@@ -5,8 +5,8 @@ namespace STS2Mobile.Platform;
 /// <summary>A before/after comparison pair's scale and the canvas point its origin (the middle between the cards) takes.</summary>
 public readonly record struct PreviewPairFit(float Scale, float CenterX, float CenterY);
 
-/// <summary>A row of preview cards' scale, its first card's centre and the width the row's container takes in its own units.</summary>
-public readonly record struct PreviewRowFit(float Scale, float FirstCenterX, float CenterY, float LocalWidth);
+/// <summary>A row of preview cards' scale, the width its container takes in its own units, and the canvas middle it takes.</summary>
+public readonly record struct PreviewRowFit(float Scale, float LocalWidth, float CenterY);
 
 /// <summary>
 /// Pure layout math for the deck's card selection screens in portrait: the upgrade/enchant comparison pair, the multi-card
@@ -102,12 +102,12 @@ public static class PortraitPreviewMath
     public static float RowScale(float canvasWidth, int count) =>
         MathF.Min(RowMaxScale, (canvasWidth - RowMargin) / (RowNeed + RowPitch * Math.Max(0, count - 1)));
 
-    /// <summary>The row's first card centre, so the whole row is centred in the canvas whatever the count.</summary>
-    public static float RowFirstCenterX(float canvasWidth, int count)
-    {
-        float scale = RowScale(canvasWidth, count);
-        return canvasWidth * 0.5f - RowPitch * Math.Max(0, count - 1) * scale * 0.5f;
-    }
+    /// <summary>
+    /// The left edge of a row's container so that its middle is the canvas's middle: the game's row centres its cards in the
+    /// container, so a row drawn from this edge is centred whatever the count.
+    /// </summary>
+    public static float RowLeft(float canvasWidth, int count) =>
+        (canvasWidth - RowLocalWidth(canvasWidth, count) * RowScale(canvasWidth, count)) * 0.5f;
 
     /// <summary>The container width that holds every card's centre, in the container's own units (before its scale).</summary>
     public static float RowLocalWidth(float canvasWidth, int count)
@@ -118,7 +118,7 @@ public static class PortraitPreviewMath
 
     /// <summary>The whole row's fit, for the host to apply in one step.</summary>
     public static PreviewRowFit PreviewRow(float canvasWidth, int count, float centerY) =>
-        new(RowScale(canvasWidth, count), RowFirstCenterX(canvasWidth, count), centerY, RowLocalWidth(canvasWidth, count));
+        new(RowScale(canvasWidth, count), RowLocalWidth(canvasWidth, count), centerY);
 
     /// <summary>The whole pair's fit; its origin is the middle between the two cards.</summary>
     public static PreviewPairFit PreviewPair(float canvasWidth, float centerY) =>

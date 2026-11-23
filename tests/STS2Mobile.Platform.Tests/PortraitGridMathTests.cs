@@ -109,6 +109,24 @@ public class PortraitGridMathTests
     }
 
     [Theory]
+    [InlineData(390f)]
+    [InlineData(2340f)]
+    public void GridStartsBelowTheTopBarOrBelowTheVisibleRelics(float topBarBottom)
+    {
+        // No relic row on screen: the grid starts under the top bar's own band.
+        Assert.Equal(topBarBottom, PortraitGridMath.HeaderBottom(topBarBottom, 0f), 3);
+        // Relics that end above the top bar's bottom change nothing; ones that reach lower push the header down by the gap.
+        Assert.Equal(topBarBottom, PortraitGridMath.HeaderBottom(topBarBottom, topBarBottom - 40f), 3);
+        float relicBottom = topBarBottom + 222f;
+        Assert.Equal(relicBottom + PortraitGridMath.RelicGap, PortraitGridMath.HeaderBottom(topBarBottom, relicBottom), 3);
+        // The deck view's sort row and the grid follow that band.
+        float header = PortraitGridMath.HeaderBottom(topBarBottom, relicBottom);
+        Assert.Equal(header + PortraitGridMath.SortHeaderGap + PortraitGridMath.SortHeaderHeight,
+            PortraitGridMath.GridTop(header, sortRow: true), 3);
+        Assert.Equal(header + PortraitGridMath.SortHeaderGap, PortraitGridMath.GridTop(header, sortRow: false), 3);
+    }
+
+    [Theory]
     [InlineData(NarrowHeight)]
     [InlineData(TallHeight)]
     public void BothTestShapesGiveThreeColumnsInFloat(float canvasHeight)

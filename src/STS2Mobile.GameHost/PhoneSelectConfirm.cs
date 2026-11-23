@@ -187,6 +187,12 @@ internal sealed class PhoneSelectConfirm
     private bool _pressSeen;
     private bool _itemPressed;
 
+    // A press that makes a selection owns it only while it stays a tap: a swipe lets it go again and puts back what stood
+    // there before (a second tap on the selected item only ever confirms, so it owns nothing).
+    private bool _pressMadeSelection;
+    private bool _pressSwiped;
+    private Selection? _pressPrevious;
+
     private static int _confirms;
     private static int _holdInspects;
     private static int _clears;
@@ -477,6 +483,7 @@ internal sealed class PhoneSelectConfirm
             // The game takes these items on the release of a press; never here.
             adapter.Suppress(screen, item);
             bool second = IsSelected(screen, item, adapter);
+            Selection? previous = _selected;
             if (second)
             {
                 if (adapter.CardOutline) HoverOnly(item);
@@ -489,6 +496,9 @@ internal sealed class PhoneSelectConfirm
             }
             _pressed = true;
             _pressOnSelected = second;
+            _pressMadeSelection = !second;
+            _pressSwiped = false;
+            _pressPrevious = previous;
             _holdDone = false;
             _pressScreen = screen;
             _pressItem = item;
@@ -507,6 +517,29 @@ internal sealed class PhoneSelectConfirm
     {
         _lastCanvas = ToCanvas(windowPosition);
         _maxMove = Math.Max(_maxMove, _pressCanvas.DistanceTo(_lastCanvas));
+        CancelSwipedSelection();
+    }
+
+    /// <summary>
+    /// A press that has become a swipe never made a selection: it lets go of the one the press made and puts back the one
+    /// that stood before, so scrolling a card grid or a shop page never moves the outline, and the next tap selects afresh.
+    /// A second tap on the selected item owns nothing, so a swipe from it only cancels its confirmation (the selection stays).
+    /// </summary>
+    private void CancelSwipedSelection()
+    {
+        if (!_pressed || _pressSwiped || !_pressMadeSelection || SelectConfirmMath.WithinSlop(_maxMove)) return;
+        _pressSwiped = true;
+        _holdDone = true;
+        // The press's own release is still on its way: keep the item's release suppression until it has gone (a shop slot's
+        // ignore flag is cleared by its next press), or the swipe itself would buy.
+        Drop("swipe", counted: true, restore: false);
+        Selection? previous = _pressPrevious;
+        _pressPrevious = null;
+        if (previous == null) return;
+        if (!GodotObject.IsInstanceValid(previous.Screen) || !GodotObject.IsInstanceValid(previous.Item)) return;
+        if (!previous.Screen.IsInsideTree() || !previous.Item.IsInsideTree() || previous.Item.IsQueuedForDeletion()) return;
+        if (!previous.Adapter.StillShown(previous.Screen, previous.Item)) return;
+        Select(previous.Screen, previous.Item, previous.Adapter);
     }
 
     private void StepHold()
@@ -564,6 +597,9 @@ internal sealed class PhoneSelectConfirm
     {
         _pressed = false;
         _pressOnSelected = false;
+        _pressMadeSelection = false;
+        _pressSwiped = false;
+        _pressPrevious = null;
         _holdDone = false;
         _pressScreen = null;
         _pressItem = null;
@@ -778,7 +814,7 @@ internal sealed class PhoneSelectConfirm
             return GodotObject.IsInstanceValid(hitbox) && hitbox.IsVisibleInTree();
         }
 
-        internal override void Suppress(Control screen, Control item) => PhoneSwipeRelease.Shared.ReleaseOne(item);
+        internal override void Suppress(Control screen, Control item) => PhoneSwipeRelease.Shared.ReleaseSlot(item);
 
         internal override void Restore(Control screen, Control item)
         {
@@ -1068,10 +1104,10 @@ internal sealed class PhoneSelectConfirm
     }
 
     /// <summary>The pressed card lets go of the press the game would take on: its own release takes it.</summary>
-    internal void ClearCardPress(Control holder) => PhoneSwipeRelease.Shared.ReleaseOne(holder);
+    internal void ClearCardPress(Control holder) => PhoneSwipeRelease.Shared.ReleaseHolder(holder);
 
     /// <summary>A relic or chest holder lets go of its press, so its own release takes nothing.</summary>
-    internal void ClearPress(Control item) => PhoneSwipeRelease.Shared.ReleaseOne(item);
+    internal void ClearPress(Control item) => PhoneSwipeRelease.Shared.ReleasePress(item);
 
     internal void ShowCardTip(Control holder)
     {

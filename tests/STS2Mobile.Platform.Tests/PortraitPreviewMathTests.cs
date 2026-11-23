@@ -21,19 +21,19 @@ public class PortraitPreviewMathTests
     }
 
     [Theory]
-    [InlineData(1, 1.298571f, 540f)]
-    [InlineData(2, 1.298571f, 328.982f)]
-    [InlineData(3, 1.045892f, 200.085f)]
-    [InlineData(4, 0.782392f, 158.584f)]
-    [InlineData(5, 0.624945f, 133.786f)]
-    [InlineData(6, 0.52025f, 117.297f)]
-    public void PreviewRowScalesLikeTheReferenceAndCentresEveryCount(int count, float scale, float firstCenterX)
+    [InlineData(1, 1.298571f, 239.233f)]
+    [InlineData(2, 1.298571f, 239.233f)]
+    [InlineData(3, 1.045892f, 199.562f)]
+    [InlineData(4, 0.782392f, 158.193f)]
+    [InlineData(5, 0.624945f, 133.473f)]
+    [InlineData(6, 0.52025f, 117.036f)]
+    public void PreviewRowScalesLikeTheReferenceAndCentresItsContainer(int count, float scale, float left)
     {
         Assert.Equal(scale, PortraitPreviewMath.RowScale(1080f, count), 5);
-        Assert.Equal(firstCenterX, PortraitPreviewMath.RowFirstCenterX(1080f, count), 2);
+        Assert.Equal(left, PortraitPreviewMath.RowLeft(1080f, count), 2);
         PreviewRowFit fit = PortraitPreviewMath.PreviewRow(1080f, count, 1251f);
         Assert.Equal(scale, fit.Scale, 5);
-        Assert.Equal(firstCenterX, fit.FirstCenterX, 2);
+        Assert.Equal(left, 540f - fit.LocalWidth * fit.Scale * 0.5f, 2);
         Assert.Equal(1251f, fit.CenterY, 3);
     }
 
@@ -50,8 +50,9 @@ public class PortraitPreviewMathTests
     {
         PreviewRowFit fit = PortraitPreviewMath.PreviewRow(1080f, count, 1000f);
         float cardHalf = PortraitPreviewMath.RowCardWidth * 0.5f * fit.Scale;
-        float left = fit.FirstCenterX - cardHalf;
-        float right = fit.FirstCenterX + PortraitPreviewMath.RowPitch * (count - 1) * fit.Scale + cardHalf;
+        float firstCenter = 540f - PortraitPreviewMath.RowPitch * (count - 1) * fit.Scale * 0.5f;
+        float left = firstCenter - cardHalf;
+        float right = firstCenter + PortraitPreviewMath.RowPitch * (count - 1) * fit.Scale + cardHalf;
         Assert.True(left >= 0f, $"count {count} starts at {left}");
         Assert.True(right <= 1080f, $"count {count} ends at {right}");
         // Symmetric around the canvas middle whatever the count.

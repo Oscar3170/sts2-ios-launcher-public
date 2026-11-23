@@ -87,30 +87,46 @@ internal sealed class PhoneSwipeRelease
     }
 
     /// <summary>Lets go of one node's own press; returns whether it had one to let go of.</summary>
-    public bool ReleaseOne(Node node)
+    public bool ReleaseOne(Node node) =>
+        ReleaseHolder(node) | ReleasePress(node) | ReleaseSlot(node);
+
+    /// <summary>
+    /// Lets go of a card holder's press: the release that would pick or inspect the card does nothing when the finger lifts
+    /// (<c>NCardHolder.OnMouseReleased</c> acts only while <c>_currentPressedAction</c> is set).
+    /// </summary>
+    public bool ReleaseHolder(Node node)
     {
-        if (!_ready || node == null || !GodotObject.IsInstanceValid(node)) return false;
-        byte kinds = Kinds(node.GetType());
-        bool released = false;
-        if ((kinds & Holder) != 0 && _holderPress!.GetValue(node) != null)
-        {
-            _holderPress.SetValue(node, null);
-            released = true;
-        }
-        if ((kinds & Clickable) != 0 && _clickablePressed!.GetValue(node) is true)
-        {
-            _clickablePressed.SetValue(node, false);
-            released = true;
-        }
-        // The slot acts on the release unless this is set; its own next press clears it again
-        // (NMerchantSlot.OnMousePressed), so a swipe never buys and the next tap does.
-        if ((kinds & Slot) != 0 && _slotIgnoreRelease?.GetValue(node) is false)
-        {
-            _slotIgnoreRelease.SetValue(node, true);
-            released = true;
-        }
-        if (released) Released++;
-        return released;
+        if (!_ready || node == null || !GodotObject.IsInstanceValid(node) || (Kinds(node.GetType()) & Holder) == 0) return false;
+        if (_holderPress!.GetValue(node) == null) return false;
+        _holderPress.SetValue(node, null);
+        Released++;
+        return true;
+    }
+
+    /// <summary>
+    /// Lets go of a button's press (<c>NClickableControl.OnReleaseHandler</c> acts only while <c>_isPressed</c> is set).
+    /// </summary>
+    public bool ReleasePress(Node node)
+    {
+        if (!_ready || node == null || !GodotObject.IsInstanceValid(node) || (Kinds(node.GetType()) & Clickable) == 0) return false;
+        if (_clickablePressed!.GetValue(node) is not true) return false;
+        _clickablePressed.SetValue(node, false);
+        Released++;
+        return true;
+    }
+
+    /// <summary>
+    /// Stops a shop slot taking the item on this release. Its own next press clears the flag again
+    /// (<c>NMerchantSlot.OnMousePressed</c>), so a swipe never buys and the next tap does.
+    /// </summary>
+    public bool ReleaseSlot(Node node)
+    {
+        if (_slotIgnoreRelease == null || node == null || !GodotObject.IsInstanceValid(node) || (Kinds(node.GetType()) & Slot) == 0)
+            return false;
+        if (_slotIgnoreRelease.GetValue(node) is not false) return false;
+        _slotIgnoreRelease.SetValue(node, true);
+        Released++;
+        return true;
     }
 
     /// <summary>What a node is, by its type; remembered, as a card screen holds thousands of nodes.</summary>
