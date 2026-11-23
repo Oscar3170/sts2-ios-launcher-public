@@ -49,9 +49,13 @@ internal sealed class PortraitNavigationPads
                 continue;
             }
             if (!control.IsVisibleInTree() || control.Size.X < 1f || control.Size.Y < 1f) continue;
-            if (IsBack(control)) PlaceBack(control);
+            bool back = IsBack(control);
+            if (back) PlaceBack(control);
             // A screen layout that owns this control decides its pad: it knows the neighbours and may cap it short on purpose.
-            if (control.HasMeta(PlannedControlMeta) || (PhoneHitArea.Of(control) is { } screenPad && screenPad.HasMeta(ScreenPadMeta)))
+            // Back is the exception: every back button must be a full target, so it is measured from its own art and padded
+            // even where a planner claimed it (the gate found card-library and relic-collection Backs padded by nobody).
+            if (!back && (control.HasMeta(PlannedControlMeta) ||
+                          (PhoneHitArea.Of(control) is { } screenPad && screenPad.HasMeta(ScreenPadMeta))))
             {
                 // Ours and added before the planner took the control: shrink its offsets back to the art's own box, but never
                 // hide the shared area — the planner owns its visibility and would not re-show it for several frames.
@@ -66,13 +70,14 @@ internal sealed class PortraitNavigationPads
                 _paddedAt.Remove(id);
                 continue;
             }
-            if (_paddedAt.TryGetValue(id, out Vector2 seen) && seen == control.Size && PhoneHitArea.Of(control) != null) continue;
+            if (!back && _paddedAt.TryGetValue(id, out Vector2 seen) && seen == control.Size && PhoneHitArea.Of(control) != null) continue;
             Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
             if (scale.X < 0.01f || scale.Y < 0.01f) continue;
             float padX = Mathf.Max(0f, (PortraitBands.MinTarget - control.Size.X * scale.X) * 0.5f) / scale.X;
             float padY = Mathf.Max(0f, (PortraitBands.MinTarget - control.Size.Y * scale.Y) * 0.5f) / scale.Y;
             if (padX > 0f || padY > 0f) PhoneHitArea.Grow(control, padX, padY, padX, padY);
-            _paddedAt[id] = control.Size;
+            // A Back is re-padded every frame: a screen planner that re-plans it may shrink or hide the area in between.
+            if (!back) _paddedAt[id] = control.Size;
         }
         foreach (ulong id in _dead)
         {

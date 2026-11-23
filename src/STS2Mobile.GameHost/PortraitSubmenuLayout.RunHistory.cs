@@ -70,6 +70,8 @@ internal static partial class PortraitSubmenuLayout
 
         Place(screen.GetNodeOrNull<Control>("LeftArrow"), 8f, arrowTop, RunHistoryArrow, RunHistoryArrow, capture);
         Place(screen.GetNodeOrNull<Control>("RightArrow"), w - 8f - RunHistoryArrow, arrowTop, RunHistoryArrow, RunHistoryArrow, capture);
+        // Share is 64 units tall on the desktop: 112 local units is 127 units on the canvas at this screen's 1.14 draw.
+        GrowListRows(screen, type => type == "NShareButton", 112f, capture);
     }
 
     /// <summary>

@@ -94,6 +94,7 @@ internal static partial class PortraitSubmenuLayout
             // by PortraitTargetPads as far as the neighbouring controls allow.
             GrowListRows(screen, type => type == "NModMenuRow", PortraitBands.MinTarget, capture);
             GrowListRows(screen, type => type == "NTickbox", PortraitBands.MinTarget, capture);
+            GrowListRows(screen, type => type == "NModMenuButton", PortraitBands.MinTarget, capture);
         }
         // The screens fitted here are drawn at a design width, so some of their controls are narrower or shorter than a finger;
         // an invisible pad grows each towards 44 points without moving its art.
@@ -124,6 +125,8 @@ internal static partial class PortraitSubmenuLayout
         Place(screen.GetNodeOrNull<Control>("LeftContainer/HBoxContainer"), rowLeft, y, 700f, 106f, capture);
         Place(screen.GetNodeOrNull<Control>("LeftContainer/GameModeDropdown"), rowLeft + 10f, y + 1f, 320f, 106f, capture);
         y += 106f + Gap;
+        // The randomize icon next to the seed: 106 units is 127 units (44 points) at this screen's 1.2 draw.
+        GrowListRows(screen, type => type == "NCustomRunRandomizeButton", 106f, capture);
         if (screen.GetNodeOrNull<Control>("LeftContainer/AscensionPanel") is { Visible: true } ascension)
         {
             Place(ascension, (w - 634f) / 2f, y, 634f, 117f, capture);

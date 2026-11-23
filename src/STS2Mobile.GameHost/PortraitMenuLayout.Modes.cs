@@ -107,6 +107,47 @@ internal sealed partial class PortraitMenuLayout
         }
     }
 
+    /// <summary>
+    /// Gives one of the top-edge icon buttons a finger's box. It grows to the left from its right edge, so an icon anchored
+    /// at the screen's right side stays on the canvas.
+    /// </summary>
+    private void GrowInfoTarget(Control screen, string name)
+    {
+        if (screen.GetNodeOrNull<Control>(name) is not { } button || button.Size.X < 1f || button.Size.Y < 1f) return;
+        Vector2 scale = button.GetGlobalTransformWithCanvas().Scale.Abs();
+        float side = PortraitBands.MinTarget / Math.Max(0.01f, Math.Min(scale.X, scale.Y));
+        if (button.Size.X >= side && button.Size.Y >= side) return;
+        Capture(button);
+        var size = new Vector2(Math.Max(button.Size.X, side), Math.Max(button.Size.Y, side));
+        SetMinSize(button, size);
+        float right = button.Position.X + button.Size.X;
+        button.Size = size;
+        button.Position = new Vector2(right - size.X, button.Position.Y);
+    }
+
+    /// <summary>
+    /// The credits modal's plain engine buttons at a finger's height. The screen keeps its own layout; only the button boxes
+    /// grow (their art and text follow the box).
+    /// </summary>
+    private void GrowCreditsTargets(Control screen)
+    {
+        void Walk(Node node)
+        {
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+                if (control is BaseButton && control.IsVisibleInTree() &&
+                    control.CustomMinimumSize.Y < PortraitBands.MinTarget)
+                {
+                    Capture(control);
+                    control.CustomMinimumSize = new Vector2(control.CustomMinimumSize.X, PortraitBands.MinTarget);
+                }
+                Walk(control);
+            }
+        }
+        Walk(screen);
+    }
+
     /// <summary>Moves one of the screen's top-edge controls down with the safe band, keeping its own size and anchors.</summary>
     private void ShiftTopControl(Control screen, string name, float safeTop)
     {

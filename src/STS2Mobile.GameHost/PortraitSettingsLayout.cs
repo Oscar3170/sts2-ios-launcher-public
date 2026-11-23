@@ -64,8 +64,8 @@ internal sealed class PortraitSettingsLayout
     private static readonly string[] RichFontKeys =
         ["normal_font_size", "bold_font_size", "italics_font_size", "bold_italics_font_size", "mono_font_size"];
 
-    // TouchSpire's dropdown list is 600 units tall on its 1680 canvas: 386 drawn here (x 0.643), three 44 point rows, and
-    // never taller than the rows area it opens in.
+    // An open dropdown list is at most 386 drawn units tall (three 44 point rows) and never taller than the rows area it
+    // opens in.
     private const float DropdownHeight = 386f;
     private const float DropdownMargin = 8f;
 
@@ -455,18 +455,22 @@ internal sealed class PortraitSettingsLayout
 
     private Vector2 ToCanvas(Vector2 point) => _tree == null ? point : _tree.Root.GetFinalTransform().AffineInverse() * point;
 
-    /// <summary>The settings screen shown now, or null when another screen covers it.</summary>
+    /// <summary>
+    /// The settings screen shown now, or null while the feedback screen it opens holds the view. Nothing else is tested: a
+    /// hover tip under the pointer is not the screen's child, and it is up over every row, so a hovered control says nothing
+    /// about which screen the finger is on (that test kept the language list's drag from ever starting).
+    /// </summary>
     private NSettingsScreen? VisibleScreen()
     {
+        // Settings hands the view to the feedback screen; while that is up, its press belongs to it.
+        foreach (ulong id in _feedback)
+            if (GodotObject.InstanceFromId(id) is Control feedback && GodotObject.IsInstanceValid(feedback) &&
+                feedback.IsVisibleInTree())
+                return null;
         foreach (ulong id in _screens.Keys)
-        {
-            if (GodotObject.InstanceFromId(id) is not NSettingsScreen screen || !GodotObject.IsInstanceValid(screen) ||
-                !screen.IsVisibleInTree()) continue;
-            // A screen under the feedback screen (settings hands over to it) is not the one being touched.
-            if (_tree != null && _tree.Root.GuiGetHoveredControl() is { } hover && !screen.IsAncestorOf(hover))
-                continue;
-            return screen;
-        }
+            if (GodotObject.InstanceFromId(id) is NSettingsScreen screen && GodotObject.IsInstanceValid(screen) &&
+                screen.IsVisibleInTree())
+                return screen;
         return null;
     }
 
@@ -532,8 +536,10 @@ internal sealed class PortraitSettingsLayout
             if (_kind == DragKind.Scroll && _scrollDragging?.GetValue(target) is true) { Reset(); return; }
             if (_kind == DragKind.List && _listDragging?.GetValue(target) is true) { Reset(); return; }
             _dragging = true;
-            Release();
+            int released = Release();
             if (_kind == DragKind.Scroll) _scrollDragging?.SetValue(target, true);
+            GD.Print($"Portrait settings: {_kind} swipe from y={_startY:F0} by {moved:F0} (limit {_limit:F0}), " +
+                     $"released {released} press(es) under {target.Name}.");
         }
         float scale = Math.Max(0.01f, Math.Abs(target.GetGlobalTransform().Scale.Y));
         float value = Math.Clamp(_initial + moved / scale, Math.Min(0f, _limit), 0f);
@@ -543,10 +549,11 @@ internal sealed class PortraitSettingsLayout
     }
 
     /// <summary>Lets go of the press under the swipe: the language item or tickbox the finger went down on.</summary>
-    private void Release()
+    private int Release()
     {
         if (GodotObject.InstanceFromId(_surface) is Control screen && GodotObject.IsInstanceValid(screen))
-            PhoneSwipeRelease.Shared.Release(screen);
+            return PhoneSwipeRelease.Shared.Release(screen);
+        return 0;
     }
 
     private void End()
@@ -584,10 +591,15 @@ internal sealed class PortraitSettingsLayout
     /// <summary>The dropdown's list, resolved once from the game's own fields (both scenes lay it out differently).</summary>
     private Control? Resolve(ulong id, DropdownState state)
     {
+        // A rebuilt or freed list (a language change rebuilds it) is looked up again rather than read through a stale node.
+        if (state.List != 0 && !GodotObject.IsInstanceIdValid(state.List)) state.List = 0;
+        if (state.Dismisser != 0 && !GodotObject.IsInstanceIdValid(state.Dismisser)) state.Dismisser = 0;
         if (state.List == 0 && GodotObject.InstanceFromId(id) is Control dropdown)
         {
-            if (_dropdownList?.GetValue(dropdown) is Control list) state.List = list.GetInstanceId();
-            if (_dropdownDismisser?.GetValue(dropdown) is Control dismisser) state.Dismisser = dismisser.GetInstanceId();
+            if (_dropdownList?.GetValue(dropdown) is Control list && GodotObject.IsInstanceValid(list))
+                state.List = list.GetInstanceId();
+            if (_dropdownDismisser?.GetValue(dropdown) is Control dismisser && GodotObject.IsInstanceValid(dismisser))
+                state.Dismisser = dismisser.GetInstanceId();
         }
         return state.List != 0 && GodotObject.InstanceFromId(state.List) is Control found && GodotObject.IsInstanceValid(found)
             ? found
@@ -636,7 +648,7 @@ internal sealed class PortraitSettingsLayout
         Rect2 button = buttonRect;
         float below = bounds.End.Y - button.End.Y;
         float above = button.Position.Y - bounds.Position.Y;
-        // 386 drawn units are TouchSpire's 600 unit list on its 1680 canvas (x 0.643): three 44 point rows.
+        // 386 drawn units: three 44 point rows.
         bool useBelow = below >= DropdownHeight || below >= above;
         float room = Math.Max(useBelow ? below : above, 0f);
         float maxHeight = MathF.Min(DropdownHeight / scale, room / scale);

@@ -68,6 +68,10 @@ internal static partial class PortraitSubmenuLayout
         }
         SetKept(screen.GetNodeOrNull<GridContainer>(StatsColumnPath + "/OverallStats/OverallStatsDetails/GridContainer"), "columns", 1);
 
+        // The list scrolls (its mask clips it): its rows can take a finger's height without leaving the screen. Do this before
+        // the character panels are inspected: the section rows must be grown even when that panel path is absent.
+        GrowListRows(screen, type => type == "NStatEntry", 100f, capture);
+
         if (screen.GetNodeOrNull<GridContainer>(StatsColumnPath + "/CharacterStats/CharacterStatsContainer") is not { } characters) return;
         SetKept(characters, "columns", 1);
         for (int i = 0; i < characters.GetChildCount(); i++)
@@ -77,8 +81,6 @@ internal static partial class PortraitSubmenuLayout
             capture(panel);
             panel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         }
-        // The list scrolls (its mask clips it): its rows can take a finger's height without leaving the screen.
-        GrowListRows(screen, type => type == "NStatEntry", 98f, capture);
     }
 
     /// <summary>Sets a spacing theme constant (one the snapshots hold, so capture first), changing it only when it differs.</summary>

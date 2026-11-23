@@ -48,6 +48,8 @@ internal static partial class PortraitSubmenuLayout
     /// </summary>
     private static void LayoutTimeline(Control screen, float w, Action<Control> capture)
     {
+        // The era nodes on the map are a finger's target: 127 units at the timeline's 1080 fit is 127 local units.
+        GrowListRows(screen, type => type == "NEpochSlot", PortraitBands.MinTarget, capture);
         if (screen.GetNodeOrNull<Control>("EpochReminderText") is not { } reminder ||
             reminder.GetNodeOrNull<Control>("ReminderLabel") is not { } label) return;
         Vector2 middle = reminder.Size / 2f;

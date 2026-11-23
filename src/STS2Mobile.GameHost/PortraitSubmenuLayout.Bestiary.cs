@@ -157,19 +157,21 @@ internal static partial class PortraitSubmenuLayout
         // The panel is only as tall as the mode's room leaves. When its content can be moved in place (the panel is a plain
         // control holding the button list) it clips and scrolls; nothing is reparented, so the buttons keep their
         // registrations. Otherwise the panel keeps its desktop sizes and the pads carry the touch targets.
+        foreach (Control button in buttons)
+            BestiaryMinSize(button, new Vector2(button.CustomMinimumSize.X, Math.Max(BestiaryMoveHeight, button.CustomMinimumSize.Y)), capture);
+
         Control? content = MoveableContent(panel, buttons[0]);
         if (content == null)
         {
+            // The panel lays its children out itself: the buttons are grown (the panel's scale follows) and the pads cover
+            // whatever remains.
             if (panel.GetMeta("portrait_scroll_fallback", false).AsBool() == false)
             {
                 panel.SetMeta("portrait_scroll_fallback", true);
-                GD.Print("Portrait bestiary: the moves panel lays its children out; move buttons keep their sizes and use touch pads.");
+                GD.Print("Portrait bestiary: the moves panel lays its children out; move buttons grow and use touch pads.");
             }
             return;
         }
-
-        foreach (Control button in buttons)
-            BestiaryMinSize(button, new Vector2(button.CustomMinimumSize.X, Math.Max(BestiaryMoveHeight, button.CustomMinimumSize.Y)), capture);
 
         float room = Math.Max(100f, bottom - top) / BestiaryPanelScale;
         float contentHeight = content.GetCombinedMinimumSize().Y + 8f;

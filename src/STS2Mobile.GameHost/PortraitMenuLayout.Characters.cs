@@ -45,6 +45,7 @@ internal sealed partial class PortraitMenuLayout
         // Blitz's title, its badge and its info button sit along the top edge, under the notch.
         foreach (string name in new[] { "BlitzPlaceholder", "%UnderConstruction", "%BlitzInfoButton" })
             ShiftTopControl(screen, name, safe.Position.Y);
+        GrowInfoTarget(screen, "%BlitzInfoButton");
 
         float ascensionTop = PrepareAscension(screen, safe, gridTop);
         PrepareInfo(screen, state, state.TypeName == BlitzTypeName, safe, ascensionTop);

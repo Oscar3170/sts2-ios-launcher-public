@@ -23,10 +23,11 @@ internal sealed partial class PortraitMenuLayout
     public const string CharacterSelectTypeName = Ns + "CharacterSelect.NCharacterSelectScreen";
     public const string BlitzTypeName = Ns + "Blitz.NBlitzScreen";
     public const string DreadTypeName = Ns + "Dread.NDreadScreen";
+    public const string CreditsTypeName = Ns + "Credits.NCreditsScreen";
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
-        SingleplayerTypeName, MultiplayerHostTypeName, CharacterSelectTypeName, BlitzTypeName, DreadTypeName,
+        SingleplayerTypeName, MultiplayerHostTypeName, CharacterSelectTypeName, BlitzTypeName, DreadTypeName, CreditsTypeName,
     };
 
     /// <summary>The desktop canvas the game and the reference rules lay these screens out on, 1680 units across.</summary>
@@ -37,6 +38,8 @@ internal sealed partial class PortraitMenuLayout
         public string TypeName = "";
         public float Scale = 1f;
         public Rect2 Safe;
+        /// <summary>The canvas's lower safe edge: the home indicator band is kept out, as the audit's safe frame does.</summary>
+        public float SafeBottom;
         public bool ConfirmScaled;
         public bool ConfirmPlaced;
         public bool BackPlaced;
@@ -100,6 +103,12 @@ internal sealed partial class PortraitMenuLayout
     {
         try
         {
+            if (state.TypeName == CreditsTypeName)
+            {
+                // The credits are a modal laid out by the game; only its two plain buttons are too short for a finger.
+                GrowCreditsTargets(screen);
+                return;
+            }
             Fit(screen, state, capHeight, canvas);
             switch (state.TypeName)
             {
@@ -155,6 +164,7 @@ internal sealed partial class PortraitMenuLayout
         if (screen.Size.DistanceSquaredTo(size) > 0.25f) screen.Size = size;
 
         state.Scale = scale;
+        state.SafeBottom = Math.Max(1f, canvas.Y - capHeight);
         state.Safe = new Rect2(0f, capHeight / scale, DesignWidth, Math.Max(1f, (canvas.Y - capHeight) / scale));
     }
 
@@ -199,37 +209,31 @@ internal sealed partial class PortraitMenuLayout
     }
 
     /// <summary>
-    /// Puts the screen's back button in its lower left corner. The game places it from the window's height, which is the
-    /// portrait canvas's height rather than this screen's taller virtual canvas, so without this it would stand partway up
-    /// the screen.
+    /// Puts the screen's back button in the safe band's lower left corner, fully on the canvas. The game places it from the
+    /// window's height (and its scene may hang it past the edge), so the target is computed as a canvas rectangle and the
+    /// button's global rect is shifted onto it; the native slide's own places are derived through its parent's transform, so
+    /// a scaled screen or a canvas layer around the button makes no difference.
     /// </summary>
     private void PlaceBackButton(Control screen, ScreenState state)
     {
         Control? back = screen.GetNodeOrNull<Control>("BackButton") ?? screen.GetNodeOrNull<Control>("%BackButton");
         if (back == null || back.Size.Y < 1f) return;
-        // The game hangs the art past the screen's left edge. On the phone that leaves the only back target partly off
-        // canvas (and a tap at its centre in the window's edge); keep the whole button on the canvas instead.
-        Vector2 show, hide;
-        if (GetField(back, "_posOffset") is Vector2 offset)
-        {
-            show = new Vector2(Mathf.Max(0f, -offset.X), Mathf.Min(screen.Size.Y - offset.Y, screen.Size.Y - back.Size.Y));
-            hide = show + new Vector2(-180f, 0f);
-        }
-        else
-        {
-            show = new Vector2(0f, screen.Size.Y - back.Size.Y - 20f);
-            hide = show - new Vector2(180f, 0f);
-        }
-        show.Y = Mathf.Max(0f, show.Y);
         // Nothing on the screen may cover the back target: last child wins the GUI hit test. Moving a node within its own
         // parent does not exit the tree, so the button keeps its connections.
         if (back.GetParent() is Control parent && !PhoneHitArea.IsContainer(parent) && back.GetIndex() != parent.GetChildCount() - 1)
             parent.MoveChild(back, parent.GetChildCount() - 1);
+
+        Rect2 rect = back.GetGlobalRect();
+        var desired = new Vector2(8f, Math.Max(0f, state.SafeBottom - rect.Size.Y - 8f));
+        var hidden = desired - new Vector2(180f, 0f);
         bool first = !state.BackPlaced;
-        if (GetField(back, "_showPos") is not Vector2 shown || shown.DistanceSquaredTo(show) > 0.5f)
-            SetField(back, "_showPos", show);
-        if (GetField(back, "_hidePos") is not Vector2 hidden || hidden.DistanceSquaredTo(hide) > 0.5f)
-            SetField(back, "_hidePos", hide);
+        // The native slide works in the button's own parent units.
+        Vector2 showLocal = ToParent(back, desired);
+        Vector2 hideLocal = ToParent(back, hidden);
+        if (GetField(back, "_showPos") is not Vector2 shown || shown.DistanceSquaredTo(showLocal) > 0.5f)
+            SetField(back, "_showPos", showLocal);
+        if (GetField(back, "_hidePos") is not Vector2 hiddenLocal || hiddenLocal.DistanceSquaredTo(hideLocal) > 0.5f)
+            SetField(back, "_hidePos", hideLocal);
         // The game's first slide was aimed at the window corner; put the button at its place instead of letting it travel
         // there and jump back.
         if (TweenRunning(back, "_moveTween"))
@@ -237,10 +241,16 @@ internal sealed partial class PortraitMenuLayout
             if (!first) return;
             (GetField(back, "_moveTween") as Tween)?.Kill();
         }
-        Vector2 target = GetField(back, "_isEnabled") is true ? show : hide;
-        if (back.Position.DistanceSquaredTo(target) > 1f) back.Position = target;
+        Vector2 target = GetField(back, "_isEnabled") is true ? desired : hidden;
+        Rect2 at = back.GetGlobalRect();
+        Vector2 delta = target - at.Position;
+        if (delta.DistanceSquaredTo(Vector2.Zero) > 0.5f) back.GlobalPosition += delta;
         state.BackPlaced = true;
     }
+
+    /// <summary>Converts a canvas point to a control's parent units (a canvas layer or a scaled screen both work).</summary>
+    private static Vector2 ToParent(Control control, Vector2 canvasPoint) =>
+        control.GetParent() is Control parent ? parent.GetGlobalTransformWithCanvas().AffineInverse() * canvasPoint : canvasPoint;
 
     // ---- shared reflection ------------------------------------------------------------------------------------------------
 

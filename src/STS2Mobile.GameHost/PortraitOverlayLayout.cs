@@ -85,8 +85,13 @@ internal sealed class PortraitOverlayLayout
         popup.PivotOffset = new Vector2(width, height) / 2f;
         popup.Scale = new Vector2(scale, scale);
         SizePopupButtons(popup);
+        // The plate is not centred by its own anchors: at the width fit it draws 1000 wide from a 522 unit box and lands
+        // 25.5 units left of the canvas's middle. Move the popup so its drawn plate is centred (both shapes).
+        Rect2 drawn = popup.GetGlobalRect();
+        float shift = canvas.X / 2f - drawn.GetCenter().X;
+        if (Math.Abs(shift) > 2f) popup.GlobalPosition += new Vector2(shift, 0f);
         if (_logged.Add(popup.GetInstanceId()))
-            GD.Print($"Portrait overlay: {popup.GetParent()?.Name}/{popup.Name} drawn at {onScreen:F2}.");
+            GD.Print($"Portrait overlay: {popup.GetParent()?.Name}/{popup.Name} drawn at {onScreen:F2}, centred by {shift:F1}.");
     }
 
     /// <summary>
