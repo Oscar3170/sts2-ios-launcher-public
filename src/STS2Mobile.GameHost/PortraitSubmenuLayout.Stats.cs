@@ -69,7 +69,8 @@ internal static partial class PortraitSubmenuLayout
         SetKept(screen.GetNodeOrNull<GridContainer>(StatsColumnPath + "/OverallStats/OverallStatsDetails/GridContainer"), "columns", 1);
 
         // NStatEntry rows are hover-tip-only controls (decision 53): they keep the game's own row density; the audit gate
-        // allowlists them.
+        // allowlists them. The stats screen's own Share button is a real target: 98 local units at the 1.30 draw are 127.
+        GrowListRows(screen, type => type == "NShareButton", 98f, capture);
 
         if (screen.GetNodeOrNull<GridContainer>(StatsColumnPath + "/CharacterStats/CharacterStatsContainer") is not { } characters) return;
         SetKept(characters, "columns", 1);

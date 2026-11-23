@@ -38,22 +38,23 @@ internal sealed partial class PortraitMenuLayout
     private void LayoutCharacterSelect(Control screen, ScreenState state)
     {
         Rect2 safe = state.Safe;
-        float gridTop = ArrangeCharacterButtons(state, screen, Roster(screen), safe);
+        state.GridControl ??= Roster(screen, state);
+        float gridTop = ArrangeCharacterButtons(state, screen, state.GridControl, safe);
         PrepareConfirm(state, screen, safe);
-        EnsureBackOnTop(screen);
 
         // Blitz's title, its badge and its info button sit along the top edge, under the notch.
         foreach (string name in new[] { "BlitzPlaceholder", "%UnderConstruction", "%BlitzInfoButton" })
-            ShiftTopControl(screen, name, safe.Position.Y);
-        GrowInfoTarget(screen, "%BlitzInfoButton");
+            ShiftTopControl(screen, state, name, safe.Position.Y);
+        GrowInfoTarget(screen, state, "%BlitzInfoButton");
 
-        float ascensionTop = PrepareAscension(screen, safe, gridTop);
+        float ascensionTop = PrepareAscension(screen, state, safe, gridTop);
         PrepareInfo(screen, state, state.TypeName == BlitzTypeName, safe, ascensionTop);
+        // Last, so the ascension panel (moved last for its arrows) cannot cover the back's input.
+        EnsureBackOnTop(screen, state);
     }
 
-    private static Control? Roster(Control screen) =>
-        screen.GetNodeOrNull<Control>("CharSelectButtons/ButtonContainer") ??
-        screen.GetNodeOrNull<Control>("%ButtonContainer");
+    private static Control? Roster(Control screen, ScreenState state) =>
+        Node(screen, state, "CharSelectButtons/ButtonContainer") ?? Node(screen, state, "%ButtonContainer");
 
     /// <summary>
     /// Lays the character buttons out four over three, each at the largest cell the roster's minimum sizes need and the width
@@ -63,14 +64,32 @@ internal sealed partial class PortraitMenuLayout
     {
         float fallback = safe.End.Y - GridBottomRoom;
         if (grid == null) return fallback;
-        List<Control> buttons = grid.GetChildren().OfType<Control>()
-            .Where(c => c.Visible && c.GetType().Name == "NCharacterSelectButton").ToList();
+        // Re-scan the row only when its children change or a sort says the game rebuilt something.
+        if (state.RosterChildren != grid.GetChildCount() || state.FocusDirty)
+        {
+            state.Roster.Clear();
+            Vector2 scan = Vector2.Zero;
+            foreach (Node child in grid.GetChildren())
+            {
+                if (child is not Control control || !control.Visible || control.GetType().Name != "NCharacterSelectButton") continue;
+                state.Roster.Add(control);
+                scan = scan.Max(control.GetCombinedMinimumSize());
+            }
+            state.RosterChildren = grid.GetChildCount();
+            state.RosterCell = scan;
+            state.FocusDirty = false;
+            state.FocusPaths.Clear();
+        }
+        List<Control> buttons = state.Roster;
         if (buttons.Count == 0) return fallback;
 
         int columns = (buttons.Count + 1) / 2;
-        Vector2 cell = Vector2.Zero;
-        foreach (Control button in buttons) cell = cell.Max(button.GetCombinedMinimumSize());
-        if (cell.X < 1f || cell.Y < 1f) return fallback;
+        Vector2 cell = state.RosterCell;
+        if (cell.X < 1f || cell.Y < 1f)
+        {
+            state.FocusDirty = true;
+            return fallback;
+        }
 
         float scale = Math.Min(GridMaxScale, (safe.Size.X - GridSideRoom) / (columns * (cell.X + GridGapX) - GridGapX));
         if (scale < 0.3f) scale = 0.3f;
@@ -81,6 +100,10 @@ internal sealed partial class PortraitMenuLayout
         Capture(grid);
         if (grid.AnchorLeft != 0f || grid.AnchorTop != 0f || grid.AnchorRight != 0f || grid.AnchorBottom != 0f)
             grid.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        // A row container must not take a touch itself; its buttons still receive theirs.
+        if (grid.MouseFilter != Control.MouseFilterEnum.Ignore) grid.MouseFilter = Control.MouseFilterEnum.Ignore;
+        if (grid.GetParent() is Control gridHolder && gridHolder.MouseFilter != Control.MouseFilterEnum.Ignore)
+            gridHolder.MouseFilter = Control.MouseFilterEnum.Ignore;
         SetScale(grid, new Vector2(scale, scale), Vector2.Zero);
         Vector2 target = screen.GetGlobalTransformWithCanvas() * new Vector2(safe.Position.X, top);
         if (grid.GlobalPosition.DistanceSquaredTo(target) > 0.25f) grid.GlobalPosition = target;
@@ -92,6 +115,8 @@ internal sealed partial class PortraitMenuLayout
             state.Grid = container;
             state.GridSort = () =>
             {
+                state.FocusDirty = true;
+                state.RosterChildren = -1;
                 if (GodotObject.IsInstanceValid(container) && state.Scale > 0f)
                     ArrangeCharacterButtons(state, screen, container, state.Safe);
             };
@@ -112,39 +137,57 @@ internal sealed partial class PortraitMenuLayout
         PositionRow(0, columns, 0f);
         if (columns < buttons.Count) PositionRow(columns, buttons.Count - columns, cell.Y + GridGapY);
 
-        // Set the focus grid every frame: the game writes its own one-row neighbours when the screen opens or a character is
-        // picked, and those writes land after ours on some frames.
+        // The desired focus grid is built once per roster; the game writes its own one-row neighbours on open/pick, so each
+        // frame only compares the four paths and rewrites the plan when a path changed (no GetPath per frame).
+        if (state.FocusPaths.Count != buttons.Count)
+        {
+            state.FocusPaths.Clear();
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                Control button = buttons[i];
+                int row = i < columns ? 0 : 1;
+                int rowStart = row == 0 ? 0 : columns;
+                int rowCount = row == 0 ? columns : buttons.Count - columns;
+                int inRow = i - rowStart;
+                bool upper = row == 0;
+                Control other = (upper ? buttons.Skip(columns) : buttons.Take(columns))
+                    .MinBy(candidate => MathF.Abs(candidate.Position.X - button.Position.X)) ?? button;
+                state.FocusPaths[button.GetInstanceId()] = new[]
+                {
+                    buttons[rowStart + (inRow + rowCount - 1) % rowCount].GetPath(),
+                    buttons[rowStart + (inRow + 1) % rowCount].GetPath(),
+                    (upper ? button : other).GetPath(),
+                    (upper ? other : button).GetPath(),
+                };
+            }
+        }
         for (int i = 0; i < buttons.Count; i++)
         {
             Control button = buttons[i];
             SaveFocus(button);
-            int row = i < columns ? 0 : 1;
-            int rowStart = row == 0 ? 0 : columns;
-            int rowCount = row == 0 ? columns : buttons.Count - columns;
-            int inRow = i - rowStart;
-            button.FocusNeighborLeft = buttons[rowStart + (inRow + rowCount - 1) % rowCount].GetPath();
-            button.FocusNeighborRight = buttons[rowStart + (inRow + 1) % rowCount].GetPath();
-            bool upper = row == 0;
-            Control other = (upper ? buttons.Skip(columns) : buttons.Take(columns))
-                .MinBy(candidate => MathF.Abs(candidate.Position.X - button.Position.X)) ?? button;
-            button.FocusNeighborTop = (upper ? button : other).GetPath();
-            button.FocusNeighborBottom = (upper ? other : button).GetPath();
+            if (!state.FocusPaths.TryGetValue(button.GetInstanceId(), out NodePath[]? plan)) continue;
+            if (button.FocusNeighborLeft == plan[0] && button.FocusNeighborRight == plan[1] &&
+                button.FocusNeighborTop == plan[2] && button.FocusNeighborBottom == plan[3]) continue;
+            button.FocusNeighborLeft = plan[0];
+            button.FocusNeighborRight = plan[1];
+            button.FocusNeighborTop = plan[2];
+            button.FocusNeighborBottom = plan[3];
         }
-        state.FocusCount = buttons.Count;
         return top;
     }
 
     /// <summary>Scales the ascension panel, centers its number on the flame and places it under the roster; returns its top.</summary>
-    private float PrepareAscension(Control screen, Rect2 safe, float gridTop)
+    private float PrepareAscension(Control screen, ScreenState state, Rect2 safe, float gridTop)
     {
-        if (screen.GetNodeOrNull<Control>("%AscensionPanel") is not { } ascension) return gridTop;
+        if (Node(screen, state, "%AscensionPanel") is not { } ascension) return gridTop;
         Capture(ascension);
+        if (ascension.MouseFilter != Control.MouseFilterEnum.Ignore) ascension.MouseFilter = Control.MouseFilterEnum.Ignore;
         Vector2 size = ascension.Size;
         ascension.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.KeepSize);
         ascension.Size = size;
         SetScale(ascension, new Vector2(AscensionScale, AscensionScale), Vector2.Zero);
 
-        Control? art = ascension.GetNodeOrNull<Control>("Background");
+        Control? art = Node(ascension, state, "Background", "asc.background");
         Rect2 artRect = art?.GetRect() ?? new Rect2(Vector2.Zero, size);
         Vector2 place = new(
             (safe.Size.X - size.X * AscensionScale) * 0.5f,
@@ -152,7 +195,7 @@ internal sealed partial class PortraitMenuLayout
         if (ascension.Position.DistanceSquaredTo(place) > 0.25f) ascension.Position = place;
         float top = place.Y + artRect.Position.Y * AscensionScale;
 
-        if (ascension.GetNodeOrNull<Control>("HBoxContainer/AscensionContainer/AscensionLevel") is { } number)
+        if (Node(ascension, state, "HBoxContainer/AscensionContainer/AscensionLevel", "asc.number") is { } number)
         {
             if (number.OffsetLeft != 0f) number.OffsetLeft = 0f;
             if (number.OffsetRight != 0f) number.OffsetRight = 0f;
@@ -174,9 +217,10 @@ internal sealed partial class PortraitMenuLayout
     /// </summary>
     private void PrepareInfo(Control screen, ScreenState state, bool blitz, Rect2 safe, float ascensionTop)
     {
-        if (screen.GetNodeOrNull<Control>("InfoPanel") is not { } info) return;
-        Control plate = info.GetNodeOrNull<Control>("NinePatchRect") ?? info;
+        if (Node(screen, state, "InfoPanel") is not { } info) return;
+        Control plate = Node(info, state, "NinePatchRect", "info.plate") ?? info;
         Capture(info);
+        if (info.MouseFilter != Control.MouseFilterEnum.Ignore) info.MouseFilter = Control.MouseFilterEnum.Ignore;
         info.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.KeepSize);
         info.PivotOffset = Vector2.Zero;
         var size = new Vector2(InfoWidth, blitz ? InfoBlitzHeight : InfoHeight);
@@ -210,7 +254,7 @@ internal sealed partial class PortraitMenuLayout
     /// </summary>
     private void PrepareConfirm(ScreenState state, Control screen, Rect2 safe)
     {
-        if (screen.GetNodeOrNull<Control>("ConfirmButton") is not { } confirm) return;
+        if (Node(screen, state, "ConfirmButton") is not { } confirm) return;
         if (!state.ConfirmScaled)
         {
             // The screen can be laid out before the game has given the button its size; scaling a 0x0 box would lock it in.

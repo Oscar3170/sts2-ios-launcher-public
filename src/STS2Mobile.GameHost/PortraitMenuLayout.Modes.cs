@@ -23,9 +23,9 @@ internal sealed partial class PortraitMenuLayout
     /// </summary>
     private void LayoutModeCards(Control screen, ScreenState state)
     {
-        if (screen.GetNodeOrNull<BoxContainer>("ButtonContainer") is not { } row) return;
+        if (Node(screen, state, "ButtonContainer") is not BoxContainer row) return;
         List<Control> cards = row.GetChildren().OfType<Control>().Where(card => card.Visible).ToList();
-        EnsureBackOnTop(screen);
+        EnsureBackOnTop(screen, state);
         if (cards.Count == 0) return;
 
         int rows = Math.Max(1, (cards.Count + 1) / 2);
@@ -111,9 +111,9 @@ internal sealed partial class PortraitMenuLayout
     /// Gives one of the top-edge icon buttons a finger's box. It grows to the left from its right edge, so an icon anchored
     /// at the screen's right side stays on the canvas.
     /// </summary>
-    private void GrowInfoTarget(Control screen, string name)
+    private void GrowInfoTarget(Control screen, ScreenState state, string name)
     {
-        if (screen.GetNodeOrNull<Control>(name) is not { } button || button.Size.X < 1f || button.Size.Y < 1f) return;
+        if (Node(screen, state, name) is not { } button || button.Size.X < 1f || button.Size.Y < 1f) return;
         Vector2 scale = button.GetGlobalTransformWithCanvas().Scale.Abs();
         float side = PortraitBands.MinTarget / Math.Max(0.01f, Math.Min(scale.X, scale.Y));
         if (button.Size.X >= side && button.Size.Y >= side) return;
@@ -149,9 +149,9 @@ internal sealed partial class PortraitMenuLayout
     }
 
     /// <summary>Moves one of the screen's top-edge controls down with the safe band, keeping its own size and anchors.</summary>
-    private void ShiftTopControl(Control screen, string name, float safeTop)
+    private void ShiftTopControl(Control screen, ScreenState state, string name, float safeTop)
     {
-        if (screen.GetNodeOrNull<Control>(name) is not { } control) return;
+        if (Node(screen, state, name) is not { } control) return;
         PortraitControlSnapshot snap = Capture(control);
         float top = snap.InitialOffsetTop + safeTop;
         if (MathF.Abs(control.OffsetTop - top) > 0.5f) control.OffsetTop = top;

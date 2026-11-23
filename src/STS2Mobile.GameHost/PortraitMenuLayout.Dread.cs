@@ -18,35 +18,35 @@ internal sealed partial class PortraitMenuLayout
     private void LayoutDread(Control screen, ScreenState state)
     {
         Rect2 safe = state.Safe;
-        float gridTop = ArrangeCharacterButtons(state, screen, Roster(screen), safe);
+        float gridTop = ArrangeCharacterButtons(state, screen, state.GridControl ??= Roster(screen, state), safe);
         PrepareConfirm(state, screen, safe);
-        EnsureBackOnTop(screen);
 
         // Dread's badge and info button sit on the top edge on the desktop, under the notch here: shift them with the safe
         // band like Blitz's header.
         foreach (string name in new[] { "%UnderConstruction", "%DreadInfoButton" })
-            ShiftTopControl(screen, name, safe.Position.Y);
-        GrowInfoTarget(screen, "%DreadInfoButton");
+            ShiftTopControl(screen, state, name, safe.Position.Y);
+        GrowInfoTarget(screen, state, "%DreadInfoButton");
 
         // A finger's target is 127 canvas units, 197.5 of this screen's units; the tickbox and the win streak above it are
         // short wide blocks, so they are stacked with the room between them that the pad needs to reach that size.
-        float tickHeight = DreadHeight(screen, "RotatingTickbox", DreadTickboxScale);
-        float streakHeight = DreadHeight(screen, "DreadWinStreak", DreadStreakScale);
-        float scoreHeight = DreadHeight(screen, "ScoreContainer", DreadScoreScale);
+        float tickHeight = DreadHeight(screen, state, "RotatingTickbox", DreadTickboxScale);
+        float streakHeight = DreadHeight(screen, state, "DreadWinStreak", DreadStreakScale);
+        float scoreHeight = DreadHeight(screen, state, "ScoreContainer", DreadScoreScale);
         float tickTop = gridTop - 150f;
         float gap = Math.Max(24f, 197.5f - (tickHeight + streakHeight) / 2f);
         float streakTop = tickTop - gap - streakHeight;
         float scoreTop = streakTop - 32f - scoreHeight;
 
-        PlaceDreadControl(screen, "DreadNameText", safe.Position.Y + DreadNameTop, DreadNameScale, safe);
-        PlaceDreadControl(screen, "ScoreContainer", scoreTop, DreadScoreScale, safe);
-        PlaceDreadControl(screen, "DreadWinStreak", streakTop, DreadStreakScale, safe);
-        PlaceDreadControl(screen, "RotatingTickbox", tickTop, DreadTickboxScale, safe);
+        PlaceDreadControl(screen, state, "DreadNameText", safe.Position.Y + DreadNameTop, DreadNameScale, safe);
+        PlaceDreadControl(screen, state, "ScoreContainer", scoreTop, DreadScoreScale, safe);
+        PlaceDreadControl(screen, state, "DreadWinStreak", streakTop, DreadStreakScale, safe);
+        PlaceDreadControl(screen, state, "RotatingTickbox", tickTop, DreadTickboxScale, safe);
+        EnsureBackOnTop(screen, state);
     }
 
-    private static float DreadHeight(Control screen, string name, float scale)
+    private static float DreadHeight(Control screen, ScreenState state, string name, float scale)
     {
-        Control? control = screen.GetNodeOrNull<Control>(name) ?? screen.GetNodeOrNull<Control>("%" + name);
+        Control? control = Node(screen, state, name) ?? Node(screen, state, "%" + name);
         return control == null ? 0f : Math.Max(0f, control.Size.Y * scale);
     }
 
@@ -55,9 +55,9 @@ internal sealed partial class PortraitMenuLayout
     /// (smaller when its picture would not fit the width). Its own size is kept, so the native clock and chain animations
     /// keep their local layout.
     /// </summary>
-    private void PlaceDreadControl(Control screen, string name, float y, float scale, Rect2 safe)
+    private void PlaceDreadControl(Control screen, ScreenState state, string name, float y, float scale, Rect2 safe)
     {
-        Control? control = screen.GetNodeOrNull<Control>(name) ?? screen.GetNodeOrNull<Control>("%" + name);
+        Control? control = Node(screen, state, name) ?? Node(screen, state, "%" + name);
         if (control == null) return;
         Capture(control);
         Vector2 size = control.Size;

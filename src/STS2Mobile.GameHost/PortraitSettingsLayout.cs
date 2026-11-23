@@ -478,12 +478,19 @@ internal sealed class PortraitSettingsLayout
         if (!_ready) return;
         if (FeedbackHolds()) { Note("the feedback screen holds the view", point); return; }
         // An open dropdown's list is drawn over the rows and scrolls itself; its items are what the finger went down on.
+        // A press anywhere else dismisses it: the native dismisser is a child of the clipped panel, so a tap below the rows
+        // area (or beside it) never reaches it, and the list would stay open.
         foreach (ulong id in _dropdowns.Keys.ToList())
         {
             if (!_dropdowns.TryGetValue(id, out DropdownState? drop) || Resolve(id, drop) is not { } list ||
                 !list.IsVisibleInTree()) continue;
             Rect2 listRect = list.GetGlobalRect();
-            if (!listRect.HasPoint(point)) continue;
+            if (!listRect.HasPoint(point))
+            {
+                CloseList(id);
+                Note($"outside the open list {listRect}: dismissed it", point);
+                return;
+            }
             if (_listDrag?.GetValue(list) is not Vector2 listDrag) { Note("list has no drag target", point); return; }
             // A list too short to scroll still owns the press: a swipe on it is not a language change.
             float listLimit = _listLimit?.GetValue(list) is float room ? Math.Min(room, 0f) : 0f;
@@ -507,6 +514,23 @@ internal sealed class PortraitSettingsLayout
             return;
         }
         Note("no open list and no rows area at the press", point);
+    }
+
+    /// <summary>
+    /// Closes a dropdown the way its own dismisser does (<c>NDropdown.CloseDropdown</c> hides the list and its dismisser and
+    /// takes the focus back). The native dismisser cannot do it from outside the panel's clipping ancestor.
+    /// </summary>
+    private void CloseList(ulong id)
+    {
+        if (GodotObject.InstanceFromId(id) is Node dropdown && GodotObject.IsInstanceValid(dropdown) &&
+            dropdown.HasMethod("CloseDropdown"))
+            dropdown.Call("CloseDropdown");
+        if (_dropdowns.TryGetValue(id, out DropdownState? state))
+        {
+            state.Button = Vector2.Inf;
+            state.Covers = false;
+        }
+        End();
     }
 
     /// <summary>Why a press started no swipe; printed once per press while settings is open (a handful per run).</summary>

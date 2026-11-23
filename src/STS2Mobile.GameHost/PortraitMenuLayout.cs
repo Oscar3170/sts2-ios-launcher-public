@@ -47,6 +47,16 @@ internal sealed partial class PortraitMenuLayout
         public Action? ModeSort;
         public int FocusCount = -1;
 
+        // Resolved scene nodes and the roster/focus plans, so the per-frame pass does no path lookups or LINQ.
+        public Control? GridControl;
+        public Control? ArtContainer;
+        public readonly Dictionary<string, Control?> Named = new(StringComparer.Ordinal);
+        public readonly List<Control> Roster = new();
+        public int RosterChildren = -1;
+        public Vector2 RosterCell;
+        public bool FocusDirty = true;
+        public readonly Dictionary<ulong, NodePath[]> FocusPaths = new();
+
         /// <summary>Forgets what only holds while portrait is on; the snapshots put the desktop layout back.</summary>
         public void ResetPortrait()
         {
@@ -60,6 +70,13 @@ internal sealed partial class PortraitMenuLayout
             ConfirmPlaced = false;
             InfoPlaced = false;
             FocusCount = -1;
+            GridControl = ArtContainer = null;
+            Named.Clear();
+            Roster.Clear();
+            RosterChildren = -1;
+            RosterCell = Vector2.Zero;
+            FocusDirty = true;
+            FocusPaths.Clear();
         }
     }
 
@@ -115,11 +132,11 @@ internal sealed partial class PortraitMenuLayout
                 case CharacterSelectTypeName:
                 case BlitzTypeName:
                     LayoutCharacterSelect(screen, state);
-                    FrameArt(screen, "AnimatedBg");
+                    FrameArt(screen, state, "AnimatedBg");
                     break;
                 case DreadTypeName:
                     LayoutDread(screen, state);
-                    FrameArt(screen, "SubViewportContainer/SubViewport/AnimatedBg");
+                    FrameArt(screen, state, "SubViewportContainer/SubViewport/AnimatedBg");
                     break;
             }
         }
@@ -190,6 +207,32 @@ internal sealed partial class PortraitMenuLayout
         PortraitMenuText.PruneDead();
     }
 
+    /// <summary>A scene node under this screen, resolved once (a null is final for these scenes; ResetPortrait clears it).</summary>
+    private static Control? Node(Control screen, ScreenState state, string path)
+    {
+        if (state.Named.TryGetValue(path, out Control? cached))
+        {
+            if (cached == null || GodotObject.IsInstanceValid(cached)) return cached;
+            state.Named.Remove(path);
+        }
+        Control? found = screen.GetNodeOrNull<Control>(path);
+        state.Named[path] = found;
+        return found;
+    }
+
+    /// <summary>A node below a cached parent, resolved once and kept in the state's name cache.</summary>
+    private static Control? Node(Control parent, ScreenState state, string path, string cacheKey)
+    {
+        if (state.Named.TryGetValue(cacheKey, out Control? cached))
+        {
+            if (cached == null || GodotObject.IsInstanceValid(cached)) return cached;
+            state.Named.Remove(cacheKey);
+        }
+        Control? found = parent.GetNodeOrNull<Control>(path);
+        state.Named[cacheKey] = found;
+        return found;
+    }
+
     private PortraitControlSnapshot Capture(Control control, bool captureVisible = false)
     {
         if (!_snapshots.TryGetValue(control.GetInstanceId(), out PortraitControlSnapshot? snap))
@@ -208,9 +251,9 @@ internal sealed partial class PortraitMenuLayout
     /// Moving a node within its own parent does not exit the tree, so its connections and hotkeys stay. The position belongs
     /// to the navigation pad pass (the single writer for back buttons).
     /// </summary>
-    private static void EnsureBackOnTop(Control screen)
+    private static void EnsureBackOnTop(Control screen, ScreenState state)
     {
-        Control? back = screen.GetNodeOrNull<Control>("BackButton") ?? screen.GetNodeOrNull<Control>("%BackButton");
+        Control? back = Node(screen, state, "BackButton") ?? Node(screen, state, "%BackButton");
         if (back?.GetParent() is Control parent && !PhoneHitArea.IsContainer(parent) &&
             back.GetIndex() != parent.GetChildCount() - 1)
             parent.MoveChild(back, parent.GetChildCount() - 1);
@@ -280,7 +323,8 @@ internal sealed partial class PortraitMenuLayout
     private void SaveFocus(Control button)
     {
         ulong id = button.GetInstanceId();
-        if (_focus.Any(entry => entry.Id == id)) return;
+        for (int i = 0; i < _focus.Count; i++)
+            if (_focus[i].Id == id) return;
         _focus.Add((id, button.FocusNeighborLeft, button.FocusNeighborRight, button.FocusNeighborTop, button.FocusNeighborBottom));
     }
 
