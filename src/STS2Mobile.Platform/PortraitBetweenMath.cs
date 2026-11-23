@@ -12,8 +12,8 @@ public readonly record struct CardGridColumns(int Columns, float CardScale, floa
 /// <summary>A loot window's drawn rectangle and scale, in canvas units.</summary>
 public readonly record struct LootWindowFit(float Scale, float X, float Y, float Width, float Height, float WindowHeight);
 
-/// <summary>A card grid's scale and the height of the whole block, relative to its first row's top.</summary>
-public readonly record struct CardGridFit(float Scale, float BlockHeight);
+/// <summary>A card grid's scale, the height of the whole block, and the arrangement it chose.</summary>
+public readonly record struct CardGridFit(float Scale, float BlockHeight, int Rows, int Columns);
 
 /// <summary>
 /// Pure layout math for portrait between-fight screens: the Spire Map's scroll range, the 2 x 2 card reward grid,
@@ -107,19 +107,25 @@ public static class PortraitBetweenMath
     /// Centres of card reward slots in portrait: one row for one or two cards, 2 + 1 for three (the third centred below),
     /// 2 x 2 for four, and rows of two beyond that. Slots are given relative to the centre of the whole block.
     /// </summary>
-    public static IReadOnlyList<GridSlot> RewardSlots(int count, float cardWidth, float cardHeight, float gapX, float gapY)
+    public static IReadOnlyList<GridSlot> RewardSlots(int count, float cardWidth, float cardHeight, float gapX, float gapY) =>
+        RewardSlots(count, Math.Min(Math.Max(count, 1), 2), cardWidth, cardHeight, gapX, gapY);
+
+    /// <summary>Slots for an explicit number of columns (one column is a single row).</summary>
+    public static IReadOnlyList<GridSlot> RewardSlots(
+        int count, int columns, float cardWidth, float cardHeight, float gapX, float gapY)
     {
         var slots = new List<GridSlot>(Math.Max(count, 0));
         if (count <= 0) return slots;
-        int rows = count <= 2 ? 1 : (count + 1) / 2;
+        columns = Math.Max(1, Math.Min(columns, count));
+        int rows = (count + columns - 1) / columns;
         float stepX = cardWidth + gapX;
         float stepY = cardHeight + gapY;
         float firstY = -(rows - 1) * stepY / 2f;
         for (int i = 0; i < count; i++)
         {
-            int row = count <= 2 ? 0 : i / 2;
-            int inRow = count <= 2 ? count : Math.Min(2, count - row * 2);
-            int col = count <= 2 ? i : i % 2;
+            int row = i / columns;
+            int inRow = Math.Min(columns, count - row * columns);
+            int col = i % columns;
             float rowStartX = -(inRow - 1) * stepX / 2f;
             slots.Add(new GridSlot(rowStartX + col * stepX, firstY + row * stepY));
         }
@@ -267,28 +273,46 @@ public static class PortraitBetweenMath
     }
 
     /// <summary>
-    /// Scale for a card reward grid (two to a row, an odd card centred below) in the band between
-    /// <paramref name="blockTop"/> and <paramref name="blockBottom"/>, with a margin either side of the canvas. Both limits
-    /// are honoured; a phone's smallest card is then 289 units wide (100 points at the 1680-wide reference).
+    /// How far a card grows past its laid-out edge when the game focuses it: focus sets the holder's scale to 1.0 from the
+    /// grid's 0.8, so a card grows a quarter larger about its middle and half of that (an eighth of its height) reaches past
+    /// each edge. A focused card must not draw over the banner, the skip/peek footer or the alternatives row.
+    /// </summary>
+    public const float CardFocusGrowth = 0.125f;
+
+    /// <summary>
+    /// Scale and arrangement for a card reward grid in the band between <paramref name="bandTop"/> and
+    /// <paramref name="bandBottom"/>, with a margin either side of the canvas, reserving <see cref="CardFocusGrowth"/> of a
+    /// card's height above and below the block for the focused card. Two to a row is preferred; when that cannot give a card
+    /// at least <paramref name="minScale"/> (the phone's floor of 289 units), three cards take one row instead, which is
+    /// larger on the shorter canvas.
     /// </summary>
     public static CardGridFit CardGrid(
         int count,
         float canvasWidth,
-        float blockTop,
-        float blockBottom,
+        float bandTop,
+        float bandBottom,
         float cardWidth,
         float cardHeight,
         float gapX,
         float gapY,
         float maxScale,
-        float sideMargin)
+        float sideMargin,
+        float minScale)
     {
-        if (count <= 0) return new CardGridFit(maxScale, 0f);
-        int columns = Math.Min(count, 2);
-        int rows = (count + 1) / 2;
-        float byWidth = (canvasWidth - 2f * sideMargin - (columns - 1) * gapX) / (columns * cardWidth);
-        float byHeight = (blockBottom - blockTop - (rows - 1) * gapY) / (rows * cardHeight);
-        float scale = Math.Clamp(Math.Min(maxScale, Math.Min(byWidth, byHeight)), 0.2f, maxScale);
-        return new CardGridFit(scale, rows * cardHeight * scale + (rows - 1) * gapY);
+        if (count <= 0) return new CardGridFit(maxScale, 0f, 0, 0);
+        CardGridFit Fit(int columns)
+        {
+            int rows = (count + columns - 1) / columns;
+            float byWidth = (canvasWidth - 2f * sideMargin - (columns - 1) * gapX) / (columns * cardWidth);
+            float bandHeight = bandBottom - bandTop - (rows - 1) * gapY;
+            float byHeight = bandHeight / (cardHeight * (rows + 2f * CardFocusGrowth));
+            float scale = Math.Clamp(Math.Min(maxScale, Math.Min(byWidth, byHeight)), 0.2f, maxScale);
+            return new CardGridFit(scale, rows * cardHeight * scale + (rows - 1) * gapY, rows, columns);
+        }
+        CardGridFit grid = Fit(Math.Min(count, 2));
+        if (grid.Scale >= minScale || count > 3) return grid;
+        // Three cards: one row is wider than half as wide, and it is the taller canvas that makes the pair too short.
+        CardGridFit singleRow = Fit(count);
+        return singleRow.Scale > grid.Scale ? singleRow : grid;
     }
 }

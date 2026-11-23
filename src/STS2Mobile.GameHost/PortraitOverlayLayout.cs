@@ -354,11 +354,12 @@ internal sealed class PortraitOverlayLayout
     private const float ChoiceCardGapY = 32f;
     private const float ChoiceMaxCardScale = 1.5f;
     private const float ChoiceHolderScale = 0.8f;
-    private const float ChoiceCardSideMargin = 30f;
+    private const float ChoiceCardSideMargin = 44f;
     private const float ChoiceBannerBottom = 172f;
-    private const float ChoiceBannerGap = 24f;
-    private const float ChoiceFooterGap = 24f;
+    private const float ChoiceBannerGap = 8f;
+    private const float ChoiceFooterGap = 8f;
     private const float ChoiceBottomMargin = 24f;
+    private const float ChoiceCardFloorScale = 289f / 300f;
     private const float ChoiceRightMargin = PortraitBetweenMath.ActionRightMargin;
     private const float ChoiceCardRowSpacing = 340f;
     private const float PeekSize = 128f;
@@ -650,8 +651,9 @@ internal sealed class PortraitOverlayLayout
     /// <summary>
     /// The choose a card screen puts its cards in one row at 0.8 of their size, 340 units apart: three cards are small on the
     /// tall screen and four run off it. In portrait they stand as the card reward's do (two to a row, an odd last card centred)
-    /// under the banner, with one footer row under them: the peek button at the left and Skip's right edge a stone margin in
-    /// from the canvas. The footer row is as tall as the larger of the two, and the cards take what is left above it.
+    /// under the banner, or three in one row on the shorter canvas where two rows would push a focused card into the footer;
+    /// the footer row holds the peek button at the left and Skip at the right, its top kept an eighth of a card clear of the
+    /// focused bottom card (the game grows a focused holder by a quarter about its middle).
     /// </summary>
     private void LayoutChooseCard(Control screen, Vector2 canvas)
     {
@@ -671,15 +673,19 @@ internal sealed class PortraitOverlayLayout
 
         bool peekShown = PeekShown(screen);
         float footerHeight = peekShown ? Math.Max(PortraitBands.MinTarget, PeekSize * PeekScale) : PortraitBands.MinTarget;
-        float cardTop = centre.Y - ChoiceBannerBottom - lift + ChoiceBannerGap;
-        float blockBottom = size.Y - ChoiceBottomMargin - ChoiceFooterGap - footerHeight;
+        float bandTop = centre.Y - ChoiceBannerBottom - lift + ChoiceBannerGap;
+        float footerTopMax = size.Y - ChoiceBottomMargin - footerHeight;
+        float bandBottom = footerTopMax - ChoiceFooterGap;
         CardGridFit grid = PortraitBetweenMath.CardGrid(
-            count, size.X, cardTop, blockBottom, ChoiceCardWidth, ChoiceCardHeight,
-            ChoiceCardGapX, ChoiceCardGapY, ChoiceMaxCardScale, ChoiceCardSideMargin);
+            count, size.X, bandTop, bandBottom, ChoiceCardWidth, ChoiceCardHeight,
+            ChoiceCardGapX, ChoiceCardGapY, ChoiceMaxCardScale, ChoiceCardSideMargin, ChoiceCardFloorScale);
         float cardScale = grid.Scale;
         float rowScale = cardScale / ChoiceHolderScale;
+        float focusGrow = PortraitBetweenMath.CardFocusGrowth * ChoiceCardHeight * cardScale;
         float blockHeight = grid.BlockHeight;
-        float blockCentreY = cardTop + blockHeight / 2f;
+        float blockTop = bandTop + focusGrow +
+                         Math.Max(0f, (bandBottom - bandTop - 2f * focusGrow - blockHeight) / 2f);
+        float blockCentreY = blockTop + blockHeight / 2f;
 
         CaptureChoice(row);
         var scale = new Vector2(rowScale, rowScale);
@@ -691,7 +697,7 @@ internal sealed class PortraitOverlayLayout
             row.OffsetBottom = rowY;
         }
 
-        float footerTop = blockCentreY + blockHeight / 2f + ChoiceFooterGap;
+        float footerTop = blockCentreY + blockHeight / 2f + focusGrow + ChoiceFooterGap;
         float footerRight = size.X - ChoiceRightMargin;
         float footerLeft = peekShown ? PeekLeft + PeekSize * PeekScale + ChoiceSideMargin : ChoiceSideMargin;
         _buttonRows[screenId] = (
@@ -720,7 +726,7 @@ internal sealed class PortraitOverlayLayout
             fresh = true;
         }
         IReadOnlyList<GridSlot> slots = PortraitBetweenMath.RewardSlots(
-            order.Count, ChoiceCardWidth * cardScale, ChoiceCardHeight * cardScale, ChoiceCardGapX, ChoiceCardGapY);
+            order.Count, grid.Columns, ChoiceCardWidth * cardScale, ChoiceCardHeight * cardScale, ChoiceCardGapX, ChoiceCardGapY);
         FieldInfo? tweenField = screen.GetType().GetField("_cardTween", InstAll);
         if (fresh)
         {

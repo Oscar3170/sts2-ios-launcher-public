@@ -280,40 +280,64 @@ public class PortraitBetweenMathTests
     }
 
     [Theory]
-    [InlineData(1920f, 812f, 1683f)]
-    [InlineData(2340f, 814f, 2103f)]
-    public void CardRewardGridKeepsCardsAtLeastTwoHundredAndEightyNineWide(float height, float top, float bottom)
+    [InlineData(1920f, 796f, 1761f, 0.98262f, 294.8f)]
+    [InlineData(2340f, 798f, 2181f, 1.42285f, 426.9f)]
+    public void CardRewardGridReservesTheFocusedCardsGrowth(float height, float top, float bottom, float scale, float width)
     {
         CardGridFit fit = PortraitBetweenMath.CardGrid(
-            3, 1080f, top, bottom, 300f, 422f, 48f, 32f, 1.5f, 30f);
+            3, 1080f, top, bottom, 300f, 422f, 48f, 32f, 1.5f, 44f, 289f / 300f);
+        Assert.Equal(2, fit.Rows);
+        Assert.Equal(2, fit.Columns);
+        Assert.Equal(scale, fit.Scale, 3);
+        Assert.Equal(width, 300f * fit.Scale, 1);
         Assert.True(300f * fit.Scale >= 289f, $"scale {fit.Scale:F3} gives {300f * fit.Scale:F1}");
         Assert.Equal(2f * 422f * fit.Scale + 32f, fit.BlockHeight, 1);
-        Assert.True(top + fit.BlockHeight <= bottom + 0.01f);
-        Assert.True(top + fit.BlockHeight + 30f + ActionHeight <= height);
+        // The focused bottom card's grown edge stays inside the band (the alternatives' top less 8).
+        float grow = PortraitBetweenMath.CardFocusGrowth * 422f * fit.Scale;
+        Assert.True(top + grow + fit.BlockHeight + grow <= bottom + 0.01f);
+        Assert.True(top + grow + fit.BlockHeight + grow + 8f + ActionHeight <= height);
     }
 
     [Theory]
-    [InlineData(1920f, 812f, 1667.2f)]
-    [InlineData(2340f, 814f, 2087.2f)]
-    public void ChooseACardGridKeepsCardsAtLeastTwoHundredAndEightyNineWide(float height, float top, float bottom)
+    [InlineData(1920f, 796f, 1683.2f, 1, 3, 0.99556f, 298.7f)]
+    [InlineData(2340f, 798f, 2103.2f, 2, 2, 1.34092f, 402.3f)]
+    public void ChooseACardGridFallsBackToOneRowWhenThePairIsTooShort(
+        float height, float top, float bottom, int rows, int columns, float scale, float width)
     {
         CardGridFit fit = PortraitBetweenMath.CardGrid(
-            3, 1080f, top, bottom, 300f, 422f, 48f, 32f, 1.5f, 30f);
+            3, 1080f, top, bottom, 300f, 422f, 48f, 32f, 1.5f, 44f, 289f / 300f);
+        Assert.Equal(rows, fit.Rows);
+        Assert.Equal(columns, fit.Columns);
+        Assert.Equal(scale, fit.Scale, 3);
+        Assert.Equal(width, 300f * fit.Scale, 1);
         Assert.True(300f * fit.Scale >= 289f, $"scale {fit.Scale:F3} gives {300f * fit.Scale:F1}");
-        Assert.Equal(height == 1920f ? 0.97536f : 1.47062f, fit.Scale, 3);
+        // The footer (peek 204.8) sits below the focused card's grown edge with 24 units to spare.
+        float grow = PortraitBetweenMath.CardFocusGrowth * 422f * fit.Scale;
+        Assert.True(top + grow + fit.BlockHeight + grow + 8f + 204.8f <= height - 24f + 0.1f);
+    }
+
+    [Fact]
+    public void ThreeColumnsGiveASingleRow()
+    {
+        var slots = PortraitBetweenMath.RewardSlots(3, 3, 300f, 420f, 40f, 30f);
+        Assert.Equal(3, slots.Count);
+        Assert.All(slots, s => Assert.Equal(0f, s.CenterY));
+        Assert.Equal(-340f, slots[0].CenterX, 3);
+        Assert.Equal(340f, slots[2].CenterX, 3);
     }
 
     [Fact]
     public void CardGridHonoursItsWidthWhenTheBandAllowsTheCap()
     {
         CardGridFit twoCards = PortraitBetweenMath.CardGrid(
-            2, 1080f, 400f, 2000f, 300f, 422f, 48f, 32f, 1.5f, 30f);
+            2, 1080f, 400f, 2000f, 300f, 422f, 48f, 32f, 1.5f, 44f, 289f / 300f);
         Assert.Equal(1.5f, twoCards.Scale, 3);
         Assert.Equal(422f * 1.5f, twoCards.BlockHeight, 2);
-        Assert.Equal(Math.Min(1.5f, (1080f - 60f - 48f) / 600f), twoCards.Scale, 3);
-        // Four cards are two rows and keep the row gap between them.
+        Assert.Equal(Math.Min(1.5f, (1080f - 88f - 48f) / 600f), twoCards.Scale, 3);
+        // Four cards are two rows, and the cap still limits them in this band.
         CardGridFit fourCards = PortraitBetweenMath.CardGrid(
-            4, 1080f, 400f, 2000f, 300f, 422f, 48f, 32f, 1.5f, 30f);
-        Assert.Equal(2f * 422f * 1.5f + 32f, fourCards.BlockHeight, 2);
+            4, 1080f, 400f, 2000f, 300f, 422f, 48f, 32f, 1.5f, 44f, 289f / 300f);
+        Assert.Equal(1.5f, fourCards.Scale, 3);
+        Assert.Equal(2f * 422f * fourCards.Scale + 32f, fourCards.BlockHeight, 2);
     }
 }

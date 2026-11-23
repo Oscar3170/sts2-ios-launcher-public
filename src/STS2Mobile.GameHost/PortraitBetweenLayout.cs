@@ -67,13 +67,14 @@ internal sealed partial class PortraitBetweenLayout
     private const float RewardMaxCardScale = 1.5f;
     private const float RewardCardGapX = 48f;
     private const float RewardCardGapY = 32f;
-    private const float RewardCardSideMargin = 30f;
+    private const float RewardCardSideMargin = 44f;
     // The banner sits above the cards; the alternatives (the card reward's Reroll and Skip) form one row under them, its right
     // edge a stone margin in from the canvas. Loot rows are 88 tall inside the window and their labels read at 15 points.
-    private const float RewardBannerGap = 24f;
-    private const float RewardAlternativeGap = 30f;
+    private const float RewardBannerGap = 8f;
+    private const float RewardCardClearance = 8f;
     private const float RewardAlternativeSeparation = 21f;
-    private const float RewardBottomMargin = 80f;
+    private const float RewardBottomMargin = 24f;
+    private const float RewardCardFloorScale = 289f / 300f;
     private const int RewardRowFontSize = 28;
     private const float GridScale = 1.8f;
     // The shared banner ("Choose a Card") is 162 units tall, 172 to 334 above the screen's middle; in portrait it rises to just
@@ -721,17 +722,21 @@ internal sealed partial class PortraitBetweenLayout
         // The banner sits above the cards; the alternatives (44 points tall, grown by PortraitOverlayLayout) keep one row
         // under them, right-aligned a stone margin in from the canvas, and the block takes what is left between.
         float altHeight = PortraitBands.MinTarget;
-        float cardTop = bannerBottom + RewardBannerGap;
-        float blockBottom = canvas.Y - RewardBottomMargin - altHeight - RewardAlternativeGap;
+        float footerTop = canvas.Y - RewardBottomMargin - altHeight;
+        float bandTop = bannerBottom + RewardBannerGap;
+        float bandBottom = footerTop - RewardCardClearance;
         CardGridFit grid = PortraitBetweenMath.CardGrid(
-            holders.Count, canvas.X, cardTop, blockBottom, RewardCardWidth, RewardCardHeight,
-            RewardCardGapX, RewardCardGapY, RewardMaxCardScale, RewardCardSideMargin);
+            holders.Count, canvas.X, bandTop, bandBottom, RewardCardWidth, RewardCardHeight,
+            RewardCardGapX, RewardCardGapY, RewardMaxCardScale, RewardCardSideMargin, RewardCardFloorScale);
         float cardScale = grid.Scale;
         float holderScale = 0.8f;
         float rowScale = cardScale / holderScale;
+        float focusGrow = PortraitBetweenMath.CardFocusGrowth * RewardCardHeight * cardScale;
 
         float blockHeight = grid.BlockHeight;
-        float blockCentreY = cardTop + blockHeight / 2f;
+        float blockTop = bandTop + focusGrow +
+                         Math.Max(0f, (bandBottom - bandTop - 2f * focusGrow - blockHeight) / 2f);
+        float blockCentreY = blockTop + blockHeight / 2f;
 
         Capture(row, captureVisible: false);
         row.Scale = new Vector2(rowScale, rowScale);
@@ -745,7 +750,7 @@ internal sealed partial class PortraitBetweenLayout
                 slide.IsValid() && slide.IsRunning())
                 slide.Kill();
             Capture(alts, captureVisible: false);
-            float top = blockCentreY + blockHeight / 2f + RewardAlternativeGap - centreY;
+            float top = blockCentreY + blockHeight / 2f + focusGrow + RewardCardClearance - centreY;
             alts.OffsetTop = top;
             alts.OffsetBottom = top + altHeight;
             alts.OffsetLeft = 0f;
@@ -782,7 +787,7 @@ internal sealed partial class PortraitBetweenLayout
             fresh = true;
         }
         IReadOnlyList<GridSlot> slots = PortraitBetweenMath.RewardSlots(
-            order.Count, RewardCardWidth * cardScale, RewardCardHeight * cardScale, RewardCardGapX, RewardCardGapY);
+            order.Count, grid.Columns, RewardCardWidth * cardScale, RewardCardHeight * cardScale, RewardCardGapX, RewardCardGapY);
         Vector2 SlotOf(Control holder)
         {
             GridSlot slot = slots[order.IndexOf(holder.GetInstanceId())];
