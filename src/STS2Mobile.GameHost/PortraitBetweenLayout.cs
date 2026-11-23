@@ -106,6 +106,7 @@ internal sealed partial class PortraitBetweenLayout
         public readonly bool Blitz = blitz;
         public int RowCount = -1;
         public float ContentHeight;
+        public bool Placed;
         public Tween? Fade;
     }
 
@@ -591,19 +592,24 @@ internal sealed partial class PortraitBetweenLayout
         if (fadeTween != null && fadeTween.IsValid() && fadeTween.IsRunning() && state.Fade != fadeTween)
         {
             // The game's entrance slides the window to its desktop place and fades it in; take the slide over so it ends at
-            // the portrait place (the window starts transparent, so nothing is seen at the desktop place).
+            // the portrait place (the window starts transparent, so nothing is seen at the desktop place). A loot screen
+            // coming back from the card reward is already in its portrait place (only its modulate faded): the list must not
+            // dip 100 units and slide back, because a row that moves under a finger drops its press (and the rows' guard
+            // then holds touches for another third of a second). Its return is the fade alone.
             fadeTween.Kill();
             Tween fade = window.CreateTween().SetParallel(true);
             fade.TweenProperty(window, "modulate", Colors.White, 0.5);
-            fade.TweenProperty(window, "position:y", fit.Y, 0.5)
-                .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Back).From(fit.Y + 100f);
-            window.Position = new Vector2(target.X, window.Position.Y);
+            if (!state.Placed)
+                fade.TweenProperty(window, "position:y", fit.Y, 0.5)
+                    .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Back).From(fit.Y + 100f);
+            window.Position = target;
             fadeField?.SetValue(state.Screen, fade);
             state.Fade = fade;
         }
         else if (state.Fade == null || !state.Fade.IsValid() || !state.Fade.IsRunning())
         {
             if (window.Position.DistanceSquaredTo(target) > 0.25f) window.Position = target;
+            state.Placed = true;
         }
 
         // The rows keep one size; their labels read at 15 points. The list is walked only when its rows change.
