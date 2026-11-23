@@ -53,77 +53,112 @@ public class PortraitRestMathTests
     }
 
     [Fact]
-    public void ElevenOptionsWrapIntoBalancedRowsOfFour()
+    public void OptionsTakeTwoRowsFromThreeOnwards()
     {
-        Assert.Equal(1, PortraitRestMath.OptionsRowCount(2));
-        Assert.Equal(1, PortraitRestMath.OptionsRowCount(4));
-        Assert.Equal(2, PortraitRestMath.OptionsRowCount(5));
-        Assert.Equal(3, PortraitRestMath.OptionsRowCount(11));
-        Assert.Equal(4, PortraitRestMath.OptionsRowCount(16));
         Assert.Equal(0, PortraitRestMath.OptionsRowCount(0));
+        Assert.Equal(1, PortraitRestMath.OptionsRowCount(1));
+        Assert.Equal(1, PortraitRestMath.OptionsRowCount(2));
+        Assert.Equal(2, PortraitRestMath.OptionsRowCount(3));
+        Assert.Equal(2, PortraitRestMath.OptionsRowCount(11));
 
-        Assert.Equal(4, PortraitRestMath.OptionsInRow(11, 0));
-        Assert.Equal(4, PortraitRestMath.OptionsInRow(11, 1));
-        Assert.Equal(3, PortraitRestMath.OptionsInRow(11, 2));
-        Assert.Equal(3, PortraitRestMath.OptionsInRow(5, 0));
-        Assert.Equal(2, PortraitRestMath.OptionsInRow(5, 1));
-        Assert.Equal(3, PortraitRestMath.OptionsInRow(9, 1));
-
-        // Four at a time is the most that keeps a finger-sized button: 1003.6 units drawn inside the canvas.
-        Assert.Equal(PortraitRestMath.MinOptionScale, PortraitRestMath.OptionsGridScale(11, 1080f), 5);
-        float natural = PortraitRestMath.NaturalRowWidth(4);
-        Assert.Equal(1003.6f, natural * PortraitRestMath.OptionsGridScale(11, 1080f), 1);
-        Assert.True(PortraitRestMath.OptionsGridScale(11, 1080f) * PortraitRestMath.NativeOptionHeight >= PortraitRestMath.TouchTarget);
+        // 3 = 2+1, 4 = 2x2, 5 = 3+2, 6 = 3+3, 7+ = ceil/floor: the top row takes the odd one.
+        (int Count, int Top, int Bottom)[] splits =
+            [(3, 2, 1), (4, 2, 2), (5, 3, 2), (6, 3, 3), (7, 4, 3), (8, 4, 4), (9, 5, 4), (10, 5, 5), (11, 6, 5)];
+        foreach ((int count, int top, int bottom) in splits)
+        {
+            Assert.Equal(top, PortraitRestMath.OptionsInRow(count, 0));
+            Assert.Equal(bottom, PortraitRestMath.OptionsInRow(count, 1));
+        }
     }
 
     [Fact]
-    public void WrappedRowsStackAboveTheSingleRowsPlaceAndStayInsideTheCanvas()
+    public void TwoAndThreeWideRowsGrowToTheSingleRowsCapAndFourKeepsThePhoneScale()
     {
-        Span<RestOptionsRow> rows = stackalloc RestOptionsRow[8];
-        foreach (int count in new[] { 5, 6, 7, 8, 9, 10, 11 })
+        // Rows of two or three take the single row's cap (the reference's 1.6 converted): 88x58 pt buttons, never wider than a single row.
+        foreach (int count in new[] { 3, 4, 5, 6 })
+        {
+            Assert.Equal(PortraitRestMath.OptionsMaxScale, PortraitRestMath.OptionsGridScale(count, 1080f), 5);
+            int top = PortraitRestMath.OptionsInRow(count, 0);
+            Assert.True(PortraitRestMath.NaturalRowWidth(top) * PortraitRestMath.OptionsGridScale(count, 1080f)
+                        <= PortraitRestMath.NaturalRowWidth(4) * PortraitRestMath.MinOptionScale + 0.01f,
+                $"{count} options are no wider than the four-wide phone row");
+        }
+        // A four-wide top row is exactly the 44 point row (0.77972), the same as four options in one row.
+        Assert.Equal(PortraitRestMath.MinOptionScale, PortraitRestMath.OptionsGridScale(7, 1080f), 5);
+        Assert.Equal(127f, PortraitRestMath.NativeOptionHeight * PortraitRestMath.OptionsGridScale(7, 1080f), 1);
+        Span<RestOptionsRow> rows = stackalloc RestOptionsRow[2];
+        PortraitRestMath.OptionsGrid(7, 1080f, 2340f, rows);
+        Assert.Equal(1300f, rows[0].Width);
+        Assert.Equal(33.182f, rows[0].X, 3);
+        Assert.Equal(1003.6f, PortraitRestMath.NaturalRowWidth(4) * rows[0].Scale, 1);
+    }
+
+    [Fact]
+    public void TwoRowsStayInsideTheCanvasAndClearOfTheQuestionAndCopyAtBothShapes()
+    {
+        Span<RestOptionsRow> rows = stackalloc RestOptionsRow[2];
+        foreach (int count in new[] { 3, 4, 5, 6, 7, 9, 10, 11 })
         {
             foreach (float canvasHeight in new[] { 1920f, 2340f })
             {
                 int n = PortraitRestMath.OptionsGrid(count, 1080f, canvasHeight, rows);
-                Assert.Equal(PortraitRestMath.OptionsRowCount(count), n);
-                float bottomRowTop = canvasHeight - PortraitRestMath.OptionsBottomInset;
-                Assert.Equal(bottomRowTop, rows[n - 1].Y, 3);
-                Assert.Equal(PortraitRestMath.OptionsGridHeight(count, 1080f), (n - 1) * (rows[1].Y - rows[0].Y) + rows[0].Height * rows[0].Scale, 2);
-                float previousBottom = float.NegativeInfinity;
-                int seen = 0;
+                Assert.Equal(2, n);
+                float scale = rows[0].Scale;
+                float bottomTop = canvasHeight - PortraitRestMath.OptionsBottomInset;
+                // The bottom row keeps the single row's pin; the top row stands one row gap above it.
+                Assert.Equal(bottomTop, rows[1].Y, 3);
+                Assert.Equal(bottomTop - (PortraitRestMath.OptionsHeight + PortraitRestMath.OptionsRowGap) * scale, rows[0].Y, 3);
                 for (int i = 0; i < n; i++)
                 {
-                    int inRow = PortraitRestMath.OptionsInRow(count, i);
-                    seen += inRow;
-                    float drawnWidth = PortraitRestMath.NaturalRowWidth(inRow) * rows[i].Scale;
-                    Assert.Equal(1080f * 0.5f, rows[i].X + rows[i].Width * rows[i].Scale * 0.5f, 2);
-                    Assert.True(rows[i].X + rows[i].Width * rows[i].Scale <= 1080f);
-                    Assert.True(rows[i].X >= 0f);
-                    Assert.True(rows[i].Height * rows[i].Scale >= PortraitRestMath.TouchTarget, "button box keeps a touch target");
-                    Assert.True(rows[i].X + (rows[i].Width * rows[i].Scale - drawnWidth) * 0.5f >= 0f);
-                    // The rows do not touch: the label hangs 25 units under its box, the gap is 48.
-                    float boxBottom = rows[i].Y + rows[i].Height * rows[i].Scale;
-                    if (i > 0) Assert.True(rows[i].Y > previousBottom, $"row {i} clears the one above ({rows[i].Y:F1} vs {previousBottom:F1})");
-                    previousBottom = boxBottom;
+                    Assert.Equal(540f, rows[i].X + rows[i].Width * rows[i].Scale * 0.5f, 2);
+                    Assert.True(rows[i].X >= 0f && rows[i].X + rows[i].Width * rows[i].Scale <= 1080f, "row inside the canvas");
+                    // The top row keeps the four-wide row's edge margin (38.2); the narrower bottom row is centred under it.
+                    float drawn = PortraitRestMath.NaturalRowWidth(PortraitRestMath.OptionsInRow(count, i)) * scale;
+                    float edge = (1080f - drawn) * 0.5f;
+                    Assert.True(edge >= PortraitRestMath.GridRowEdge(1080f) - 0.02f, $"row {i} keeps the grid's edge ({edge:F1})");
+                    Assert.Equal(540f, rows[i].X + (rows[i].Width * rows[i].Scale - drawn) * 0.5f + drawn * 0.5f, 2);
                 }
-                Assert.Equal(count, seen);
-                // Every row sits below the stone header and inside the canvas's top edge.
-                Assert.True(rows[0].Y - PortraitRestMath.HeaderGap > 390f, $"{count} options keep the question under the header");
+                // The question's box ends above the top row.
+                float questionBottom = rows[0].Y - PortraitRestMath.HeaderGap + PortraitRestMath.HeaderHeight;
+                Assert.True(questionBottom < rows[0].Y, $"{count}: question {questionBottom:F1} above {rows[0].Y:F1}");
+                Assert.True(rows[0].Y - PortraitRestMath.HeaderGap > 390f, $"{count}: question under the stone header");
+                // The bottom row's label ink (165 units down plus the 48 unit label) ends above the copy and the footer lane.
+                float labelBottom = bottomTop + 213f * scale;
+                Assert.True(labelBottom < canvasHeight - PortraitRestMath.DescriptionBottomInset,
+                    $"{count}: labels {labelBottom:F1} above the copy {canvasHeight - PortraitRestMath.DescriptionBottomInset:F1}");
+                Assert.True(labelBottom < canvasHeight - PortraitBetweenMath.ActionFooterMargin - PortraitRestMath.TouchTarget,
+                    $"{count}: labels clear of the footer lane");
             }
         }
     }
 
     [Fact]
-    public void FiveOptionsWrapAtTheTouchTargetInsteadOfShrinking()
+    public void FromFiveWideRowsTheGridShrinksToKeepTheFourWideMargins()
     {
-        Span<RestOptionsRow> rows = stackalloc RestOptionsRow[4];
-        int n = PortraitRestMath.OptionsGrid(5, 1080f, 2340f, rows);
-        Assert.Equal(2, n);
-        Assert.Equal(0.77972f, rows[0].Scale, 4);
-        Assert.Equal(3, PortraitRestMath.OptionsInRow(5, 0));
-        Assert.Equal(950f, rows[0].Width);
-        // The single row this replaced would have drawn 99 unit buttons; wrapped, the box stays 156 tall (127+ after scaling).
-        Assert.True(rows[1].Height * rows[1].Scale >= PortraitRestMath.TouchTarget);
+        // 9 and 10 options want a five-wide top row; 11 (synthetic) a six-wide one.
+        Assert.Equal(0.614232f, PortraitRestMath.OptionsGridScale(9, 1080f), 5);
+        Assert.Equal(0.614232f, PortraitRestMath.OptionsGridScale(10, 1080f), 5);
+        Assert.Equal(0.506691f, PortraitRestMath.OptionsGridScale(11, 1080f), 5);
+        Assert.Equal(38.19f, PortraitRestMath.GridRowEdge(1080f), 2);
+
+        Span<RestOptionsRow> rows = stackalloc RestOptionsRow[2];
+        foreach ((int count, float scale) in new[] { (9, 0.614232f), (10, 0.614232f), (11, 0.506691f) })
+        {
+            PortraitRestMath.OptionsGrid(count, 1080f, 2340f, rows);
+            Assert.Equal(scale, rows[0].Scale, 5);
+            // The top row is drawn at exactly the four-wide row's margins.
+            Assert.Equal(1003.6f, PortraitRestMath.NaturalRowWidth(PortraitRestMath.OptionsInRow(count, 0)) * rows[0].Scale, 1);
+            Assert.Equal(PortraitRestMath.GridRowEdge(1080f), rows[0].X + (rows[0].Width * rows[0].Scale
+                - PortraitRestMath.NaturalRowWidth(PortraitRestMath.OptionsInRow(count, 0)) * rows[0].Scale) * 0.5f, 1);
+        }
+
+        // Reported drawn sizes: 9/10 -> 151.6 x 100.0 u (52.6 x 34.7 pt) with a 29.5 u label; 11 -> 125.0 x 82.5 u.
+        Assert.Equal(151.6f, PortraitRestMath.NativeOptionWidth * PortraitRestMath.OptionsGridScale(9, 1080f), 1);
+        Assert.Equal(100.0f, PortraitRestMath.NativeOptionHeight * PortraitRestMath.OptionsGridScale(9, 1080f), 1);
+        Assert.Equal(29.5f, PortraitRestMath.OptionLabelFontSize * PortraitRestMath.OptionsGridScale(9, 1080f), 1);
+        Assert.Equal(125.0f, PortraitRestMath.NativeOptionWidth * PortraitRestMath.OptionsGridScale(11, 1080f), 1);
+        Assert.Equal(82.5f, PortraitRestMath.NativeOptionHeight * PortraitRestMath.OptionsGridScale(11, 1080f), 1);
+        Assert.Equal(24.3f, PortraitRestMath.OptionLabelFontSize * PortraitRestMath.OptionsGridScale(11, 1080f), 1);
     }
 
     [Fact]

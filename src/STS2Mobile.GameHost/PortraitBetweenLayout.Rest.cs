@@ -180,14 +180,14 @@ internal sealed partial class PortraitBetweenLayout
         float height = RestGridHeightUnits(count);
         bool placed = Mathf.IsEqualApprox(choices.Scale.X, first.Scale)
             && Mathf.IsEqualApprox(choices.Position.X, first.X) && Mathf.IsEqualApprox(choices.Position.Y, first.Y)
-            && Mathf.IsEqualApprox(choices.Size.Y, height)
+            && Mathf.IsEqualApprox(choices.Size.X, first.Width) && Mathf.IsEqualApprox(choices.Size.Y, height)
             && choices.PivotOffset.LengthSquared() < 0.0001f
             && choices.AnchorLeft == 0f && choices.AnchorTop == 0f && choices.AnchorRight == 0f && choices.AnchorBottom == 0f;
         if (!placed)
         {
             Capture(choices, captureVisible: false);
             choices.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
-            choices.Size = new Vector2(choices.Size.X, height);
+            choices.Size = new Vector2(first.Width, height);
             choices.Position = new Vector2(first.X, first.Y);
             choices.PivotOffset = Vector2.Zero;
             choices.Scale = new Vector2(first.Scale, first.Scale);
@@ -215,7 +215,7 @@ internal sealed partial class PortraitBetweenLayout
         if (GodotObject.InstanceFromId(state.Choices) is not Container choices || !GodotObject.IsInstanceValid(choices)) return;
         int total = choices.GetChildCount();
         int count = RestOptionCount(choices);
-        if (count <= PortraitRestMath.MaxOptionsPerRow) return;
+        if (PortraitRestMath.OptionsRowCount(count) <= 1) return;
         int rows = PortraitRestMath.OptionsRowCount(count);
         Span<RestOptionsRow> boxes = stackalloc RestOptionsRow[rows];
         int placedRows = PortraitRestMath.OptionsGrid(count, state.GridCanvas.X, state.GridCanvas.Y, boxes);
