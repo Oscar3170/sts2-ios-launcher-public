@@ -79,8 +79,28 @@ internal static class PortraitTargetPads
             float needY = Math.Max(0f, MinSide - target.SizeY);
             if (needX <= 0.5f && needY <= 0.5f) continue;
 
+            // These two sit in tight rows whose neighbours' midpoints cap the pad short of 44 points; their own rows have
+            // room for a full pad, so only the canvas edge limits them.
+            bool fullPad = control.GetType().Name is "NJoinFriendRefreshButton" or "NCloseButton";
             float left = 0f, right = 0f, top = 0f, bottom = 0f;
-            if (needX > 0f)
+            if (fullPad)
+            {
+                if (needX > 0f)
+                {
+                    left = Math.Min(needX / 2f, target.Left - canvas.Position.X);
+                    right = Math.Min(needX / 2f, canvas.End.X - target.Right);
+                }
+                if (needY > 0f)
+                {
+                    top = Math.Min(needY / 2f, target.Top - canvas.Position.Y);
+                    bottom = Math.Min(needY / 2f, canvas.End.Y - target.Bottom);
+                }
+                left = Math.Max(0f, left);
+                right = Math.Max(0f, right);
+                top = Math.Max(0f, top);
+                bottom = Math.Max(0f, bottom);
+            }
+            else if (needX > 0f)
             {
                 float half = needX / 2f;
                 left = Math.Min(half, Math.Min(target.Left - canvas.Position.X,
@@ -90,7 +110,7 @@ internal static class PortraitTargetPads
                 left = Math.Max(0f, left);
                 right = Math.Max(0f, right);
             }
-            if (needY > 0f)
+            if (!fullPad && needY > 0f)
             {
                 float half = needY / 2f;
                 top = Math.Min(half, Math.Min(target.Top - canvas.Position.Y,
@@ -160,51 +180,6 @@ internal static class PortraitTargetPads
     }
 
     /// <summary>
-    /// Grows matched controls' own boxes so their drawn target reaches <paramref name="minSide"/> canvas units. Used for the
-    /// few controls whose pads cannot reach it between neighbours (gold arrows, the join-friend refresh, the epoch close):
-    /// a drawn box at 127 has no hit-area race at all. Minimums are written once, in the control's local units.
-    /// </summary>
-    public static void GrowToCanvas(Control root, Func<string, bool> matches, float minSide, Action<Control> capture)
-    {
-        void Walk(Node node)
-        {
-            foreach (Node child in node.GetChildren())
-            {
-                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
-                if (matches(control.GetType().Name))
-                {
-                    Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
-                    if (scale.X > 0.01f && scale.Y > 0.01f)
-                    {
-                        Vector2 current = control.CustomMinimumSize;
-                        var want = new Vector2(Math.Max(current.X, minSide / scale.X), Math.Max(current.Y, minSide / scale.Y));
-                        if (current.DistanceSquaredTo(want) > 0.25f)
-                        {
-                            capture(control);
-                            control.CustomMinimumSize = want;
-                            // A plain parent does not lay the child out from its minimum; grow the box itself and keep its
-                            // right edge, so the drawn target is the finger's size on the first frame too.
-                            if (control.GetParent() is not Container)
-                            {
-                                Vector2 size = control.Size;
-                                var grown = new Vector2(Math.Max(size.X, want.X), Math.Max(size.Y, want.Y));
-                                if (size.DistanceSquaredTo(grown) > 0.25f)
-                                {
-                                    float right = control.Position.X + size.X;
-                                    control.Size = grown;
-                                    control.Position = new Vector2(right - grown.X, control.Position.Y);
-                                }
-                            }
-                        }
-                    }
-                }
-                Walk(control);
-            }
-        }
-        Walk(root);
-    }
-
-    /// <summary>
     /// How far a pad may grow on one side: up to the midpoint to the nearest target on that side. With no neighbour the
     /// whole half of the missing size is available.
     /// </summary>
@@ -234,6 +209,7 @@ internal static class PortraitTargetPads
     }
 
     private const string BackTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NBackButton";
+    private const string GoldArrowTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NGoldArrowButton";
 
     private static void Collect(Node node, Plan plan, Rect2 canvas)
     {
@@ -242,8 +218,9 @@ internal static class PortraitTargetPads
             if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
             // The navigation pad pass owns every Back button's target: collecting it here would make this planner the writer
             // of the shared PhoneHitArea and could hide it between a press and its release.
-            if (control.GetType().Name == BackTypeName)
+            if (control.GetType().Name is BackTypeName or GoldArrowTypeName)
             {
+                // Navigation pads own Back and gold-arrow targets; this planner must not write their shared areas.
                 Collect(child, plan, canvas);
                 continue;
             }

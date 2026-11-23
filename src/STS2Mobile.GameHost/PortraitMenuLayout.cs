@@ -207,8 +207,6 @@ internal sealed partial class PortraitMenuLayout
         PortraitMenuText.PruneDead();
     }
 
-    private void CaptureNode(Control control) => Capture(control);
-
     /// <summary>A scene node under this screen, resolved once (a null is final for these scenes; ResetPortrait clears it).</summary>
     private static Control? Node(Control screen, ScreenState state, string path)
     {

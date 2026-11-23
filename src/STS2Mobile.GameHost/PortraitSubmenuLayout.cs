@@ -69,13 +69,6 @@ internal static partial class PortraitSubmenuLayout
 
     public static void Apply(Control screen, string typeName, Action<Control> capture)
     {
-        // A few controls cannot reach 44 points through an invisible pad between their neighbours (their pads are capped by
-        // the nearest centre); grow their own boxes instead so the drawn target is the finger's size, before anything is
-        // placed from their measured sizes. Gold arrows are the ascension steppers here (the character screen does the same
-        // in its own layout); the refresh and epoch-close buttons sit in tight rows.
-        PortraitTargetPads.GrowToCanvas(screen,
-            type => type is "NGoldArrowButton" or "NJoinFriendRefreshButton" or "NCloseButton",
-            PortraitBands.MinTarget, capture);
         float width = screen.Size.X;
         float height = screen.Size.Y;
         if (width < 100f || height < 100f) return;
