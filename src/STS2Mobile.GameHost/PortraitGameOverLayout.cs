@@ -576,8 +576,11 @@ internal sealed class PortraitGameOverLayout
         state.CenterFilter = center.MouseFilter;
         center.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
         center.PivotOffset = Vector2.Zero;
-        center.GrowHorizontal = Control.GrowDirection.Begin;
-        center.GrowVertical = Control.GrowDirection.Begin;
+        // A container is raised to its child's minimum size; growing towards the end keeps its local origin on the window's
+        // top-left, which is what the pinned clip below is measured from (growing towards the beginning moved the origin up
+        // by the column's overflow and the clip with it).
+        center.GrowHorizontal = Control.GrowDirection.End;
+        center.GrowVertical = Control.GrowDirection.End;
         center.ClipContents = true;
         center.MouseFilter = Control.MouseFilterEnum.Ignore;
 
@@ -637,18 +640,7 @@ internal sealed class PortraitGameOverLayout
     /// canvas item is clipped to the window in its local units, so the rows only draw inside it whatever the container's
     /// size. Runs once per draw of the container; only a change of the window needs a redraw to take effect.
     /// </summary>
-    private static void ClipSummaryWindow(State state)
-    {
-        if (Live(state.Center) is not Control center) return;
-        if (state.SummaryWindow.Size.X < 1f || state.SummaryWindow.Size.Y < 1f) return;
-        // The custom rect is in the item's own space (RendererCanvasCull transforms it by the item's final transform), so
-        // the canvas window is mapped back through this item's real canvas transform instead of being assumed.
-        Transform2D toLocal = center.GetGlobalTransformWithCanvas().AffineInverse();
-        var local = new Rect2(toLocal * state.SummaryWindow.Position, toLocal.BasisXform(state.SummaryWindow.Size));
-        RenderingServer.CanvasItemSetCustomRect(center.GetCanvasItem(), true, local);
-        RenderingServer.CanvasItemSetClip(center.GetCanvasItem(), true);
-        center.SetMeta(SummaryClipMeta, state.SummaryWindow);
-    }
+    private static void ClipSummaryWindow(State state) => PinClip(state);
 
     /// <summary>
     /// The game's summary grows as its score lines, badges and discoveries arrive: the window's range and the column's
