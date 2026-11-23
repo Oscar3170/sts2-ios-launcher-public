@@ -182,6 +182,8 @@ internal sealed partial class PortraitMenuLayout
         if (Node(screen, state, "%AscensionPanel") is not { } ascension) return gridTop;
         Capture(ascension);
         if (ascension.MouseFilter != Control.MouseFilterEnum.Ignore) ascension.MouseFilter = Control.MouseFilterEnum.Ignore;
+        // The two steppers reach 44 points as drawn boxes here (their pads are capped between the ascend panel's neighbours).
+        PortraitTargetPads.GrowToCanvas(ascension, type => type == "NGoldArrowButton", PortraitBands.MinTarget, CaptureNode);
         Vector2 size = ascension.Size;
         ascension.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.KeepSize);
         ascension.Size = size;

@@ -125,10 +125,15 @@ internal static class PortraitTargetPads
             plan.AppliedNext.Add(target.Id);
         }
 
-        // Pads that were ours and are no longer wanted go away; the Back's target belongs to the navigation pass.
+        // A pad is removed only when its control is no longer a target at all. A control that is still target but could not be
+        // measured this pass (a scale not ready yet) keeps its pad untouched, so a replan never hides and re-shows it.
         foreach (ulong id in plan.Applied)
         {
-            if (plan.AppliedNext.Contains(id)) continue;
+            if (plan.Ids.Contains(id))
+            {
+                if (!plan.AppliedNext.Contains(id)) plan.AppliedNext.Add(id);
+                continue;
+            }
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control) &&
                 control.GetType().Name != BackTypeName)
                 RemovePad(control);
@@ -152,6 +157,51 @@ internal static class PortraitTargetPads
         }
         plan.Planned.Clear();
         foreach (ulong id in plan.Ids) plan.Planned.Add(id);
+    }
+
+    /// <summary>
+    /// Grows matched controls' own boxes so their drawn target reaches <paramref name="minSide"/> canvas units. Used for the
+    /// few controls whose pads cannot reach it between neighbours (gold arrows, the join-friend refresh, the epoch close):
+    /// a drawn box at 127 has no hit-area race at all. Minimums are written once, in the control's local units.
+    /// </summary>
+    public static void GrowToCanvas(Control root, Func<string, bool> matches, float minSide, Action<Control> capture)
+    {
+        void Walk(Node node)
+        {
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+                if (matches(control.GetType().Name))
+                {
+                    Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
+                    if (scale.X > 0.01f && scale.Y > 0.01f)
+                    {
+                        Vector2 current = control.CustomMinimumSize;
+                        var want = new Vector2(Math.Max(current.X, minSide / scale.X), Math.Max(current.Y, minSide / scale.Y));
+                        if (current.DistanceSquaredTo(want) > 0.25f)
+                        {
+                            capture(control);
+                            control.CustomMinimumSize = want;
+                            // A plain parent does not lay the child out from its minimum; grow the box itself and keep its
+                            // right edge, so the drawn target is the finger's size on the first frame too.
+                            if (control.GetParent() is not Container)
+                            {
+                                Vector2 size = control.Size;
+                                var grown = new Vector2(Math.Max(size.X, want.X), Math.Max(size.Y, want.Y));
+                                if (size.DistanceSquaredTo(grown) > 0.25f)
+                                {
+                                    float right = control.Position.X + size.X;
+                                    control.Size = grown;
+                                    control.Position = new Vector2(right - grown.X, control.Position.Y);
+                                }
+                            }
+                        }
+                    }
+                }
+                Walk(control);
+            }
+        }
+        Walk(root);
     }
 
     /// <summary>
