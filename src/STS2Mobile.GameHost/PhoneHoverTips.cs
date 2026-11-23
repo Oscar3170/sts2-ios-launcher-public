@@ -216,6 +216,14 @@ internal sealed class PhoneHoverTips
         return _gameInstance!.GetValue(null) is Node game && GodotObject.IsInstanceValid(game) ? _containerProp!.GetValue(game) as Node : null;
     }
 
+    /// <summary>Makes a tip subtree swallow nothing: every control in it ignores the mouse.</summary>
+    private static void MakeInputTransparent(Node node)
+    {
+        if (node is Control control && control.MouseFilter != Control.MouseFilterEnum.Ignore)
+            control.MouseFilter = Control.MouseFilterEnum.Ignore;
+        foreach (Node child in node.GetChildren()) MakeInputTransparent(child);
+    }
+
     private void FitSet(Control set, Rect2 canvas, float safeTop, float scale, (float Top, float Bottom) handBand)
     {
         Control? ownerControl = _ownerField?.GetValue(set) as Control;
@@ -240,6 +248,12 @@ internal sealed class PhoneHoverTips
         Transform2D toCanvas = set.GetGlobalTransformWithCanvas();
         Control? text = _textField!.GetValue(set) as Control;
         Control? cards = _cardField!.GetValue(set) as Control;
+        // Tips are display only: the set and everything it draws must let presses through to the button underneath. A set
+        // exists for a frame before its panels have a size, and that empty set used to catch the release.
+        MakeInputTransparent(set);
+        bool textParts = text is { } t && GodotObject.IsInstanceValid(t) && t.GetChildCount() > 0;
+        bool cardParts = cards is { } c && GodotObject.IsInstanceValid(c) && c.GetChildCount() > 0;
+        if (!textParts && !cardParts) return;
         Rect2? placedText = null;
         if (text != null && GodotObject.IsInstanceValid(text))
         {
@@ -356,6 +370,7 @@ internal sealed class PhoneHoverTips
         (float Top, float Bottom)? band = null, float safeTop = 0f)
     {
         if (!column.Visible || column.Size.X < 2f || column.Size.Y < 2f || column.GetChildCount() == 0) return null;
+        MakeInputTransparent(column);
         ulong id = column.GetInstanceId();
         if (!_columns.TryGetValue(id, out ColumnState? state))
         {
