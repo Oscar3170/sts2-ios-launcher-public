@@ -29,7 +29,10 @@ internal sealed class PortraitNavigationPads
     private const float FooterBottomMargin = 8f;
     private const BindingFlags AnyField = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
 
+    private static readonly bool InputLog = OS.GetEnvironment("STS2_PORTRAIT_BACK_LOG") == "1";
+
     private readonly HashSet<ulong> _tracked = new();
+    private readonly HashSet<ulong> _loggedInput = new();
     private readonly Dictionary<ulong, Vector2> _paddedAt = new();
     private readonly List<ulong> _dead = new();
     private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _originalPositions = new();
@@ -39,7 +42,31 @@ internal sealed class PortraitNavigationPads
 
     public static bool Handles(string? typeName) => typeName == BackTypeName || typeName == ArrowTypeName;
 
-    public void Track(Control control) => _tracked.Add(control.GetInstanceId());
+    public void Track(Control control)
+    {
+        ulong id = control.GetInstanceId();
+        if (!_tracked.Add(id)) return;
+        if (!InputLog || !IsBack(control) || !_loggedInput.Add(id)) return;
+        // Gated one-line trace (STS2_PORTRAIT_BACK_LOG=1): which Back received a press/release, where it is, and what the
+        // engine says is under the pointer, so a lost tap can be attributed to the press or to the hit test.
+        control.Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(input => NoteBackInput(control, input)));
+    }
+
+    private static void NoteBackInput(Control control, InputEvent input)
+    {
+        string kind = input switch
+        {
+            InputEventMouseButton mouse => $"mouse {(mouse.Pressed ? "press" : "release")} {mouse.ButtonIndex}",
+            InputEventScreenTouch touch => $"touch {(touch.Pressed ? "press" : "release")} #{touch.Index}",
+            _ => input.GetClass(),
+        };
+        if (kind.StartsWith("InputEvent", StringComparison.Ordinal)) return;
+        EnsureBackFields(control.GetType());
+        Control? hovered = control.GetViewport().GuiGetHoveredControl();
+        GD.Print($"Portrait back input: {control.Name} {kind} at ({control.GlobalPosition.X:F1},{control.GlobalPosition.Y:F1}) " +
+                 $"size=({control.Size.X:F1}x{control.Size.Y:F1}) enabled={_enabled?.GetValue(control)} " +
+                 $"hovered={(hovered is null ? "none" : hovered.GetType().Name + ":" + hovered.Name)}");
+    }
 
     public void OnProcessFrame()
     {
@@ -74,14 +101,18 @@ internal sealed class PortraitNavigationPads
                 _paddedAt.Remove(id);
                 continue;
             }
-            if (!back && _paddedAt.TryGetValue(id, out Vector2 seen) && seen == control.Size && PhoneHitArea.Of(control) != null) continue;
             Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
             if (scale.X < 0.01f || scale.Y < 0.01f) continue;
             float padX = Mathf.Max(0f, (PortraitBands.MinTarget - control.Size.X * scale.X) * 0.5f) / scale.X;
             float padY = Mathf.Max(0f, (PortraitBands.MinTarget - control.Size.Y * scale.Y) * 0.5f) / scale.Y;
-            if (padX > 0f || padY > 0f) PhoneHitArea.Grow(control, padX, padY, padX, padY);
-            // A Back is re-padded every frame: a screen planner that re-plans it may shrink or hide the area in between.
-            if (!back) _paddedAt[id] = control.Size;
+            Control? area = PhoneHitArea.Of(control);
+            // Write only when something actually differs: a pad rebuilt every frame between press and release is a tap that
+            // can be lost. A hidden area (a screen planner re-planning) still gets shown again here.
+            bool stable = area != null
+                && Math.Abs(area.OffsetLeft + padX) < 0.5f && Math.Abs(area.OffsetRight - padX) < 0.5f
+                && Math.Abs(area.OffsetTop + padY) < 0.5f && Math.Abs(area.OffsetBottom - padY) < 0.5f;
+            if (!stable && (padX > 0f || padY > 0f)) PhoneHitArea.Grow(control, padX, padY, padX, padY);
+            _paddedAt[id] = control.Size;
         }
         foreach (ulong id in _dead)
         {
@@ -138,15 +169,16 @@ internal sealed class PortraitNavigationPads
             var currentHide = _hidePos is null ? currentShow : (Vector2)_hidePos.GetValue(control)!;
             _originalPositions[id] = (currentShow, currentHide);
         }
-        bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed) || !placed.Show.IsEqualApprox(show);
-        _placedTargets[id] = (show, hide);
-        _showPos.SetValue(control, show);
-        if (_hidePos is not null) _hidePos.SetValue(control, hide);
+        bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed)
+            || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
         bool enabled = _enabled?.GetValue(control) is true;
         Vector2 target = enabled ? show : hide;
         Tween? tween = _moveTween?.GetValue(control) as Tween;
         if (changed)
         {
+            _placedTargets[id] = (show, hide);
+            _showPos.SetValue(control, show);
+            if (_hidePos is not null) _hidePos.SetValue(control, hide);
             if (tween is not null && tween.IsValid()) tween.Kill();
             _moveTween?.SetValue(control, null);
             if (control.GlobalPosition.DistanceTo(target) > 2f)
@@ -159,8 +191,13 @@ internal sealed class PortraitNavigationPads
             else control.GlobalPosition = target;
             return;
         }
+        // The game's own window handler rewrites the cached positions in its local space; restore ours only when it did.
+        var storedShow = (Vector2)_showPos.GetValue(control)!;
+        if (storedShow.DistanceTo(show) > 0.5f) _showPos.SetValue(control, show);
+        if (_hidePos is not null && _hidePos.GetValue(control) is Vector2 storedHide && storedHide.DistanceTo(hide) > 0.5f)
+            _hidePos.SetValue(control, hide);
         if (tween is not null && tween.IsValid() && tween.IsRunning()) return;
-        if (control.GlobalPosition.DistanceTo(target) > 0.6f) control.GlobalPosition = target;
+        if (control.GlobalPosition.DistanceTo(target) > 0.5f) control.GlobalPosition = target;
     }
 
     private static void RestoreBack(Control control, (Vector2 Show, Vector2 Hide) original)
@@ -191,5 +228,6 @@ internal sealed class PortraitNavigationPads
             if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _originalPositions.Remove(id);
         foreach (ulong id in new List<ulong>(_placedTargets.Keys))
             if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _placedTargets.Remove(id);
+        _loggedInput.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
     }
 }

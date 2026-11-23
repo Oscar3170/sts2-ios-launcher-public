@@ -37,6 +37,8 @@ internal static class PortraitTargetPads
         public readonly List<Target> Targets = new();
         public readonly List<ulong> Applied = new();
         public readonly List<ulong> Planned = new();
+        public readonly List<ulong> AppliedNext = new();
+        public readonly HashSet<ulong> Ids = new();
     }
 
     private static readonly Dictionary<ulong, Plan> Plans = new();
@@ -61,24 +63,15 @@ internal static class PortraitTargetPads
 
     private static void Replan(Control root, Rect2 canvas, Plan plan)
     {
-        foreach (ulong id in plan.Planned)
-            if (GodotObject.InstanceFromId(id) is Control planned && GodotObject.IsInstanceValid(planned))
-                planned.RemoveMeta(PlannedMeta);
-        plan.Planned.Clear();
-        foreach (ulong id in plan.Applied)
-            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
-                RemovePad(control);
-        plan.Applied.Clear();
+        // Build the wanted pads first; existing pads are only rewritten when their rectangle actually changes. Hiding and
+        // re-showing a pad (the old remove-then-grow pass did so every 8 frames) could drop a press that straddled a replan.
         plan.Targets.Clear();
         Collect(root, plan, canvas);
+        plan.Ids.Clear();
+        plan.AppliedNext.Clear();
         foreach (Target target in plan.Targets)
         {
-            if (GodotObject.InstanceFromId(target.Id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
-            control.SetMeta(PlannedMeta, true);
-            plan.Planned.Add(target.Id);
-        }
-        foreach (Target target in plan.Targets)
-        {
+            plan.Ids.Add(target.Id);
             if (GodotObject.InstanceFromId(target.Id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
             if (PhoneHitArea.IsContainer(control) || !control.IsInsideTree()) continue;
 
@@ -111,10 +104,54 @@ internal static class PortraitTargetPads
 
             Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
             if (scale.X < 0.01f || scale.Y < 0.01f) continue;
-            PhoneHitArea.Grow(control, left / scale.X, top / scale.Y, right / scale.X, bottom / scale.Y);
-            if (PhoneHitArea.Of(control) is { } area) area.SetMeta(PadMeta, true);
-            plan.Applied.Add(target.Id);
+            float l = left / scale.X, t = top / scale.Y, r = right / scale.X, b = bottom / scale.Y;
+            Control? area = PhoneHitArea.Of(control);
+            if (area == null)
+            {
+                PhoneHitArea.Grow(control, l, t, r, b);
+                area = PhoneHitArea.Of(control);
+            }
+            else if (MathF.Abs(area.OffsetLeft - l) > 0.5f || MathF.Abs(area.OffsetTop - t) > 0.5f ||
+                     MathF.Abs(area.OffsetRight - r) > 0.5f || MathF.Abs(area.OffsetBottom - b) > 0.5f)
+            {
+                // Same visible pad, new rectangle: move its offsets only.
+                area.OffsetLeft = l;
+                area.OffsetTop = t;
+                area.OffsetRight = r;
+                area.OffsetBottom = b;
+            }
+            if (area == null) continue;
+            if (!area.HasMeta(PadMeta)) area.SetMeta(PadMeta, true);
+            plan.AppliedNext.Add(target.Id);
         }
+
+        // Pads that were ours and are no longer wanted go away; the Back's target belongs to the navigation pass.
+        foreach (ulong id in plan.Applied)
+        {
+            if (plan.AppliedNext.Contains(id)) continue;
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control) &&
+                control.GetType().Name != BackTypeName)
+                RemovePad(control);
+        }
+        plan.Applied.Clear();
+        plan.Applied.AddRange(plan.AppliedNext);
+        plan.AppliedNext.Clear();
+
+        // Ownership marks change only when the set of planned controls changes.
+        foreach (ulong id in plan.Planned)
+        {
+            if (plan.Ids.Contains(id)) continue;
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                control.RemoveMeta(PlannedMeta);
+        }
+        foreach (ulong id in plan.Ids)
+        {
+            if (plan.Planned.Contains(id)) continue;
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                control.SetMeta(PlannedMeta, true);
+        }
+        plan.Planned.Clear();
+        foreach (ulong id in plan.Ids) plan.Planned.Add(id);
     }
 
     /// <summary>
@@ -146,11 +183,20 @@ internal static class PortraitTargetPads
         return best;
     }
 
+    private const string BackTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NBackButton";
+
     private static void Collect(Node node, Plan plan, Rect2 canvas)
     {
         foreach (Node child in node.GetChildren())
         {
             if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+            // The navigation pad pass owns every Back button's target: collecting it here would make this planner the writer
+            // of the shared PhoneHitArea and could hide it between a press and its release.
+            if (control.GetType().Name == BackTypeName)
+            {
+                Collect(child, plan, canvas);
+                continue;
+            }
             if (control.IsVisibleInTree() && PortraitAudit.IsTouchTarget(control))
             {
                 Rect2 rect = control.GetGlobalRect();
