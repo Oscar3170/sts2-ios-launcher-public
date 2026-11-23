@@ -894,6 +894,8 @@ internal sealed class PhoneTouchCards
         private readonly PropertyInfo? _targetType;
         private readonly PropertyInfo? _overlayInstance;
         private readonly PropertyInfo? _overlayCount;
+        private readonly PropertyInfo? _capstoneInstance;
+        private readonly PropertyInfo? _capstoneInUse;
         private readonly PropertyInfo? _gameInstance;
         private readonly MethodInfo? _getInspectScreen;
         private readonly Type? _cardModelType;
@@ -932,6 +934,11 @@ internal sealed class PhoneTouchCards
             Type? overlayType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Screens.Overlays.NOverlayStack");
             _overlayInstance = overlayType?.GetProperty("Instance", StaticAll);
             _overlayCount = overlayType?.GetProperty("ScreenCount", InstAll);
+            // The deck view, the pile screens and the in-run pause/settings open in the capstone container, not the overlay
+            // stack; while one is open the hand under it must not take a touch either.
+            Type? capstoneType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Screens.Capstones.NCapstoneContainer");
+            _capstoneInstance = capstoneType?.GetProperty("Instance", StaticAll);
+            _capstoneInUse = capstoneType?.GetProperty("InUse", InstAll);
             _gameInstance = typeof(NGame).GetProperty("Instance", StaticAll);
             _getInspectScreen = typeof(NGame).GetMethod("GetInspectCardScreen", InstAll, Type.EmptyTypes);
             _cardModelType = sts2.GetType("MegaCrit.Sts2.Core.Models.CardModel");
@@ -1093,10 +1100,15 @@ internal sealed class PhoneTouchCards
             }
         }
 
+        /// <summary>Screens drawn over the hand: the overlay stack's, plus one for an open capstone screen.</summary>
         public int OverlayCount()
         {
             object? stack = _overlayInstance?.GetValue(null);
-            return stack == null ? 0 : (int)(_overlayCount?.GetValue(stack) ?? 0);
+            int count = stack == null ? 0 : (int)(_overlayCount?.GetValue(stack) ?? 0);
+            object? capstone = _capstoneInstance?.GetValue(null);
+            if (capstone is GodotObject node && GodotObject.IsInstanceValid(node) && _capstoneInUse?.GetValue(capstone) is true)
+                count++;
+            return count;
         }
 
         public IList NewCardList() => (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(_cardModelType!))!;
