@@ -712,14 +712,14 @@ internal sealed class PortraitGameOverLayout
             {
                 case InputEventScreenTouch touch when touch.Index == 0:
                     if (touch.Pressed) BeginSummaryDrag(state, point);
-                    else EndSummaryDrag(state);
+                    else EndSummaryDrag(state, release: false);
                     return;
                 case InputEventScreenDrag drag when drag.Index == 0:
                     MoveSummaryDrag(state, point);
                     return;
                 case InputEventMouseButton button when button.ButtonIndex == MouseButton.Left:
                     if (button.Pressed) BeginSummaryDrag(state, point);
-                    else EndSummaryDrag(state);
+                    else EndSummaryDrag(state, release: false);
                     return;
                 case InputEventMouseMotion:
                     if (_dragDown) MoveSummaryDrag(state, point);
@@ -755,8 +755,11 @@ internal sealed class PortraitGameOverLayout
 
     private void BeginSummaryDrag(State state, Vector2 point)
     {
-        EndSummaryDrag(state);
-        if (Live(state.Center) is not Control window || !window.GetGlobalRect().HasPoint(point)) return;
+        // The container's own Control rect grows with the long column (the engine raises it to its minimum size), so the
+        // window is the rect the screen placed, never that.
+        if (state.SummaryWindow.Size.X < 1f || !state.SummaryWindow.HasPoint(point)) return;
+        EndSummaryDrag(state, release: false);
+        if (Live(state.Center) is not Control window) return;
         if (Live(state.Summary) is not Control summary || !summary.IsVisibleInTree()) return;
         // The column may have grown since the last measurement (its own minimum changed): measure again before deciding
         // that there is nothing to scroll.
@@ -783,11 +786,13 @@ internal sealed class PortraitGameOverLayout
         _dragWindow?.SetInputAsHandled();
     }
 
-    private void EndSummaryDrag(State state)
+    private void EndSummaryDrag(State state, bool release = true)
     {
-        if (_dragMoving && Live(state.Screen) is Control screen) PhoneSwipeRelease.Shared.Release(screen);
+        bool moved = release && _dragMoving;
+        // Clear first: a stale flag must never take the next press (the Main Menu tap after a scroll).
         _dragDown = false;
         _dragMoving = false;
+        if (moved && Live(state.Screen) is Control screen) PhoneSwipeRelease.Shared.Release(screen);
     }
 
     private void AttachSummaryDrag(Window window)
