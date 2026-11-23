@@ -62,9 +62,17 @@ internal sealed partial class PortraitBetweenLayout
         public bool Logged;
     }
 
+    /// <summary>One text control's own wrapping and sizing, before portrait took it in hand.</summary>
+    private readonly struct GridTextMode(TextServer.AutowrapMode wrap, bool fit, Control.SizeFlags flags)
+    {
+        public readonly TextServer.AutowrapMode Wrap = wrap;
+        public readonly bool Fit = fit;
+        public readonly Control.SizeFlags Flags = flags;
+    }
+
     private readonly Dictionary<ulong, GridState> _gridStates = new();
     private readonly Dictionary<ulong, PortraitGridScreen> _viewUpgrades = new();
-    private readonly Dictionary<ulong, TextServer.AutowrapMode> _gridWrapModes = new();
+    private readonly Dictionary<ulong, GridTextMode> _gridTextModes = new();
 
     private static Type? _cardGridType;
     private static FieldInfo? _cardSizeField;
@@ -154,8 +162,8 @@ internal sealed partial class PortraitBetweenLayout
             if (!GodotObject.IsInstanceIdValid(id)) _gridStates.Remove(id);
         foreach (ulong id in new List<ulong>(_viewUpgrades.Keys))
             if (!GodotObject.IsInstanceIdValid(id)) _viewUpgrades.Remove(id);
-        foreach (ulong id in new List<ulong>(_gridWrapModes.Keys))
-            if (!GodotObject.IsInstanceIdValid(id)) _gridWrapModes.Remove(id);
+        foreach (ulong id in new List<ulong>(_gridTextModes.Keys))
+            if (!GodotObject.IsInstanceIdValid(id)) _gridTextModes.Remove(id);
     }
 
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
@@ -179,10 +187,14 @@ internal sealed partial class PortraitBetweenLayout
         }
         _gridStates.Clear();
         _viewUpgrades.Clear();
-        foreach ((ulong id, TextServer.AutowrapMode mode) in _gridWrapModes)
-            if (GodotObject.InstanceFromId(id) is RichTextLabel label && GodotObject.IsInstanceValid(label))
-                label.AutowrapMode = mode;
-        _gridWrapModes.Clear();
+        foreach ((ulong id, GridTextMode mode) in _gridTextModes)
+        {
+            if (GodotObject.InstanceFromId(id) is not RichTextLabel label || !GodotObject.IsInstanceValid(label)) continue;
+            label.AutowrapMode = mode.Wrap;
+            label.FitContent = mode.Fit;
+            label.SizeFlagsHorizontal = mode.Flags;
+        }
+        _gridTextModes.Clear();
     }
 
     // ---- the grid's own rectangle and its cards -----------------------------------------------------------------
@@ -503,6 +515,17 @@ internal sealed partial class PortraitBetweenLayout
         float width = PortraitGridMath.InfoTextWidth(canvas.X);
         float left = PortraitGridMath.InfoTextLeft(canvas.X);
         float top = canvas.Y - PortraitGridMath.InfoTextTop;
+        // The game draws the line on one unwrapped row: the label hugs its text (FitContent) and shrinks to its centre, so it
+        // runs past both edges of any box. Portrait gives it the box's width, wraps it, and keeps it at 11 points.
+        if (line.FindChild("BottomLabel", recursive: true, owned: false) is RichTextLabel label)
+        {
+            if (!_gridTextModes.ContainsKey(label.GetInstanceId()))
+                _gridTextModes[label.GetInstanceId()] = new GridTextMode(label.AutowrapMode, label.FitContent, label.SizeFlagsHorizontal);
+            if (label.AutowrapMode != TextServer.AutowrapMode.WordSmart) label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+            if (label.FitContent) label.FitContent = false;
+            if (label.SizeFlagsHorizontal != Control.SizeFlags.Fill) label.SizeFlagsHorizontal = Control.SizeFlags.Fill;
+            SetRichFontSize(label, PortraitGridMath.InfoTextFontSize);
+        }
         if (Math.Abs(line.OffsetLeft - left) < 0.25f && Math.Abs(line.OffsetRight - (left + width)) < 0.25f &&
             Math.Abs(line.OffsetTop - top) < 0.25f && line.Scale == Vector2.One) return;
         Capture(line, captureVisible: false);
@@ -513,14 +536,6 @@ internal sealed partial class PortraitBetweenLayout
         line.OffsetRight = left + width;
         line.OffsetTop = top;
         line.OffsetBottom = top + PortraitGridMath.InfoTextHeight;
-        // The game draws the line on one unwrapped row; portrait keeps it inside its half of the canvas, at 11 points.
-        if (line is RichTextLabel text)
-        {
-            if (!_gridWrapModes.ContainsKey(line.GetInstanceId())) _gridWrapModes[line.GetInstanceId()] = text.AutowrapMode;
-            if (text.AutowrapMode != TextServer.AutowrapMode.WordSmart) text.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        }
-        if (line.FindChild("BottomLabel", recursive: true, owned: false) is Control label)
-            SetRichFontSize(label, PortraitGridMath.InfoTextFontSize);
     }
 
     private static Control? ViewUpgradesBoxOf(Control tickbox)
