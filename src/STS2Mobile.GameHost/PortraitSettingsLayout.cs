@@ -72,6 +72,11 @@ internal sealed class PortraitSettingsLayout
     // A drag starts after 28 units (about 10 points), up or down, wherever it began in the rows; <see cref="SwipeMath"/>
     // holds the rule.
     private const float DragDistance = 28f;
+    /// <summary>
+    /// Safety cap on the dismiss tap's swallow, only for a release that never arrives (a lost touch); the swallow itself ends
+    /// when every press kind that arrived has been released, so a held finger or a quick next tap behaves.
+    /// </summary>
+    private const ulong SwallowCapMs = 1500;
 
     // The feedback screen's panel is 368 x 305 with 80 x 80 emoji buttons and a 57 unit dropdown: drawn twice as large, the
     // panel is 736 x 610 (inside the canvas), the emoji buttons 160 units and the dropdown's list rows 88, and its 22-24
@@ -131,6 +136,13 @@ internal sealed class PortraitSettingsLayout
     private readonly bool _ready;
 
     private SceneTree? _tree;
+    /// <summary>The dismiss tap being swallowed, the press kinds it has seen, and when the safety cap gives up.</summary>
+    private bool _swallowing;
+    private bool _swallowTouchPress;
+    private bool _swallowMousePress;
+    private bool _swallowTouchRelease;
+    private bool _swallowMouseRelease;
+    private ulong _swallowDeadline;
     private bool _down;
     private bool _dragging;
     private DragKind _kind;
@@ -427,10 +439,17 @@ internal sealed class PortraitSettingsLayout
         if (!SafeAreaCanvas.IsPortrait || _screens.Count == 0) { Reset(); return; }
         try
         {
+            // The tap that dismissed an open list is the list's: neither it nor its emulated mouse twin (nor their
+            // releases) may reach the GUI, or it lands on whatever is under it and closes the settings screen.
+            if (Swallowing(input))
+            {
+                _tree.Root.SetInputAsHandled();
+                return;
+            }
             switch (input)
             {
                 case InputEventScreenTouch touch when touch.Index == 0:
-                    if (touch.Pressed) Begin(ToCanvas(touch.Position));
+                    if (touch.Pressed) Begin(input, ToCanvas(touch.Position));
                     else End();
                     return;
                 case InputEventScreenDrag drag when drag.Index == 0:
@@ -439,7 +458,7 @@ internal sealed class PortraitSettingsLayout
                 // The Linux host and the desktop editor send a mouse; the phone sends touches (and, with the game's
                 // emulate-mouse-from-touch setting, both). Absolute movement keeps the pair from scrolling twice.
                 case InputEventMouseButton button when button.ButtonIndex == MouseButton.Left:
-                    if (button.Pressed) Begin(ToCanvas(button.Position));
+                    if (button.Pressed) Begin(input, ToCanvas(button.Position));
                     else End();
                     return;
                 case InputEventMouseMotion motion:
@@ -472,7 +491,7 @@ internal sealed class PortraitSettingsLayout
     /// while its dropdown (drawn over the rows) plainly is, which kept the list's drag from ever starting. The hit test is
     /// the geometry of the list and the rows area instead.
     /// </summary>
-    private void Begin(Vector2 point)
+    private void Begin(InputEvent input, Vector2 point)
     {
         End();
         if (!_ready) return;
@@ -488,6 +507,11 @@ internal sealed class PortraitSettingsLayout
             if (!listRect.HasPoint(point))
             {
                 CloseList(id);
+                // This tap belongs to the dismisser: swallow it, its emulated mouse twin and every event between and after
+                // them until each press kind that arrived has been released, so nothing under it acts — the native
+                // dismisser would have consumed the press.
+                ArmSwallow(input);
+                _tree?.Root.SetInputAsHandled();
                 Note($"outside the open list {listRect}: dismissed it", point);
                 return;
             }
@@ -514,6 +538,47 @@ internal sealed class PortraitSettingsLayout
             return;
         }
         Note("no open list and no rows area at the press", point);
+    }
+
+    /// <summary>
+    /// Starts swallowing the dismiss tap: the press that dismissed the list, its emulated mouse twin, everything between and
+    /// after them. Each press kind that arrives must be released before swallowing stops (so a held finger leaks nothing and
+    /// a quick next tap is not eaten); <see cref="SwallowCapMs"/> only recovers if a release never comes.
+    /// </summary>
+    private void ArmSwallow(InputEvent input)
+    {
+        _swallowing = true;
+        _swallowDeadline = Time.GetTicksMsec() + SwallowCapMs;
+        _swallowTouchPress = input is InputEventScreenTouch touch && touch.Index == 0 && touch.Pressed;
+        _swallowMousePress = input is InputEventMouseButton button && button.ButtonIndex == MouseButton.Left && button.Pressed;
+        _swallowTouchRelease = false;
+        _swallowMouseRelease = false;
+    }
+
+    /// <summary>Whether this event belongs to a dismiss tap; also notes the releases that end it.</summary>
+    private bool Swallowing(InputEvent input)
+    {
+        if (!_swallowing) return false;
+        if (Time.GetTicksMsec() > _swallowDeadline)
+        {
+            _swallowing = false;
+            return false;
+        }
+        if (input is InputEventScreenTouch touch && touch.Index == 0)
+        {
+            if (touch.Pressed) _swallowTouchPress = true;
+            else _swallowTouchRelease = true;
+        }
+        else if (input is InputEventMouseButton button && button.ButtonIndex == MouseButton.Left)
+        {
+            if (button.Pressed) _swallowMousePress = true;
+            else _swallowMouseRelease = true;
+        }
+        // Over once every press kind that arrived has been released; this last release is swallowed with the rest.
+        if ((!_swallowTouchPress || _swallowTouchRelease) && (!_swallowMousePress || _swallowMouseRelease) &&
+            (_swallowTouchPress || _swallowMousePress))
+            _swallowing = false;
+        return true;
     }
 
     /// <summary>
