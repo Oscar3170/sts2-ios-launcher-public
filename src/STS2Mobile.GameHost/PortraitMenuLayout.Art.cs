@@ -19,8 +19,6 @@ internal sealed partial class PortraitMenuLayout
     private const string FigureFrameMeta = "phone_character_figure_frame";
     private const string CoverMeta = "phone_character_cover";
     private static readonly Vector2 ArtSize = new(2560f, 1200f);
-    // A skeleton's bounds can still grow for a moment after it reports ready; re-read them for this many frames, then stop.
-    private const ulong RefreshFrames = 60;
 
     private readonly Dictionary<ulong, CpuParticles2D[]> _emitters = new();
     private readonly Dictionary<(ulong Id, string Property), Variant> _originalNodeValues = new();
@@ -30,7 +28,6 @@ internal sealed partial class PortraitMenuLayout
     private readonly List<ulong> _artIds = new();
     private readonly HashSet<ulong> _artFramed = new();
     private readonly Dictionary<ulong, Vector2> _artFramedSize = new();
-    private readonly Dictionary<ulong, ulong> _artRefreshUntil = new();
 
     private void FrameArt(Control screen, ScreenState state, string path)
     {
@@ -75,8 +72,9 @@ internal sealed partial class PortraitMenuLayout
             bool framed = _artFramed.Contains(id);
             bool sizeChanged = framed &&
                 (!_artFramedSize.TryGetValue(id, out Vector2 framedAt) || framedAt.DistanceSquaredTo(container.Size) > 0.25f);
-            bool refreshing = _artRefreshUntil.TryGetValue(id, out ulong until) && now <= until;
-            if (framed && !sizeChanged && !refreshing) continue;
+            // Framing is applied once when the character's art is ready: re-reading growing skeleton bounds each frame moved
+            // the figure for about a second after selection. Only a changed screen size (or a new art child) re-frames.
+            if (framed && !sizeChanged) continue;
             if (GodotObject.InstanceFromId(id) is not Control art || !GodotObject.IsInstanceValid(art) ||
                 art.IsQueuedForDeletion() || !art.IsInsideTree())
             {
@@ -87,16 +85,10 @@ internal sealed partial class PortraitMenuLayout
             // Give a freshly added scene a frame to finish entering and initialising its Spine before any native Spine call.
             if (!_artFirstSeen.TryGetValue(id, out ulong seen)) _artFirstSeen[id] = seen = now;
             if (now <= seen) continue;
-            if (sizeChanged)
-            {
-                // The screen got its final size after the first frame: follow it and re-settle the cover.
-                _artFramed.Remove(id);
-                _artRefreshUntil[id] = now + RefreshFrames;
-            }
+            if (sizeChanged) _artFramed.Remove(id);
             if (!FrameArtChild(art, container.Size, toCanvas)) continue;
             _artFramed.Add(id);
             _artFramedSize[id] = container.Size;
-            if (!_artRefreshUntil.ContainsKey(id)) _artRefreshUntil[id] = now + RefreshFrames;
         }
     }
 
@@ -293,7 +285,6 @@ internal sealed partial class PortraitMenuLayout
         _artIds.Clear();
         _artFramed.Clear();
         _artFramedSize.Clear();
-        _artRefreshUntil.Clear();
         _artSpines.Clear();
         _artTextures.Clear();
         _artFirstSeen.Clear();

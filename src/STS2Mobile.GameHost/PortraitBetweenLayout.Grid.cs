@@ -143,6 +143,89 @@ internal sealed partial class PortraitBetweenLayout
         // resize): the deck view's own pass also puts its 100-unit card offset back, so lay the grid out again once.
         bool rebuilt = ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(cardWidth));
         if (rebuilt && YOffsetOf(grid) != 0) ApplyGridPortrait(grid, state, canvas, capHeight);
+        ReconcileGridWindow(grid, state);
+    }
+
+    // ---- keeping the game's row window on the portrait viewport --------------------------------------------------
+
+    private static FieldInfo? _cardRowsField;
+    private static FieldInfo? _slidingIndexField;
+    private static FieldInfo? _draggingField;
+    private static PropertyInfo? _sortedCardsProperty;
+    private static MethodInfo? _assignRowMethod;
+    private static MethodInfo? _positionRowsMethod;
+    private static MethodInfo? _updateNavigationMethod;
+    private static readonly object[] RowInvokeArgs = new object[2];
+    private static readonly object[] IndexInvokeArgs = new object[1];
+
+    /// <summary>
+    /// Keeps the game's rows on the cards the portrait viewport is showing. NCardGrid's own recycler decides from the whole
+    /// screen: row 0 below the screen's top means "recycle above" and the last row above the screen's bottom means "recycle
+    /// below", and in portrait both are true at once (the grid starts under the header band), so it rebinds the row standing
+    /// at the grid's clipped foot back and forth every time the scroll moves. This pass re-points the same holders at the
+    /// window the visible area needs, with their absolute positions, so a visible row keeps its cards and its place; it runs
+    /// after the game's own pass in the frame, so the rebind is never drawn. Nothing happens while the window is already
+    /// right (one int compare), and the assignment only runs on the frames the window moves.
+    /// </summary>
+    private static void ReconcileGridWindow(Control grid, GridState state)
+    {
+        if (state.AppliedCardWidth < 1f) return;
+        ResolveWindowReflection();
+        if (_cardRowsField == null || _sortedCardsProperty == null) return;
+        if (_draggingField?.GetValue(grid) is true) return;
+        if (_cardRowsField.GetValue(grid) is not System.Collections.IList rows || rows.Count == 0) return;
+        if (_sortedCardsProperty.GetValue(grid) is not System.Collections.IList cards || cards.Count == 0) return;
+        if (GridScroll(grid, state) is not { } scroll) return;
+        int columns = PortraitGridMath.Columns;
+        int total = (cards.Count + columns - 1) / columns;
+        int pool = rows.Count;
+        float pitch = PortraitGridMath.CardHeightFor(state.AppliedCardWidth) + PortraitGridMath.CardPadding;
+        if (pitch < 1f) return;
+        // The row standing at the top of the grid, with one row of overscan above it (the same reach the game's own pool has).
+        int firstVisible = (int)MathF.Floor((-scroll.Position.Y - PortraitGridMath.ContentTopPadding) / pitch);
+        int wanted = Math.Clamp(firstVisible - 1, 0, Math.Max(0, total - pool));
+        int current = _slidingIndexField?.GetValue(grid) is int sliding ? sliding / columns : 0;
+        if (wanted == current) return;
+        int start = wanted * columns;
+        if (_slidingIndexField != null) _slidingIndexField.SetValue(grid, start);
+        if (_assignRowMethod == null) return;
+        for (int i = 0; i < pool; i++)
+        {
+            RowInvokeArgs[0] = rows[i]!;
+            RowInvokeArgs[1] = start + i * columns;
+            _assignRowMethod.Invoke(grid, RowInvokeArgs);
+        }
+        IndexInvokeArgs[0] = start;
+        _positionRowsMethod?.Invoke(grid, IndexInvokeArgs);
+        _updateNavigationMethod?.Invoke(grid, null);
+    }
+
+    /// <summary>Resolves the grid's row list, its window index and the row methods it re-points them with.</summary>
+    private static void ResolveWindowReflection()
+    {
+        if (_cardRowsField != null) return;
+        ResolveGridReflection();
+        if (_cardGridType is not { } type) return;
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly;
+        _cardRowsField = type.GetField("_cardRows", flags);
+        _slidingIndexField = type.GetField("_slidingWindowCardIndex", flags);
+        _draggingField = type.GetField("_isDragging", flags);
+        _sortedCardsProperty = type.GetProperty("SortedCards", BindingFlags.Instance | BindingFlags.Public);
+        foreach (MethodInfo method in type.GetMethods(flags))
+        {
+            switch (method.Name)
+            {
+                case "AssignCardsToRow" when method.GetParameters().Length == 2:
+                    _assignRowMethod ??= method;
+                    break;
+                case "UpdateGridPositions" when method.GetParameters().Length == 1:
+                    _positionRowsMethod ??= method;
+                    break;
+                case "UpdateGridNavigation" when method.GetParameters().Length == 0:
+                    _updateNavigationMethod ??= method;
+                    break;
+            }
+        }
     }
 
     /// <summary>Tracks the View Upgrades box a deck or selection screen's tickbox stands in and places it in the footer.</summary>

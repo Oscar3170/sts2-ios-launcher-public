@@ -162,11 +162,11 @@ public class PortraitPreviewMathTests
 
     [Theory]
     [InlineData(162f, 2340f, 0.48f, 1207.44f)]
-    [InlineData(136f, 1920f, 0.48f, 992.32f)]
+    [InlineData(0f, 1920f, 0.48f, 921.6f)]
     [InlineData(162f, 2340f, 0.52f, 1294.56f)]
-    [InlineData(136f, 1920f, 0.52f, 1063.68f)]
+    [InlineData(0f, 1920f, 0.52f, 998.4f)]
     [InlineData(162f, 2340f, 0.5f, 1251f)]
-    [InlineData(136f, 1920f, 0.5f, 1028f)]
+    [InlineData(0f, 1920f, 0.5f, 960f)]
     public void PreviewCentreSitsBetweenTheNotchCapAndTheCanvasBottom(
         float capHeight, float canvasHeight, float fraction, float expected)
     {
@@ -174,8 +174,8 @@ public class PortraitPreviewMathTests
     }
 
     [Theory]
-    [InlineData(1920f, 136f, 850f, 422f, 535f, 960f, 1.185882f, 960f, 1008f, 500.44f)]
-    [InlineData(1920f, 136f, 900.4f, 207.65f, 534.98f, 959.98f, 1.119502f, 959.98f, 1008f, 232.46f)]
+    [InlineData(1920f, 0f, 850f, 422f, 535f, 960f, 1.185882f, 960f, 1008f, 500.44f)]
+    [InlineData(1920f, 0f, 900.4f, 207.65f, 534.98f, 959.98f, 1.119502f, 959.98f, 1008f, 232.46f)]
     [InlineData(2340f, 162f, 850f, 422f, 535f, 960f, 1.185882f, 960f, 1008f, 500.44f)]
     [InlineData(2340f, 162f, 900.4f, 207.65f, 534.98f, 959.98f, 1.119502f, 959.98f, 1008f, 232.46f)]
     public void TransformFitSpansTheCanvasWithTheReferenceMargins(
@@ -201,17 +201,17 @@ public class PortraitPreviewMathTests
     {
         // A tiny composition grows to the reference's 1.98 (1.273 here); a huge one shrinks to 0.1 (0.064).
         Assert.Equal(PortraitPreviewMath.TransformMaxScale, PortraitPreviewMath.TransformFit(
-            1080f, 1920f, 136f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 10f, 10f).Scale, 5);
+            1080f, 1920f, 0f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 10f, 10f).Scale, 5);
         Assert.Equal(PortraitPreviewMath.TransformMinScale, PortraitPreviewMath.TransformFit(
-            1080f, 1920f, 136f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 30000f, 30000f).Scale, 5);
+            1080f, 1920f, 0f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 30000f, 30000f).Scale, 5);
         // A composition taller than the band is kept inside it (its middle stops where the band ends).
         TransformPreviewFit tall = PortraitPreviewMath.TransformFit(
-            1080f, 1920f, 136f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 100f, 2000f);
-        Assert.Equal(0.750929f, tall.Scale, 5);
-        Assert.True(tall.CenterY - 2000f * tall.Scale * 0.5f >= 144f);
+            1080f, 1920f, 0f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 100f, 2000f);
+        Assert.Equal(0.818929f, tall.Scale, 5);
+        Assert.True(tall.CenterY - 2000f * tall.Scale * 0.5f >= 8f);
         // Nothing to measure keeps the game's own size and place.
         TransformPreviewFit none = PortraitPreviewMath.TransformFit(
-            1080f, 1920f, 136f, 1600f, 500f, 900f, 0f, 0f);
+            1080f, 1920f, 0f, 1600f, 500f, 900f, 0f, 0f);
         Assert.Equal(1f, none.Scale, 3);
         Assert.Equal(500f, none.CenterX, 3);
         Assert.Equal(900f, none.CenterY, 3);

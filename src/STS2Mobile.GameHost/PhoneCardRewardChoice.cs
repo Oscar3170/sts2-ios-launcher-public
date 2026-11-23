@@ -12,7 +12,7 @@ namespace STS2Mobile.GameHost;
 /// <summary>
 /// Card rewards picked by a tap and then a second tap (<see cref="PhoneSelectConfirm"/>), on screens that open in portrait. On
 /// the game's card reward screen a click takes a card and closes the screen, so on a phone a touch meant to read a card took
-/// it. Here the first tap selects a card (outlined, with its keyword tips), a tap on another card moves the selection, and a
+/// it. Here the first tap selects a card (its reticle, with its keyword tips), a tap on another card moves the selection, and a
 /// second tap on the selected card takes it. Skip, Reroll and the other alternatives work as before.
 /// <para>How: the screen answers the reward through its <c>_completionSource</c>. While the screen waits, that field holds a
 /// stand-in, so an answer from anywhere (a card's press, an alternative, the keyboard) can be read here: a card's index
@@ -233,19 +233,14 @@ internal sealed class PhoneCardRewardChoice
         : PhoneSelectConfirm.SelectAdapter(select)
     {
         internal override string Label => "card reward";
-        internal override bool CardOutline => true;
+        internal override bool IsCard => true;
         internal override int ItemCount(Control owner) => Row(owner, "UI/CardRow")?.GetChildCount() ?? 0;
         internal override Control? ItemAt(Control owner, int index) => Row(owner, "UI/CardRow")?.GetChild(index) as Control;
         internal override Control PressTarget(Control item) => item.GetNodeOrNull<Control>("%Hitbox") ?? item;
         internal override Rect2 HitRect(Control owner, Control item) => PressTarget(item).GetGlobalRect();
         internal override object? Model(Control item) => Owner.Prop(item, "CardModel");
 
-        internal override Panel AttachOutline(Control item)
-        {
-            Panel panel = PhoneSelectConfirm.MakeCardOutline();
-            item.AddChild(panel);
-            return panel;
-        }
+        internal override Control AttachReticle(Control item) => PhoneSelectConfirm.AttachReticle(item, PhoneSelectConfirm.CardRect(item));
 
         internal override void ShowTip(Control owner, Control item)
         {

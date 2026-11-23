@@ -321,9 +321,9 @@ internal static partial class PortraitProof
 
     private static string DescribeChoice(Control screen, List<Control> items, Task task)
     {
-        int outlined = items.FindIndex(i => i.GetNodeOrNull<Node>(PhoneSelectConfirm.OutlineName) is { } o && !o.IsQueuedForDeletion());
+        int reticle = items.FindIndex(i => i.GetNodeOrNull<Node>(PhoneSelectConfirm.ReticleName) is { } o && !o.IsQueuedForDeletion());
         string skip = screen.GetNodeOrNull<Control>("SkipButton") is { } s ? $"{(s.Visible ? "" : "hidden ")}{CanvasRect(s)}" : "none";
-        return $"items={items.Count} outlined={outlined} selected={PhoneSelectConfirm.SelectedName ?? "none"} " +
+        return $"items={items.Count} reticle={reticle} selected={PhoneSelectConfirm.SelectedName ?? "none"} " +
             $"confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} clears={PhoneSelectConfirm.Clears} {DescribeTask(task)} skip={skip}";
     }
 
@@ -369,8 +369,8 @@ internal static partial class PortraitProof
     private static string DescribeTreasure(Control? collection, List<Control> holders, object player, int relicsBefore)
     {
         if (collection == null) return "collection=none";
-        int outlined = holders.FindIndex(i => i.GetNodeOrNull<Node>(PhoneSelectConfirm.OutlineName) is { } o && !o.IsQueuedForDeletion());
-        return $"relics-on-offer={holders.Count} outlined={outlined} selected={PhoneSelectConfirm.SelectedName ?? "none"} " +
+        int reticle = holders.FindIndex(i => i.GetNodeOrNull<Node>(PhoneSelectConfirm.ReticleName) is { } o && !o.IsQueuedForDeletion());
+        return $"relics-on-offer={holders.Count} reticle={reticle} selected={PhoneSelectConfirm.SelectedName ?? "none"} " +
             $"relics={relicsBefore}->{RelicCount(player)} confirms={PhoneSelectConfirm.Confirms} clears={PhoneSelectConfirm.Clears}";
     }
 

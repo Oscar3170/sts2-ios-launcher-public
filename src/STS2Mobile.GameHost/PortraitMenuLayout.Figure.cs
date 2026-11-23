@@ -96,7 +96,11 @@ internal sealed partial class PortraitMenuLayout
             state.Animated = true;
         }
         if (ReadBounds(figure) is not { } figureBounds || figureBounds.Size.X < 1f || figureBounds.Size.Y < 1f) return false;
-        if (ReadBaseBounds(spine, baseSlot) is not { } cover || cover.Size.X < 1f || cover.Size.Y < 1f) return false;
+        if (ReadBaseBounds(spine, baseSlot) is not { } skeletonCover || skeletonCover.Size.X < 1f || skeletonCover.Size.Y < 1f)
+            return false;
+        // Skeleton bounds are in the spine's own space; map them through the node's native transform before covering with them.
+        var cover = new Rect2(native.Position + skeletonCover.Position * native.Scale, skeletonCover.Size * native.Scale.Abs());
+        if (cover.Size.X < 1f || cover.Size.Y < 1f) return false;
 
         float overscan = name == "DEFECT_bg" ? 1.12f : 1.04f;
         float artScale = Mathf.Max(viewport.X / cover.Size.X, viewport.Y / cover.Size.Y) * overscan;

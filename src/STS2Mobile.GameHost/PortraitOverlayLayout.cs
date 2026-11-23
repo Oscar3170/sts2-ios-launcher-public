@@ -694,9 +694,13 @@ internal sealed class PortraitOverlayLayout
         float bandTop = centre.Y - ChoiceBannerBottom - lift + ChoiceBannerGap;
         float footerTopMax = size.Y - ChoiceBottomMargin - footerHeight;
         float bandBottom = footerTopMax - ChoiceFooterGap;
-        CardGridFit grid = PortraitBetweenMath.CardGrid(
-            count, size.X, bandTop, bandBottom, ChoiceCardWidth, ChoiceCardHeight,
-            ChoiceCardGapX, ChoiceCardGapY, ChoiceMaxCardScale, ChoiceCardSideMargin, ChoiceCardFloorScale);
+        // One to three cards are one row like the reference's card row; four or more keep the widening grid.
+        CardGridFit grid = count <= 3
+            ? PortraitBetweenMath.CardRow(
+                count, size.X, bandTop, bandBottom, ChoiceCardWidth, ChoiceCardHeight)
+            : PortraitBetweenMath.CardGrid(
+                count, size.X, bandTop, bandBottom, ChoiceCardWidth, ChoiceCardHeight,
+                ChoiceCardGapX, ChoiceCardGapY, ChoiceMaxCardScale, ChoiceCardSideMargin, ChoiceCardFloorScale);
         if (peekShown && count > 3 && ChoiceCardWidth * grid.Scale < ChoiceCardFloorScale * ChoiceCardWidth)
         {
             // Four or more cards cannot take one row: at the peek's 1.6 scale its footer is taller than a finger needs, and
@@ -714,8 +718,8 @@ internal sealed class PortraitOverlayLayout
         float rowScale = cardScale / ChoiceHolderScale;
         float focusGrow = PortraitBetweenMath.CardFocusGrowth * ChoiceCardHeight * cardScale;
         float blockHeight = grid.BlockHeight;
-        float blockTop = bandTop + focusGrow +
-                         Math.Max(0f, (bandBottom - bandTop - 2f * focusGrow - blockHeight) / 2f);
+        // One row of cards sits under the banner like the reference's row; a taller widening grid fills the band.
+        float blockTop = bandTop + focusGrow;
         float blockCentreY = blockTop + blockHeight / 2f;
 
         CaptureChoice(row);
@@ -757,7 +761,7 @@ internal sealed class PortraitOverlayLayout
             fresh = true;
         }
         IReadOnlyList<GridSlot> slots = PortraitBetweenMath.RewardSlots(
-            order.Count, grid.Columns, ChoiceCardWidth * cardScale, ChoiceCardHeight * cardScale, ChoiceCardGapX, ChoiceCardGapY);
+            order.Count, grid.Columns, ChoiceCardWidth * cardScale, ChoiceCardHeight * cardScale, grid.GapX, ChoiceCardGapY);
         FieldInfo? tweenField = screen.GetType().GetField("_cardTween", InstAll);
         if (fresh)
         {

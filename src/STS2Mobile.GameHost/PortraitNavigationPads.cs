@@ -225,19 +225,36 @@ internal sealed class PortraitNavigationPads
         float scale = DrawnWidth / (control.Size.X * parentScale.X);
         ulong id = control.GetInstanceId();
         _backScales[id] = scale;
-        // Set it now too, so the drawn measurement below already has this frame's portrait scale.
+        // Capture the game's own slide places and its own pivot/scale before anything below writes over them: leaving
+        // portrait has to put the game's button back, not this pass's portrait one.
+        if (!_originalPositions.ContainsKey(id))
+        {
+            var currentShow = (Vector2)fields.ShowPos.GetValue(control)!;
+            var currentHide = fields.HidePos is null ? currentShow : (Vector2)fields.HidePos.GetValue(control)!;
+            _originalPositions[id] = (currentShow, currentHide, control.PivotOffset, control.Scale);
+        }
+        // Set the portrait pivot and scale now, so the drawn measurement below already sees this frame's shape.
         control.PivotOffset = new Vector2(0f, control.Size.Y);
         if (!control.Scale.IsEqualApprox(new Vector2(scale, scale))) control.Scale = new Vector2(scale, scale);
-        // What the button actually draws, pivot and scale included. The pivot is its left/bottom corner, so the origin is the
-        // drawn bottom's left corner: `height` is the art above it and `reach` the art to its right.
+        // The button's own box, and everything it draws, pivot and scale included. The pivot is its left/bottom corner, so
+        // the origin is the box's drawn bottom-left: the line is measured from the box (its decoration may reach past it, and
+        // an invisible outline or glow must never move the button), while the parking spot uses the whole drawn art.
+        Rect2 box = CanvasRect(control);
         Rect2 drawn = DrawnRect(control);
         Vector2 origin = control.GlobalPosition;
-        float height = origin.Y - drawn.Position.Y;
+        float height = origin.Y - box.Position.Y;
         if (height < 1f || height > canvas.Size.Y) height = control.Size.Y * parentScale.Y * scale;
+        float artHeight = Math.Max(height, origin.Y - drawn.Position.Y);
         float reach = Math.Max(DrawnWidth, drawn.End.X - origin.X);
         Vector2 offset = fields.PosOffset?.GetValue(control) is Vector2 value ? value : new Vector2(40f, 354f);
         float bottom;
-        if (IsPanelBack(control) || HasFooterLegend(control))
+        if (IsUpgradeClose(control))
+        {
+            // The reference lifts the upgrade screen's Close above its View Upgrades box (PortraitPreviewMath.CloseTop, 470
+            // reference units). The button's scene offsets are in its scaled parent's units and landed it level with the box.
+            bottom = PortraitPreviewMath.CloseTop(canvas.End.Y) + height;
+        }
+        else if (IsPanelBack(control) || HasFooterLegend(control))
         {
             // The comparison buttons' line (PortraitPreviewMath.ButtonTop): its Cancel and Confirm draw their tops on it, and
             // it is the first line under the legend plate, whose bottom is always 260 canvas units above the canvas's bottom.
@@ -246,23 +263,17 @@ internal sealed class PortraitNavigationPads
         else
         {
             // The game's own footer gap below the screen's bottom edge (the button's own bottom before the screen edge),
-            // mapped through the parent's scale; the upgrade screen's Close caches the larger gap above its View Upgrades box.
+            // mapped through the parent's scale.
             float gap = Math.Max(0f, offset.Y - control.Size.Y) * parentScale.Y;
             bottom = canvas.End.Y - gap;
         }
-        float lowest = canvas.Position.Y + height + FooterBottomMargin;
+        float lowest = canvas.Position.Y + artHeight + FooterBottomMargin;
         float highest = Math.Max(lowest, canvas.End.Y - FooterBottomMargin);
         bottom = Math.Min(Math.Max(bottom, lowest), highest);
         var show = new Vector2(canvas.Position.X, bottom);
         // The native slide moves one button width left (NBackButton._hideOffset is -180 local units); keep its direction and
         // timing, but clear the whole drawn art, plus the hover growth about the left/bottom pivot.
         var hide = new Vector2(show.X - reach * HoverHeadroom - HideMargin, show.Y);
-        if (!_originalPositions.ContainsKey(id))
-        {
-            var currentShow = (Vector2)fields.ShowPos.GetValue(control)!;
-            var currentHide = fields.HidePos is null ? currentShow : (Vector2)fields.HidePos.GetValue(control)!;
-            _originalPositions[id] = (currentShow, currentHide, control.PivotOffset, control.Scale);
-        }
         bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed)
             || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
         bool enabled = fields.Enabled?.GetValue(control) is true;
@@ -339,6 +350,18 @@ internal sealed class PortraitNavigationPads
         for (Node? node = control.GetParent(); node is not null && node is not Window; node = node.GetParent())
             if (node is Control parent && parent.Name.ToString().Contains("PreviewContainer", StringComparison.Ordinal))
                 return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Whether this is the upgrade screen's Close, which the reference lifts above its View Upgrades box. Its own scene offsets
+    /// are written in its scaled parent's units and, once the comparison panel has grown it, land it level with that box.
+    /// </summary>
+    private static bool IsUpgradeClose(Control control)
+    {
+        if (!string.Equals(control.Name.ToString(), "Close", StringComparison.Ordinal)) return false;
+        for (Node? node = control.GetParent(); node is not null && node is not Window; node = node.GetParent())
+            if (node is Control screen && screen.GetType().Name == "NDeckUpgradeSelectScreen") return true;
         return false;
     }
 

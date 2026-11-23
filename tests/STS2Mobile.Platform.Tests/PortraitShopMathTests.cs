@@ -273,14 +273,6 @@ public class PortraitShopMathTests
         Assert.Equal(back.CenterY, cards.CenterY, 3);
     }
 
-    [Theory]
-    [InlineData(20f, -40f, 200f, -200f)]
-    [InlineData(20f, -300f, 200f, -280f)]
-    public void HiddenShopButtonIsFullyOffCanvas(float showX, float hideOffsetX, float width, float expected)
-    {
-        Assert.Equal(expected, PortraitShopMath.HideX(showX, hideOffsetX, width), 3);
-    }
-
     [Fact]
     public void TabRowNeverOverflowsTheCanvas()
     {

@@ -748,7 +748,7 @@ internal sealed partial class PortraitBetweenLayout
         bool uniform = !state.Compact && !tight;
         float tallest = PortraitEventMath.UniformRowHeight(
             System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_eventRowRequired), minHeight);
-        float total = 0f;
+        float y = 0f;
         int seen = 0;
         for (int i = 0; i < state.Rows.Count; i++)
         {
@@ -757,11 +757,13 @@ internal sealed partial class PortraitBetweenLayout
             if (measured < 0) continue;
             float height = uniform ? tallest : _eventRowRequired[measured];
             SetEventRowSize(row, width, height, insetY, textWidth);
-            total += height;
+            // A taller measured row changes the VBox's own sort; set the place now with the final height so two rows can
+            // never overlap between this page pass and the container's next deferred sort (which computes the same y).
+            row.Position = new Vector2(0f, y);
+            y += height + gap;
             seen++;
         }
-        if (uniform) total = PortraitEventMath.ChoiceRowsHeight(tallest, gap, seen);
-        else if (seen > 1) total += (seen - 1) * gap;
+        float total = seen > 0 ? MathF.Max(0f, y - gap) : 0f;
         return total <= state.Band.Bottom - state.Band.Top + 0.5f;
     }
 

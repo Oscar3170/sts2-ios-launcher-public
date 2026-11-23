@@ -2,13 +2,13 @@ namespace STS2Mobile.Platform.Tests;
 
 public class PortraitOrbMathTests
 {
-    // The two launcher-host portrait canvases: the 9:19.5 iPhone (1080 x 2340, a 162-unit safe cap) and the 9:16 one
-    // (1080 x 1920, the 136-unit cap floor). Their bars come from PortraitCombatMath.ComputeCombatBands.
+    // The two launcher-host portrait canvases: the 9:19.5 iPhone (1080 x 2340, a 162-unit safe cap from its 0.069 inset)
+    // and the 9:16 one (1080 x 1920, no notch, so no cap). Their bars come from PortraitCombatMath.ComputeCombatBands.
     private const float Width = 1080f;
     private const float TallBarsEnd = 612f;      // cap 162 + RunContentTop 450
     private const float TallRailTop = 1373.7f;
-    private const float CompactBarsEnd = 586f;   // cap 136 + RunContentTop 450
-    private const float CompactStoneBottom = 364f; // cap 136 + TopBarHeight 228
+    private const float CompactBarsEnd = 450f;   // cap 0 + RunContentTop 450
+    private const float CompactStoneBottom = 228f; // cap 0 + TopBarHeight 228
     private const float CompactRailTop = 1028.3f;
 
     private static PortraitOrbArcPlan TallPlan(int count, float ownerCenterX = 220f, float ownerTopY = 940f,

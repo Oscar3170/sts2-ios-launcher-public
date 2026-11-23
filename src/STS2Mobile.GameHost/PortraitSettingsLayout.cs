@@ -148,6 +148,8 @@ internal sealed class PortraitSettingsLayout
     private DragKind _kind;
     private ulong _target;
     private ulong _surface;
+    /// <summary>Whether a settings screen, its rows clip or an open dropdown list is visible this frame.</summary>
+    private bool _surfaceVisible;
     private float _startY;
     private float _initial;
     private float _limit;
@@ -436,7 +438,12 @@ internal sealed class PortraitSettingsLayout
     private void OnWindowInput(InputEvent input)
     {
         if (_tree == null || !GodotObject.IsInstanceValid(_tree.Root)) { Reset(); return; }
-        if (!SafeAreaCanvas.IsPortrait || _screens.Count == 0) { Reset(); return; }
+        // Outside Settings this handler must not see the game's input at all: a Settings screen that was closed can stay
+        // registered in the tree, and its stale state must never inspect or consume presses on another screen (the event
+        // options found this as a dead tap). The visibility flag is refreshed once per frame, so the per-event path is one
+        // bool and nothing else; a gesture left when Settings closed is cleared by the next Begin.
+        if (!SafeAreaCanvas.IsPortrait) { Reset(); return; }
+        if (!_surfaceVisible) return;
         try
         {
             // The tap that dismissed an open list is the list's: neither it nor its emulated mouse twin (nor their
@@ -475,6 +482,25 @@ internal sealed class PortraitSettingsLayout
 
     private Vector2 ToCanvas(Vector2 point) => _tree == null ? point : _tree.Root.GetFinalTransform().AffineInverse() * point;
 
+    /// <summary>
+    /// Whether any settings surface is on screen: a registered settings screen or its rows clip, or an open dropdown list
+    /// (the test host can report the screen itself as not visible while the list it opened is clearly drawn).
+    /// </summary>
+    private bool SettingsSurfaceVisible()
+    {
+        foreach ((ulong id, ScreenState state) in _screens)
+        {
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) &&
+                screen.IsInsideTree() && screen.IsVisibleInTree()) return true;
+            if (state.Clip != 0 && GodotObject.InstanceFromId(state.Clip) is Control clip &&
+                GodotObject.IsInstanceValid(clip) && clip.IsInsideTree() && clip.IsVisibleInTree()) return true;
+        }
+        foreach ((ulong _, DropdownState state) in _dropdowns)
+            if (GodotObject.InstanceFromId(state.List) is Control list && GodotObject.IsInstanceValid(list) &&
+                list.IsInsideTree() && list.IsVisibleInTree()) return true;
+        return false;
+    }
+
     /// <summary>Whether the feedback screen settings opens holds the view; while it does, a press is not the settings'.</summary>
     private bool FeedbackHolds()
     {
@@ -493,7 +519,10 @@ internal sealed class PortraitSettingsLayout
     /// </summary>
     private void Begin(InputEvent input, Vector2 point)
     {
-        End();
+        // Clear a previous gesture without consuming this new press. If a drag's release was lost (the input shield, a
+        // screen change, the window losing focus), End() would mark this press handled and the option under it would
+        // never see its MousePressed — a dead tap. The game-over summary drag learned the same lesson.
+        End(handleInput: false);
         if (!_ready) return;
         if (FeedbackHolds()) { Note("the feedback screen holds the view", point); return; }
         // An open dropdown's list is drawn over the rows and scrolls itself; its items are what the finger went down on.
@@ -657,7 +686,7 @@ internal sealed class PortraitSettingsLayout
         return 0;
     }
 
-    private void End()
+    private void End(bool handleInput = true)
     {
         if (_dragging)
         {
@@ -668,8 +697,9 @@ internal sealed class PortraitSettingsLayout
             }
             Release();
             // The finger lift is the swipe's, not a tap: the list item or tickbox it ends over must not act on it, even
-            // when press, drag and release arrive in one frame.
-            _tree?.Root.SetInputAsHandled();
+            // when press, drag and release arrive in one frame. A stale drag cleared by the next press must not take
+            // that press, so Begin() passes handleInput: false.
+            if (handleInput) _tree?.Root.SetInputAsHandled();
         }
         _down = false;
         _dragging = false;
@@ -678,7 +708,8 @@ internal sealed class PortraitSettingsLayout
         _surface = 0;
     }
 
-    private void Reset() => End();
+    /// <summary>Abandons a gesture without marking the current event handled (Reset runs on unrelated input and teardown).</summary>
+    private void Reset() => End(handleInput: false);
 
     // ---- dropdowns --------------------------------------------------------------------------------------------------------
 
@@ -716,6 +747,7 @@ internal sealed class PortraitSettingsLayout
     /// </summary>
     public void OnProcessFrame(Window root, float capHeight)
     {
+        _surfaceVisible = SettingsSurfaceVisible();
         if (_feedback.Count > 0) HoldFeedback(root, capHeight);
         if (_dropdowns.Count == 0 || !SafeAreaCanvas.IsPortrait) return;
         Vector2 canvas = root.GetVisibleRect().Size;
@@ -943,7 +975,12 @@ internal sealed class PortraitSettingsLayout
             state.Sliders.RemoveAll(k => !GodotObject.IsInstanceIdValid(k));
             state.Dropdowns.RemoveAll(k => !GodotObject.IsInstanceIdValid(k));
         }
-        foreach (ulong id in _screens.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _screens.Remove(id);
+        // A settings screen that left the tree is no longer a surface for this handler. Hidden-but-in-tree screens stay
+        // registered (their layout is reused on reopen); SettingsSurfaceVisible keeps the handler off while none is shown.
+        foreach (ulong id in _screens.Keys.ToList())
+            if (GodotObject.InstanceFromId(id) is not Control screen || !GodotObject.IsInstanceValid(screen) ||
+                !screen.IsInsideTree())
+                _screens.Remove(id);
         if (_target != 0 && !GodotObject.IsInstanceIdValid(_target)) Reset();
     }
 

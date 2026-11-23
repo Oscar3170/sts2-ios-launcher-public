@@ -52,6 +52,7 @@ public class SafeAreaCanvasTests
     {
         Assert.Equal(0, SafeAreaCanvas.SideInset());
         Assert.Equal(0, SafeAreaCanvas.TopInset());
+        Assert.False(SafeAreaCanvas.HasTopInset);
         Assert.False(SafeAreaCanvas.IsPortrait);
         Assert.Equal(SafeAreaCanvas.Expand, SafeAreaCanvas.Layout(2532, 1170, out int w, out int h));
         Assert.Equal((1680, 1080), (w, h));

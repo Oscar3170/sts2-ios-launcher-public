@@ -37,6 +37,25 @@ public static class PortraitHeaderMath
     public const int StonePatchLeft = 30, StonePatchTop = 20, StonePatchRight = 30, StonePatchBottom = 30;
 
     /// <summary>
+    /// The safe cap a desktop/unknown host reserves above the top bar: the launcher's old fixed band, kept only where the
+    /// native query that reports the real inset is missing.
+    /// </summary>
+    public const float DefaultCapHeight = 162f;
+
+    /// <summary>
+    /// The safe cap over the top bar in canvas units. With the native query (<paramref name="hasTopInset"/>) the cap follows
+    /// the screen's real inset: <c>ceil(insetFraction * canvasHeight)</c>, and 0 is a valid answer (a 9:16 phone with no notch
+    /// reserves nothing). Without the query, a desktop host keeps <see cref="DefaultCapHeight"/>. There is no floor: a floor
+    /// would reserve a notch that the screen does not have.
+    /// </summary>
+    public static float CapHeight(bool hasTopInset, double insetFraction, float canvasHeight)
+    {
+        if (!hasTopInset) return DefaultCapHeight;
+        if (!(insetFraction > 0) || !float.IsFinite(canvasHeight) || canvasHeight <= 0f) return 0f;
+        return MathF.Ceiling((float)(insetFraction * canvasHeight));
+    }
+
+    /// <summary>
     /// The potion row, left of the map and deck buttons in the second header row. Its height is the row's own; what potions
     /// do not use shows the stone behind the tray.
     /// </summary>

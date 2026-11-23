@@ -12,8 +12,8 @@ public readonly record struct CardGridColumns(int Columns, float CardScale, floa
 /// <summary>A loot window's drawn rectangle and scale, in canvas units.</summary>
 public readonly record struct LootWindowFit(float Scale, float X, float Y, float Width, float Height, float WindowHeight);
 
-/// <summary>A card grid's scale, the height of the whole block, and the arrangement it chose.</summary>
-public readonly record struct CardGridFit(float Scale, float BlockHeight, int Rows, int Columns);
+/// <summary>A card grid's scale, the height of the whole block, its arrangement, and the gap between its columns.</summary>
+public readonly record struct CardGridFit(float Scale, float BlockHeight, int Rows, int Columns, float GapX);
 
 /// <summary>
 /// Pure layout math for portrait between-fight screens: the Spire Map's scroll range, the 2 x 2 card reward grid,
@@ -57,12 +57,39 @@ public static class PortraitBetweenMath
     public const float MapPaperSideMargin = 28f;
 
     /// <summary>
-    /// Horizontal scale for the map background so the torn-scroll sheet is framed inside the canvas with
-    /// <see cref="MapPaperSideMargin"/> on each side. Only the paper is scaled (the point columns keep their own centring),
-    /// and the vertical scale is left at 1 so the sheet still covers every scroll position.
+    /// The one uniform scale for the whole map graph — the parchment sheet, the points, the paths, the free strokes, the
+    /// marker and the points' hit pads are all its children. It makes the parchment body fit the canvas with
+    /// <see cref="MapPaperSideMargin"/> on each side, so both torn edges stay visible over the act art.
     /// </summary>
-    public static float MapPaperScale(float canvasWidth) =>
+    public static float MapGraphScale(float canvasWidth) =>
         Math.Clamp((canvasWidth - 2f * MapPaperSideMargin) / MapPaperTextureWidth, 0.5f, 1f);
+
+    /// <summary>The parchment body's width on the portrait canvas: the 1260-unit sheet, scaled with the graph.</summary>
+    public static float MapPaperWidth(float canvasWidth) => MapPaperTextureWidth * MapGraphScale(canvasWidth);
+
+    /// <summary>The parchment body's left edge on the portrait canvas (the graph is framed around it).</summary>
+    public static float MapPaperLeft(float canvasWidth) => (canvasWidth - MapPaperWidth(canvasWidth)) * 0.5f;
+
+    /// <summary>The parchment body's right edge on the portrait canvas.</summary>
+    public static float MapPaperRight(float canvasWidth) => MapPaperLeft(canvasWidth) + MapPaperWidth(canvasWidth);
+
+    /// <summary>
+    /// How far every drawn node icon must stay from the parchment's torn side edges: the reference's phone layout (1680
+    /// units wide) fits the graph with 120 units of clearance, 60 a side; converted to the 1080 canvas that is 38.6.
+    /// </summary>
+    public const float MapNodePaperMargin = 60f * 1080f / 1680f;
+
+    /// <summary>
+    /// The native room icon's growth beyond its drawn rect. <c>NNormalMapPoint</c> pulses its icon container to a 1.2 base
+    /// with a 0.25 swing (1.45 maximum) and its hover tween scales the icon to 1.45, so 1.45 covers both states.
+    /// </summary>
+    public const float MapNodeFocusGrowth = 1.45f;
+
+    /// <summary>The left edge a fully decorated node icon may reach on the parchment, inset by the reference margin.</summary>
+    public static float MapNodePaperLeft(float canvasWidth) => MapPaperLeft(canvasWidth) + MapNodePaperMargin;
+
+    /// <summary>The right edge a fully decorated node icon may reach on the parchment, inset by the reference margin.</summary>
+    public static float MapNodePaperRight(float canvasWidth) => MapPaperRight(canvasWidth) - MapNodePaperMargin;
 
     /// <summary>
     /// How far the map container may scroll in portrait so the boss medallion can be brought just under the top bar and the
@@ -85,17 +112,11 @@ public static class PortraitBetweenMath
     /// <summary>The scroll the game would aim for, clamped into the portrait range.</summary>
     public static float ClampMapScroll(float scroll, MapScrollRange range) => Math.Clamp(scroll, range.Min, range.Max);
 
-    /// <summary>The most the map is ever moved sideways to centre it; the background is widened by this much on both sides.</summary>
-    public const float MaxMapCentreShift = 120f;
-
     /// <summary>
-    /// How far right the map must move so its room points sit centred in the canvas. The game lays the columns out left of
-    /// centre, leaving room for the legend panel on the right; in portrait the legend is a button, and the left column would
-    /// touch or pass the screen edge. <paramref name="pointsLeft"/> and <paramref name="pointsRight"/> are the outer edges
-    /// of the room points in the map container's own coordinates.
+    /// How far the map background is widened on both sides. Its tiles are 1080-wide slices of a 1920-wide sheet and cover
+    /// their control; without the extra width each tile would crop 90 units off the parchment's torn edges.
     /// </summary>
-    public static float MapCentreShift(float pointsLeft, float pointsRight, float canvasWidth) =>
-        Math.Clamp((canvasWidth - (pointsLeft + pointsRight)) / 2f, -MaxMapCentreShift, MaxMapCentreShift);
+    public const float MaxMapCentreShift = 120f;
 
     /// <summary>
     /// How far the desktop map background (anchored to the top) must move down so it stays behind points that are laid out
@@ -280,13 +301,37 @@ public static class PortraitBetweenMath
     public const float CardFocusGrowth = 0.125f;
 
     /// <summary>
-    /// Scale and arrangement for a card reward grid in the band between <paramref name="bandTop"/> and
-    /// <paramref name="bandBottom"/>, with a margin either side of the canvas, reserving <see cref="CardFocusGrowth"/> of a
-    /// card's height above and below the block for the focused card. Two to a row is preferred; when that cannot give a card
-    /// at least <paramref name="minScale"/> (the phone's floor of 289 units), three cards take one row instead, which is
-    /// larger on the shorter canvas. Larger sets cannot take one row; they add a third (then a fourth or fifth) column while
-    /// that keeps the cards closer to the floor, so a five-card choice is two rows of three and two rather than three rows
-    /// squeezed onto the tall screen.
+    /// The reference's card row for one to three cards: 0.92 of the canvas across with a 40-unit gap (40 of the reference's
+    /// 1680-wide units is 25.71 here) and its cap of 1.85 converted the same way (1.1893), so a three-card row is 314 units
+    /// (109 points) on the phone. Slots are one row, given relative to the block's centre.
+    /// </summary>
+    public const float CardRowWidthFraction = 0.92f;
+    public const float CardRowGap = 40f * 1080f / 1680f;
+    public const float CardRowMaxScale = 1.85f * 1080f / 1680f;
+
+    /// <summary>
+    /// One row for one to three cards, scaled like the reference's row and reserving <see cref="CardFocusGrowth"/> of a
+    /// card's height above and below for the focused card. The band only limits very short canvases.
+    /// </summary>
+    public static CardGridFit CardRow(
+        int count, float canvasWidth, float bandTop, float bandBottom, float cardWidth, float cardHeight)
+    {
+        int cards = Math.Max(count, 1);
+        float byWidth = (canvasWidth * CardRowWidthFraction - (cards - 1) * CardRowGap) / (cards * cardWidth);
+        float byHeight = (bandBottom - bandTop) / (cardHeight * (1f + 2f * CardFocusGrowth));
+        float scale = Math.Clamp(Math.Min(CardRowMaxScale, Math.Min(byWidth, byHeight)), 0.2f, CardRowMaxScale);
+        return new CardGridFit(scale, cardHeight * scale, 1, cards, CardRowGap);
+    }
+
+    /// <summary>
+    /// Scale and arrangement for a card grid in the band between <paramref name="bandTop"/> and <paramref name="bandBottom"/>,
+    /// with a margin either side of the canvas, reserving <see cref="CardFocusGrowth"/> of a card's height above and below the
+    /// block for the focused card. Two to a row is preferred; when that cannot give a card at least
+    /// <paramref name="minScale"/> (the phone's floor of 289 units), three cards take one row instead, which is larger on the
+    /// shorter canvas. Larger sets cannot take one row; they add a third (then a fourth or fifth) column while that keeps the
+    /// cards closer to the floor, so a five-card choice is two rows of three and two rather than three rows squeezed onto the
+    /// tall screen. The card screens use <see cref="CardRow"/> for one to three cards; this rule is kept for four or more and
+    /// for the bundle choice.
     /// </summary>
     public static CardGridFit CardGrid(
         int count,
@@ -301,7 +346,7 @@ public static class PortraitBetweenMath
         float sideMargin,
         float minScale)
     {
-        if (count <= 0) return new CardGridFit(maxScale, 0f, 0, 0);
+        if (count <= 0) return new CardGridFit(maxScale, 0f, 0, 0, gapX);
         CardGridFit Fit(int columns)
         {
             int rows = (count + columns - 1) / columns;
@@ -309,7 +354,7 @@ public static class PortraitBetweenMath
             float bandHeight = bandBottom - bandTop - (rows - 1) * gapY;
             float byHeight = bandHeight / (cardHeight * (rows + 2f * CardFocusGrowth));
             float scale = Math.Clamp(Math.Min(maxScale, Math.Min(byWidth, byHeight)), 0.2f, maxScale);
-            return new CardGridFit(scale, rows * cardHeight * scale + (rows - 1) * gapY, rows, columns);
+            return new CardGridFit(scale, rows * cardHeight * scale + (rows - 1) * gapY, rows, columns, gapX);
         }
         CardGridFit grid = Fit(Math.Min(count, 2));
         if (grid.Scale >= minScale) return grid;

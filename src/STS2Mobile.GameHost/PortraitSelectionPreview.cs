@@ -62,7 +62,11 @@ internal sealed class PortraitSelectionPreview
         public int RowSettle;
     }
 
-    /// <summary>A preview or Back button: where the game shows it, how it was grown, and its own move tween.</summary>
+    /// <summary>
+    /// A preview button: how it was grown and, for the composed Confirm, where the game shows it. A Back (the panels' Cancel
+    /// and the screen's Close) is grown here but its place belongs to PortraitNavigationPads, the single writer of every
+    /// NBackButton's slide fields.
+    /// </summary>
     private sealed class Button
     {
         public Control Control = null!;
@@ -685,11 +689,13 @@ internal sealed class PortraitSelectionPreview
         Control control = button.Control;
         if (control.Size.Y < 1f) return;
         Grow(button);
-        var target = new Vector2(
-            button.IsBack ? 0f : PortraitPreviewMath.ConfirmLeft(width, control.Size.X),
-            top);
+        // A Back's place (and its parking spot off the canvas) belongs to PortraitNavigationPads, the single writer of every
+        // NBackButton's cached slide positions. A second writer here would drag the Back to this footer point for a frame and
+        // would overwrite the pad pass's hide point, leaving a disabled Back's art on screen.
+        if (button.IsBack) return;
+        var target = new Vector2(PortraitPreviewMath.ConfirmLeft(width, control.Size.X), top);
         if (button.ShowField == null) return;
-        if (!button.IsBack) target = ToLocal(control, target);
+        target = ToLocal(control, target);
         if (!float.IsNaN(button.Target.X) && button.Target.DistanceSquaredTo(target) < 0.25f) return;
         button.Target = target;
         if (!button.HomesKnown && button.ShowField.GetValue(control) is Vector2 show)
@@ -699,9 +705,7 @@ internal sealed class PortraitSelectionPreview
             button.HomeHide = button.HideField?.GetValue(control) is Vector2 hide ? hide : show;
         }
         button.ShowField.SetValue(control, target);
-        Vector2 hidden = target + (button.IsBack
-            ? new Vector2(-(control.Size.X + 80f * PortraitPreviewMath.Unit), 0f)
-            : new Vector2(control.Size.X + 100f * PortraitPreviewMath.Unit, 0f));
+        Vector2 hidden = target + new Vector2(control.Size.X + 100f * PortraitPreviewMath.Unit, 0f);
         button.HideField?.SetValue(control, hidden);
         // A shown button slides to its portrait point (the game's own entrance feel, and no jump if it was already on its way
         // out; a hidden one is parked clear of the screen at once, since it cannot be seen).
@@ -709,8 +713,7 @@ internal sealed class PortraitSelectionPreview
         else
         {
             if (button.MoveTweenField?.GetValue(control) is Tween moving && GodotObject.IsInstanceValid(moving)) moving.Kill();
-            if (button.IsBack) control.GlobalPosition = hidden;
-            else control.Position = hidden;
+            control.Position = hidden;
         }
         if (_logged.Add(control.GetInstanceId()))
             GD.Print($"Portrait selection preview: {control.GetType().Name} of {OwnerName(control)} at " +
@@ -722,7 +725,7 @@ internal sealed class PortraitSelectionPreview
     {
         if (button.MoveTweenField?.GetValue(control) is Tween old && GodotObject.IsInstanceValid(old)) old.Kill();
         Tween tween = control.CreateTween();
-        tween.TweenProperty(control, button.IsBack ? "global_position" : "position", point, 0.35)
+        tween.TweenProperty(control, "position", point, 0.35)
             .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Back);
         if (button.MoveTweenField != null && button.MoveTweenField.FieldType.IsAssignableFrom(typeof(Tween)))
             button.MoveTweenField.SetValue(control, tween);
@@ -794,15 +797,15 @@ internal sealed class PortraitSelectionPreview
             }
             button.Descendants.Clear();
             snapshot.Restore(control);
-            if (button.HomesKnown)
+            // A Back's show and hide places belong to PortraitNavigationPads, which restores the game's own values on the
+            // same pass; only the composed Confirm buttons are put back from here.
+            if (button.HomesKnown && !button.IsBack)
             {
                 button.ShowField?.SetValue(control, button.HomeShow);
                 button.HideField?.SetValue(control, button.HomeHide);
                 if (button.MoveTweenField?.GetValue(control) is Tween tween && GodotObject.IsInstanceValid(tween)) tween.Kill();
                 bool enabled = button.EnabledProperty?.GetValue(control) is true;
-                Vector2 point = enabled ? button.HomeShow : button.HomeHide;
-                if (button.IsBack) control.GlobalPosition = point;
-                else control.Position = point;
+                control.Position = enabled ? button.HomeShow : button.HomeHide;
             }
         }
         foreach ((ulong id, ScreenState state) in _screens)

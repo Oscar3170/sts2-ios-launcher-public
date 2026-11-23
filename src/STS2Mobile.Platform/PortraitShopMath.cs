@@ -164,17 +164,6 @@ public static class PortraitShopMath
     public static float TabRowTop(float canvasHeight, float backHeight) =>
         canvasHeight - TabRowBottomMargin - Math.Max(TabMinHeight, backHeight);
 
-    /// <summary>The row's vertical middle: the Back button and both tabs share it.</summary>
-    public static float TabRowCentre(float canvasHeight, float backHeight) =>
-        TabRowTop(canvasHeight, backHeight) + Math.Max(TabMinHeight, backHeight) / 2f;
-
-    /// <summary>
-    /// Where a shop button waits when hidden: its native hide offset from the show point, moved far enough left that no
-    /// part of it (<paramref name="width"/>) is on the canvas.
-    /// </summary>
-    public static float HideX(float showX, float hideOffsetX, float width) =>
-        Math.Min(showX + hideOffsetX, -Math.Abs(width));
-
     /// <summary>
     /// The stock's local Y when the shop is closed: high enough that the rug (which reaches
     /// <see cref="ClothInsetTop"/> above the stock) ends above the canvas.

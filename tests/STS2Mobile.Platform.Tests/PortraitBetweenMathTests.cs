@@ -29,16 +29,6 @@ public class PortraitBetweenMathTests
     }
 
     [Theory]
-    [InlineData(-5f, 990f, 1080f, 47.5f)]
-    [InlineData(40f, 1040f, 1080f, 0f)]
-    [InlineData(-400f, 200f, 1080f, 120f)]
-    [InlineData(900f, 1500f, 1080f, -120f)]
-    public void MapCentreShiftCentresTheRoomPointsAndStaysBounded(float left, float right, float canvas, float expected)
-    {
-        Assert.Equal(expected, PortraitBetweenMath.MapCentreShift(left, right, canvas), 3);
-    }
-
-    [Theory]
     [InlineData(1080f, 0f)]
     [InlineData(2337f, 628.5f)]
     public void MapBackgroundShiftFollowsCanvasCentre(float canvas, float expected)
@@ -82,13 +72,30 @@ public class PortraitBetweenMathTests
 
     [Theory]
     [InlineData(1080f)]
-    public void MapPaperScaleLeavesTheTornEdgesInsideTheCanvas(float canvasWidth)
+    [InlineData(1000f)]
+    public void MapGraphScaleLeavesTheTornEdgesInsideTheCanvas(float canvasWidth)
     {
-        float scale = PortraitBetweenMath.MapPaperScale(canvasWidth);
+        float scale = PortraitBetweenMath.MapGraphScale(canvasWidth);
         float paper = PortraitBetweenMath.MapPaperTextureWidth * scale;
         Assert.Equal(canvasWidth - 2f * PortraitBetweenMath.MapPaperSideMargin, paper, 2);
-        Assert.Equal(PortraitBetweenMath.MapPaperSideMargin, (canvasWidth - paper) * 0.5f, 2);
-        Assert.True(scale is > 0.75f and < 1f);
+        Assert.Equal(PortraitBetweenMath.MapPaperSideMargin, PortraitBetweenMath.MapPaperLeft(canvasWidth), 2);
+        Assert.Equal(canvasWidth - PortraitBetweenMath.MapPaperSideMargin,
+            PortraitBetweenMath.MapPaperRight(canvasWidth), 2);
+    }
+
+    [Fact]
+    public void MapNodePaperInsetsTheReferenceMarginInsideTheTornEdges()
+    {
+        const float canvasWidth = 1080f;
+        float scale = PortraitBetweenMath.MapGraphScale(canvasWidth);
+        Assert.InRange(scale, 0.81f, 0.82f);
+        // The reference's 60 units a side at 1680 are 38.6 on the 1080 canvas.
+        Assert.Equal(38.5714f, PortraitBetweenMath.MapNodePaperMargin, 3);
+        Assert.Equal(PortraitBetweenMath.MapPaperLeft(canvasWidth) + PortraitBetweenMath.MapNodePaperMargin,
+            PortraitBetweenMath.MapNodePaperLeft(canvasWidth), 3);
+        Assert.Equal(PortraitBetweenMath.MapPaperRight(canvasWidth) - PortraitBetweenMath.MapNodePaperMargin,
+            PortraitBetweenMath.MapNodePaperRight(canvasWidth), 3);
+        Assert.Equal(1.45f, PortraitBetweenMath.MapNodeFocusGrowth);
     }
 
     [Fact]
@@ -185,7 +192,7 @@ public class PortraitBetweenMathTests
         Assert.Equal(expected, PortraitBetweenMath.FitScale(content, available), 4);
     }
 
-    // Canvas 1080 wide; cap 162 and stone header bottom 390 for both test shapes; the game's shown Y is 764/1080 of the
+    // Canvas 1080 wide, on the tall shape (cap 162, stone header bottom 390); the game's shown Y is 764/1080 of the
     // height; the grown action is 127 units tall.
     private const float HeaderBottom = 390f;
     private const float ActionHeight = 127f;
@@ -280,40 +287,36 @@ public class PortraitBetweenMathTests
     }
 
     [Theory]
-    [InlineData(1920f, 796f, 1761f, 0.98262f, 294.8f)]
-    [InlineData(2340f, 798f, 2181f, 1.42285f, 426.9f)]
-    public void CardRewardGridReservesTheFocusedCardsGrowth(float height, float top, float bottom, float scale, float width)
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void OneToThreeCardsAreOneReferenceRow(float height)
     {
-        CardGridFit fit = PortraitBetweenMath.CardGrid(
-            3, 1080f, top, bottom, 300f, 422f, 48f, 32f, 1.5f, 44f, 289f / 300f);
-        Assert.Equal(2, fit.Rows);
-        Assert.Equal(2, fit.Columns);
-        Assert.Equal(scale, fit.Scale, 3);
-        Assert.Equal(width, 300f * fit.Scale, 1);
-        Assert.True(300f * fit.Scale >= 289f, $"scale {fit.Scale:F3} gives {300f * fit.Scale:F1}");
-        Assert.Equal(2f * 422f * fit.Scale + 32f, fit.BlockHeight, 1);
-        // The focused bottom card's grown edge stays inside the band (the alternatives' top less 8).
+        float bandTop = height > 2000f ? 798f : 796f;
+        float bandBottom = height > 2000f ? 2103.2f : 1683.2f;
+        CardGridFit fit = PortraitBetweenMath.CardRow(3, 1080f, bandTop, bandBottom, 300f, 422f);
+        Assert.Equal(1, fit.Rows);
+        Assert.Equal(3, fit.Columns);
+        Assert.Equal(1.04686f, fit.Scale, 3);
+        Assert.Equal(314.06f, 300f * fit.Scale, 1);
+        Assert.True(300f * fit.Scale >= 289f);
+        Assert.Equal(PortraitBetweenMath.CardRowGap, fit.GapX, 3);
+        Assert.Equal(422f * fit.Scale, fit.BlockHeight, 1);
+        // Under the banner, the focused row still ends above the band's bottom (the footer's top less 8).
         float grow = PortraitBetweenMath.CardFocusGrowth * 422f * fit.Scale;
-        Assert.True(top + grow + fit.BlockHeight + grow <= bottom + 0.01f);
-        Assert.True(top + grow + fit.BlockHeight + grow + 8f + ActionHeight <= height);
+        Assert.True(bandTop + grow + fit.BlockHeight + grow <= bandBottom + 0.01f);
     }
 
     [Theory]
-    [InlineData(1920f, 796f, 1683.2f, 1, 3, 0.99556f, 298.7f)]
-    [InlineData(2340f, 798f, 2103.2f, 2, 2, 1.34092f, 402.3f)]
-    public void ChooseACardGridFallsBackToOneRowWhenThePairIsTooShort(
-        float height, float top, float bottom, int rows, int columns, float scale, float width)
+    [InlineData(1)]
+    [InlineData(2)]
+    public void OneOrTwoCardsUseTheReferenceRowCap(int count)
     {
-        CardGridFit fit = PortraitBetweenMath.CardGrid(
-            3, 1080f, top, bottom, 300f, 422f, 48f, 32f, 1.5f, 44f, 289f / 300f);
-        Assert.Equal(rows, fit.Rows);
-        Assert.Equal(columns, fit.Columns);
-        Assert.Equal(scale, fit.Scale, 3);
-        Assert.Equal(width, 300f * fit.Scale, 1);
-        Assert.True(300f * fit.Scale >= 289f, $"scale {fit.Scale:F3} gives {300f * fit.Scale:F1}");
-        // The footer (peek 204.8) sits below the focused card's grown edge with 24 units to spare.
-        float grow = PortraitBetweenMath.CardFocusGrowth * 422f * fit.Scale;
-        Assert.True(top + grow + fit.BlockHeight + grow + 8f + 204.8f <= height - 24f + 0.1f);
+        CardGridFit fit = PortraitBetweenMath.CardRow(count, 1080f, 796f, 1683.2f, 300f, 422f);
+        Assert.Equal(1, fit.Rows);
+        Assert.Equal(count, fit.Columns);
+        Assert.Equal(PortraitBetweenMath.CardRowMaxScale, fit.Scale, 3);
+        Assert.Equal(356.79f, 300f * fit.Scale, 1);
+        Assert.Equal(1.18929f, PortraitBetweenMath.CardRowMaxScale, 4);
     }
 
     [Theory]

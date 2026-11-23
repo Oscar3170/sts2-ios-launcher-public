@@ -77,7 +77,7 @@ public class PortraitGridMathTests
     [Fact]
     public void DeckViewSortRowSitsAboveTheGridAndTheFirstRowUnderIt()
     {
-        const float headerBottom = 390f;    // safe cap 162 + the top bar's 228
+        const float headerBottom = 390f;    // tall shape: safe cap 162 + the top bar's 228
         float top = PortraitGridMath.GridTop(headerBottom, sortRow: true);
         Assert.Equal(533f, top, 3);
         // The sort row is 8 under the header band and a whole 135 units tall, the grid starts at its bottom edge.

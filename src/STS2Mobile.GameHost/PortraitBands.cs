@@ -3,8 +3,9 @@ namespace STS2Mobile.GameHost;
 /// <summary>
 /// The fixed bands at the top of a run screen in portrait, in canvas units (1080 across; 2.88 units are one point on an
 /// iPhone 11 Pro, so 127 units are the 44 points a touch target should have). From the top: the safe cap over the notch
-/// (measured, passed around as capHeight), the top bar's row, the potion row (potions at 44 points do not fit
-/// in the top bar's row), then the relic strip. Every portrait layout takes its top from here.
+/// (the screen's real inset, passed around as capHeight; 0 on a notchless 9:16 phone), the top bar's row, the potion row
+/// (potions at 44 points do not fit in the top bar's row), then the relic strip. Every portrait layout takes its top from
+/// here.
 /// </summary>
 internal static class PortraitBands
 {
@@ -16,6 +17,9 @@ internal static class PortraitBands
 
     /// <summary>The top bar's own row: character, health, gold, floor, boss, then map, deck and settings.</summary>
     public const float TopBarRowHeight = 88f;
+
+    /// <summary>The row's content inset from the safe cap's edge.</summary>
+    public const float TopBarRowInset = 4f;
 
     /// <summary>The potion row under the top bar's row.</summary>
     public const float PotionRowHeight = 140f;

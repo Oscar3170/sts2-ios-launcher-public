@@ -101,12 +101,16 @@ public static class PortraitRestMath
         return Math.Max(scale, 0.05f);
     }
 
-    /// <summary>The row's box and where it is drawn: centred, pinned <see cref="OptionsBottomInset"/> above the safe bottom.</summary>
-    public static RestOptionsRow OptionsRow(int count, float minimumWidth, float canvasWidth, float canvasHeight)
+    /// <summary>
+    /// The row's box and where it is drawn: centred, pinned <see cref="OptionsBottomInset"/> above the safe bottom, and
+    /// <paramref name="lift"/> units higher when the copy needs the room (<see cref="DescriptionLift"/>).
+    /// </summary>
+    public static RestOptionsRow OptionsRow(int count, float minimumWidth, float canvasWidth, float canvasHeight, float lift = 0f)
     {
         float width = OptionsWidth(count, minimumWidth);
         float scale = OptionsScale(width, canvasWidth);
-        return new RestOptionsRow(width, OptionsHeight, scale, (canvasWidth - width * scale) * 0.5f, canvasHeight - OptionsBottomInset);
+        return new RestOptionsRow(
+            width, OptionsHeight, scale, (canvasWidth - width * scale) * 0.5f, canvasHeight - OptionsBottomInset - lift);
     }
 
     // ---- the two-row grid ------------------------------------------------------------------------------------------------
@@ -158,19 +162,57 @@ public static class PortraitRestMath
         return ((rows - 1) * (OptionsHeight + OptionsRowGap) + OptionsHeight) * scale;
     }
 
+    // ---- the copy's own band ----------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// How far an option's label ink reaches below its box top, in the buttons' own units: the label starts at the button's
+    /// 165th unit (the scene's full-rect label) and its 48 unit line ends about 48 units later. The drawn bottom of a row is
+    /// its box top plus this.
+    /// </summary>
+    public const float RowInkBottom = 213f;
+
+    /// <summary>
+    /// The space between the options' labels and the copy, and between the copy and the footer lane (28 units = 9.7 points).
+    /// It also covers the hovered option's label, which drops 6 of its own units, and its 1.1x art.
+    /// </summary>
+    public const float DescriptionGap = 28f;
+
+    /// <summary>The smallest copy band worth showing (about three 41 unit lines); below it the options move up instead.</summary>
+    public const float DescriptionMinHeight = 150f;
+
+    /// <summary>
+    /// The top of the footer lane, where the game hangs an action from the canvas's bottom edge (<c>ActionFooterCentreY</c>
+    /// less one touch target): the copy must end above it.
+    /// </summary>
+    public static float FooterLaneTop(float canvasHeight) =>
+        canvasHeight - PortraitBetweenMath.ActionFooterMargin - TouchTarget;
+
+    /// <summary>The drawn bottom of the lowest option: its box top plus the label ink below it.</summary>
+    public static float OptionsDrawnBottom(float bottomRowTop, float scale) => bottomRowTop + RowInkBottom * scale;
+
+    /// <summary>
+    /// How far the options must move up so a copy band of <paramref name="copyHeight"/> fits between their labels and the
+    /// footer lane. Zero for every count the options take at their current scales; the copy is never shrunk instead.
+    /// </summary>
+    public static float DescriptionLift(float optionsDrawnBottom, float canvasHeight, float copyHeight) =>
+        Math.Max(0f, Math.Max(DescriptionMinHeight, copyHeight) - CopyBand(optionsDrawnBottom, canvasHeight));
+
+    private static float CopyBand(float optionsDrawnBottom, float canvasHeight) =>
+        FooterLaneTop(canvasHeight) - DescriptionGap - (optionsDrawnBottom + DescriptionGap);
+
     /// <summary>
     /// Fills one box per row: rows are centred and the bottom row is centred under the top one; the bottom row's box top stays
     /// exactly where a single row's is (<see cref="OptionsBottomInset"/> above the safe bottom) and the top row stands one
     /// row-gap above it. The caller's buffer bounds the number of rows, so it is never overrun.
     /// </summary>
-    public static int OptionsGrid(int count, float canvasWidth, float canvasHeight, Span<RestOptionsRow> rows)
+    public static int OptionsGrid(int count, float canvasWidth, float canvasHeight, Span<RestOptionsRow> rows, float lift = 0f)
     {
         int rowCount = OptionsRowCount(count);
         if (rowCount <= 0 || rows.Length == 0) return 0;
         rowCount = Math.Min(rowCount, rows.Length);
         float scale = OptionsGridScale(count, canvasWidth);
         float pitch = (OptionsHeight + OptionsRowGap) * scale;
-        float bottomRow = canvasHeight - OptionsBottomInset;
+        float bottomRow = canvasHeight - OptionsBottomInset - lift;
         for (int row = 0; row < rowCount; row++)
         {
             int inRow = OptionsInRow(count, row);
@@ -203,8 +245,17 @@ public static class PortraitRestMath
     public static RestTextBlock Header(float rowTop, float canvasWidth) =>
         new(HeaderInset, rowTop - HeaderGap, canvasWidth - HeaderRightInset, HeaderHeight);
 
-    public static RestTextBlock Description(float canvasWidth, float canvasHeight) =>
-        new(DescriptionInset, canvasHeight - DescriptionBottomInset, canvasWidth - DescriptionRightInset, DescriptionHeight);
+    /// <summary>
+    /// The copy's band: right under the options' labels (drawn bottom passed in), as tall as the rendered text needs (measured
+    /// from the label, with <see cref="DescriptionMinHeight"/> as the floor) and never reaching the footer lane.
+    /// </summary>
+    public static RestTextBlock Description(float canvasWidth, float canvasHeight, float optionsDrawnBottom, float measuredTextHeight)
+    {
+        float top = optionsDrawnBottom + DescriptionGap;
+        float room = Math.Max(0f, FooterLaneTop(canvasHeight) - DescriptionGap - top);
+        return new RestTextBlock(
+            DescriptionInset, top, canvasWidth - DescriptionRightInset, Math.Min(Math.Max(measuredTextHeight, DescriptionMinHeight), room));
+    }
 
     // ---- the act's art -------------------------------------------------------------------------------------------------
 

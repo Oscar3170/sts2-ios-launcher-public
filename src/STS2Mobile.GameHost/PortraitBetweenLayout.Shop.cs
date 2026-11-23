@@ -72,11 +72,6 @@ internal sealed partial class PortraitBetweenLayout
         public PropertyInfo? OpenProperty;
         public Func<bool>? IsOpen;
         public FieldInfo? TweenField;
-        public FieldInfo? BackShowPosField;
-        public FieldInfo? BackHidePosField;
-        public FieldInfo? BackMoveTweenField;
-        public Vector2 BackShowHome;
-        public Vector2 BackHideHome;
         public Vector2 BackSizeHome;
         public bool BackCaptured;
         public FieldInfo? HoverTweenField;
@@ -179,7 +174,7 @@ internal sealed partial class PortraitBetweenLayout
                 state.LaidOut = true;
             }
 
-            PlaceShopBackButton(state, canvas);
+            FitShopBackButton(state);
             if (open)
             {
                 if (!state.WasOpen) OnShopOpened(inventory, state);
@@ -225,13 +220,8 @@ internal sealed partial class PortraitBetweenLayout
         }
         if (state.BackButton is { } backButton)
         {
-            state.BackShowPosField = FindPrivateField(backButton.GetType(), "_showPos");
-            state.BackHidePosField = FindPrivateField(backButton.GetType(), "_hidePos");
-            state.BackMoveTweenField = FindPrivateField(backButton.GetType(), "_moveTween");
             state.BackSizeHome = backButton.Size;
-            if (state.BackShowPosField?.GetValue(backButton) is Vector2 showHome) state.BackShowHome = showHome;
-            if (state.BackHidePosField?.GetValue(backButton) is Vector2 hideHome) state.BackHideHome = hideHome;
-            state.BackCaptured = state.BackShowPosField != null;
+            state.BackCaptured = true;
             Capture(backButton, captureVisible: false);
         }
         state.Weird = inventory.GetType().FullName == FakeMerchantInventoryTypeName;
@@ -740,31 +730,18 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>
-    /// The shop's own Back button as a phone target: at least 44 points tall and fully on the canvas, beside the tab row.
-    /// The game animates the button to its <c>_showPos</c>/<c>_hidePos</c>, so those are moved instead of the position; the
-    /// running slide is never fought.
+    /// The shop's own Back as a phone target: at least 44 points on both axes, so the Cards/Items row it is measured beside
+    /// keeps its 44 point height. Where the Back stands — its show and hide places and its parked spot — belongs to
+    /// <see cref="PortraitNavigationPads"/>, the single writer of every NBackButton's slide fields; writing them here as well
+    /// only made the Back jump to this row for a frame before the pad pass put it back.
     /// </summary>
-    private static void PlaceShopBackButton(ShopState state, Vector2 canvas)
+    private static void FitShopBackButton(ShopState state)
     {
         if (!state.BackCaptured || state.BackButton is not { } back || !GodotObject.IsInstanceValid(back)) return;
         var size = new Vector2(
             Math.Max(state.BackSizeHome.X, PortraitBands.MinTarget),
             Math.Max(state.BackSizeHome.Y, PortraitBands.MinTarget));
         if (!back.Size.IsEqualApprox(size)) back.Size = size;
-        // The row lives in the bottom band, on the same line as the tabs; only its x needed moving off the canvas edge.
-        float centreY = PortraitShopMath.TabRowCentre(canvas.Y, state.BackSizeHome.Y);
-        var show = new Vector2(20f, centreY - size.Y / 2f);
-        Vector2 hide = new(
-            PortraitShopMath.HideX(show.X, state.BackHideHome.X - state.BackShowHome.X, size.X),
-            show.Y + (state.BackHideHome.Y - state.BackShowHome.Y));
-        if (state.BackShowPosField?.GetValue(back) is Vector2 currentShow && !currentShow.IsEqualApprox(show))
-            state.BackShowPosField.SetValue(back, show);
-        if (state.BackHidePosField?.GetValue(back) is Vector2 currentHide && !currentHide.IsEqualApprox(hide))
-            state.BackHidePosField.SetValue(back, hide);
-        if (state.BackMoveTweenField?.GetValue(back) is Tween move && GodotObject.IsInstanceValid(move) && move.IsRunning())
-            return;
-        Vector2 want = state.IsOpen?.Invoke() == true ? show : hide;
-        if (!back.GlobalPosition.IsEqualApprox(want)) back.GlobalPosition = want;
     }
 
     private void PlaceShopTabs(Control inventory, ShopState state, Vector2 canvas, bool open)
@@ -803,8 +780,6 @@ internal sealed partial class PortraitBetweenLayout
             Rect2 rect = back.GetGlobalRect();
             if (rect.Size.X > 1f && rect.Size.Y > 1f && rect.Position.Y < canvas.Y - 20f && rect.End.Y > 0f)
                 return rect;
-            if (state.BackShowPosField?.GetValue(back) is Vector2 show && back.Size.X > 1f && back.Size.Y > 1f)
-                return new Rect2(show, back.Size * back.Scale.Abs());
         }
         return new Rect2(20f, canvas.Y - ShopBackFallbackY, 198f, 109f);
     }
@@ -971,14 +946,6 @@ internal sealed partial class PortraitBetweenLayout
             if (state.BlitzFooter is RichTextLabel footer && GodotObject.IsInstanceValid(footer) &&
                 state.BlitzFooterFitContent is { } fit)
                 footer.FitContent = fit;
-            if (state.BackCaptured && state.BackButton is { } back && GodotObject.IsInstanceValid(back))
-            {
-                if (state.BackMoveTweenField?.GetValue(back) is Tween move && GodotObject.IsInstanceValid(move)) move.Kill();
-                state.BackShowPosField?.SetValue(back, state.BackShowHome);
-                state.BackHidePosField?.SetValue(back, state.BackHideHome);
-                bool open = state.IsOpen?.Invoke() ?? false;
-                back.GlobalPosition = open ? state.BackShowHome : state.BackHideHome;
-            }
         }
         ShopPage = -1;
     }

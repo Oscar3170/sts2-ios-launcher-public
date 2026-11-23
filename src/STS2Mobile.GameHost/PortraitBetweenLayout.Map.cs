@@ -57,6 +57,10 @@ internal sealed partial class PortraitBetweenLayout
         public Control? Back;
         public FieldInfo? BackShowField;
         public float BgBaseLeft;
+        public float PaperCenterX;
+        public float GraphOffsetX;
+        public bool CenterPending;
+        public Action? VisibilityHandler;
         public bool PaperLogged;
         public Control? Legend;
         public Button? Pill;
@@ -80,7 +84,7 @@ internal sealed partial class PortraitBetweenLayout
 
     private readonly HashSet<ulong> _maps = new();
     private readonly Dictionary<ulong, MapFrame> _mapFrames = new();
-    private readonly Dictionary<ulong, (ulong First, int Count, float Width, float Shift)> _mapShifts = new();
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _mapBgSnapshots = new();
     private readonly Dictionary<ulong, (ulong First, int Count)> _mapPointLayouts = new();
     private readonly HashSet<ulong> _scaledMapPoints = new();
     private readonly Dictionary<ulong, TextureRect.StretchModeEnum> _stretchModes = new();
@@ -101,11 +105,12 @@ internal sealed partial class PortraitBetweenLayout
         Control? graph = MapGraph(map);
         if (graph?.GetNodeOrNull<Control>("MapBg") is { } bg)
         {
-            PortraitControlSnapshot snap = Capture(bg, captureVisible: false);
+            if (!_mapBgSnapshots.TryGetValue(bg.GetInstanceId(), out PortraitControlSnapshot? snap))
+                _mapBgSnapshots[bg.GetInstanceId()] = snap = Capture(bg, captureVisible: false);
             bg.OffsetTop = snap.InitialOffsetTop + shiftY;
             bg.OffsetBottom = snap.InitialOffsetBottom + shiftY;
-            // Wider on both sides, so the parchment still covers the screen when the map is moved sideways to centre it and
-            // its centre (what multiplayer map positions are measured from) stays where it was.
+            // Wider on both sides: each parchment tile covers its control, and the 1920-wide sheet's torn sides would be
+            // cropped away in a 1080-wide slice. The graph's uniform scale below then frames the 1260-wide body on the canvas.
             bg.OffsetLeft = snap.InitialOffsetLeft - PortraitBetweenMath.MaxMapCentreShift;
             bg.OffsetRight = snap.InitialOffsetRight + PortraitBetweenMath.MaxMapCentreShift;
             // Each parchment tile is a 1080-tall slice of desktop-wide art: cover the narrow tile instead of fitting inside it,
@@ -115,10 +120,6 @@ internal sealed partial class PortraitBetweenLayout
                 _stretchModes.TryAdd(tile.GetInstanceId(), tile.StretchMode);
                 tile.StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered;
             }
-            // The desktop art is 1920 wide and its parchment band is only about 1260 of that; a 1:1 crop would hide the
-            // torn sides. Draw the sheet a little narrower so both ragged edges sit inside the canvas over the act cover.
-            bg.PivotOffset = new Vector2((canvasWidth + 2f * PortraitBetweenMath.MaxMapCentreShift) * 0.5f, 0f);
-            bg.Scale = new Vector2(PortraitBetweenMath.MapPaperScale(canvasWidth), 1f);
         }
         if (graph?.GetNodeOrNull<Control>("Drawings") is { } drawings)
         {
@@ -162,8 +163,8 @@ internal sealed partial class PortraitBetweenLayout
         MapFrame? frame = EnsureMapFrame(map, canvas, clipTop, MapClipBottom(map, null, canvasHeight));
         if (frame != null)
         {
-            float shiftX = MapCentreShift(map, frame, canvasWidth);
-            PlaceMapBg(frame, shiftX, canvasWidth);
+            PlaceMapBg(frame);
+            if (frame.Map is { } theMap) UpdateMapGraph(theMap, frame, canvasWidth);
             UpdateMapFrame(map, frame, canvas, clipTop, MapClipBottom(map, frame, canvasHeight));
         }
     }
@@ -180,33 +181,70 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>
-    /// Frames the parchment: the sheet is drawn slightly narrower than the desktop art, centred on the canvas, so its torn
-    /// left and right edges stay visible over the act cover. The point columns keep their own centring shift; only the paper
-    /// is reframed (the graph itself is never scaled).
+    /// The parchment is part of the graph and scales with it; this only holds its own position, because the game rewrites
+    /// <c>NMapBg.Position</c> on a viewport change from the offset it cached before the portrait layout widened it.
     /// </summary>
-    private void PlaceMapBg(MapFrame frame, float shiftX, float canvasWidth)
+    private void PlaceMapBg(MapFrame frame)
     {
         if (frame.Bg is not { } bg || !GodotObject.IsInstanceValid(bg))
         {
             frame.Bg = frame.Map?.GetNodeOrNull<Control>("MapBg");
             bg = frame.Bg;
             if (bg == null || !GodotObject.IsInstanceValid(bg)) return;
+            frame.BgBaseLeft = bg.Position.X;
+            frame.PaperCenterX = bg.Position.X + bg.Size.X * 0.5f;
         }
-        float scale = PortraitBetweenMath.MapPaperScale(canvasWidth);
-        if (!Mathf.IsEqualApprox(bg.Scale.X, scale) || bg.Scale.Y != 1f)
-            bg.Scale = new Vector2(scale, 1f);
-        float pivot = (canvasWidth + 2f * PortraitBetweenMath.MaxMapCentreShift) * 0.5f;
-        if (!Mathf.IsEqualApprox(bg.PivotOffset.X, pivot) || bg.PivotOffset.Y != 0f)
-            bg.PivotOffset = new Vector2(pivot, 0f);
-        float x = frame.BgBaseLeft - shiftX;
-        if (!Mathf.IsEqualApprox(bg.Position.X, x))
-            bg.Position = new Vector2(x, bg.Position.Y);
+        if (!Mathf.IsEqualApprox(bg.Position.X, frame.BgBaseLeft))
+            bg.Position = new Vector2(frame.BgBaseLeft, bg.Position.Y);
+    }
+
+    /// <summary>
+    /// One uniform transform for the whole graph: parchment, points, paths, strokes, marker and the points' hit pads. The
+    /// sheet's 1260-wide body is scaled to the canvas (both torn edges stay visible) and translated so its centre sits on
+    /// the canvas centre; every point column keeps its authored offset inside the paper. The points' own 1.25 icon scale
+    /// is inside this transform too, and the hit pads are sized in canvas units (see <see cref="UpdateMapPointsPortrait"/>).
+    /// </summary>
+    private static void UpdateMapGraph(Control theMap, MapFrame frame, float canvasWidth)
+    {
+        float scale = PortraitBetweenMath.MapGraphScale(canvasWidth);
+        if (!Mathf.IsEqualApprox(theMap.Scale.X, scale) || !Mathf.IsEqualApprox(theMap.Scale.Y, scale))
+            theMap.Scale = new Vector2(scale, scale);
+        if (theMap.PivotOffset != Vector2.Zero) theMap.PivotOffset = Vector2.Zero;
+        frame.GraphOffsetX = canvasWidth * 0.5f - scale * frame.PaperCenterX;
+        if (!Mathf.IsEqualApprox(theMap.Position.X, frame.GraphOffsetX))
+            theMap.Position = new Vector2(frame.GraphOffsetX, theMap.Position.Y);
         if (!frame.PaperLogged)
         {
             frame.PaperLogged = true;
-            GD.Print($"Portrait map paper: canvas={canvasWidth:F0} bg={bg.GetGlobalRect()} scale={bg.Scale.X:F3} " +
-                     $"pivot={bg.PivotOffset.X:F0} pos={bg.Position.X:F1}");
+            GD.Print($"Portrait map paper: canvas={canvasWidth:F0} scale={scale:F3} centre={frame.PaperCenterX:F0} " +
+                     $"offset={frame.GraphOffsetX:F1} paper={PortraitBetweenMath.MapPaperLeft(canvasWidth):F1}" +
+                     $"..{PortraitBetweenMath.MapPaperRight(canvasWidth):F1}");
         }
+    }
+
+    /// <summary>
+    /// The game centres its opening scroll on the current row using the authored (unscaled) point positions, so after the
+    /// graph transform that row would sit <c>(1 - scale) × y</c> above the intended spot. On every open, once, put the
+    /// reachable row's centre at 70 % of the chart instead.
+    /// </summary>
+    private static void CenterMapOnOpen(Control map, Control theMap, Control points, float canvasWidth,
+        float clipTop, float clipBottom, MapScrollRange range, FieldInfo? targetField, float offsetX)
+    {
+        Transform2D inverse = theMap.GetGlobalTransform().AffineInverse();
+        float sum = 0f;
+        int count = 0;
+        foreach (Control point in points.GetChildren().OfType<Control>())
+        {
+            if (point.IsQueuedForDeletion()) continue;
+            if (point.GetType().GetProperty("IsEnabled", BindingFlags.Instance | BindingFlags.Public)?.GetValue(point) is not true)
+                continue;
+            sum += (inverse * point.GetGlobalRect().GetCenter()).Y;
+            count++;
+        }
+        if (count == 0) return;
+        float scale = PortraitBetweenMath.MapGraphScale(canvasWidth);
+        float targetY = clipTop + (clipBottom - clipTop) * 0.70f - sum / count * scale;
+        targetField?.SetValue(map, new Vector2(offsetX, PortraitBetweenMath.ClampMapScroll(targetY, range)));
     }
 
     /// <summary>
@@ -299,16 +337,30 @@ internal sealed partial class PortraitBetweenLayout
         theMap.Reparent(shift, keepGlobalTransform: false);
         theMap.Position = mapPosition;
         _mapFrames[id] = frame;
+        // The map is only updated while visible, so a close is otherwise invisible to the layout: this remembers that the
+        // next visible frame is an open, when the scale-aware row centring has to run once.
+        frame.VisibilityHandler = () =>
+        {
+            if (frame.Map is { } graph && GodotObject.IsInstanceValid(graph) && graph.IsVisibleInTree())
+                frame.CenterPending = true;
+        };
+        map.VisibilityChanged += frame.VisibilityHandler;
+        frame.CenterPending = map.IsVisibleInTree();
 
         // The act's own top illustration fills the bands the torn paper does not reach.
         frame.Points = theMap.GetNodeOrNull<Control>("Points");
         frame.Bg = theMap.GetNodeOrNull<Control>("MapBg");
         frame.BgBaseLeft = frame.Bg?.Position.X ?? -PortraitBetweenMath.MaxMapCentreShift;
+        // The sheet is centred in its widened control, so the control's centre is the parchment body's centre in graph space.
+        frame.PaperCenterX = frame.Bg is { } paper
+            ? paper.Position.X + paper.Size.X * 0.5f
+            : canvas.X * 0.5f;
         frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
         frame.Back = map.GetNodeOrNull<Control>("Back");
         frame.Legend = map.GetNodeOrNull<Control>("%MapLegend");
         EnsureMapBackdrop(map, frame, ActMapTexture());
         MountMapShare(map, frame, canvas);
+        UpdateMapGraph(theMap, frame, canvas.X);
         UpdateMapFrame(map, frame, canvas, clipTop, clipBottom);
         return frame;
     }
@@ -454,9 +506,11 @@ internal sealed partial class PortraitBetweenLayout
         Type type = map.GetType();
         bool dragging = type.GetField("_isDragging", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(map) is true;
         FieldInfo? targetField = type.GetField("_targetDragPos", BindingFlags.Instance | BindingFlags.NonPublic);
+        Control? theMap = frame?.Map ?? MapGraph(map);
         // The game keeps the map container at x = 0 and writes that back whenever it opens or scrolls the map; it follows this
-        // target on both axes, so the sideways shift that centres the room points is held in the target as well.
-        float shiftX = MapCentreShift(map, frame, canvas.X);
+        // target on both axes, so the uniform graph transform's x offset is held in the target as well.
+        if (frame != null && theMap != null) UpdateMapGraph(theMap, frame, canvas.X);
+        float shiftX = theMap?.Position.X ?? 0f;
         if (targetField?.GetValue(map) is Vector2 target)
         {
             float targetY = target.Y;
@@ -469,9 +523,13 @@ internal sealed partial class PortraitBetweenLayout
             if (targetY != target.Y || target.X != shiftX)
                 targetField.SetValue(map, new Vector2(shiftX, targetY));
         }
-        if ((frame?.Map ?? MapGraph(map)) is { } theMap && theMap.Position.X != shiftX)
-            theMap.Position = new Vector2(shiftX, theMap.Position.Y);
-        if (frame != null) PlaceMapBg(frame, shiftX, canvas.X);
+        if (frame is { CenterPending: true } transition && !dragging && theMap != null &&
+            transition.Points is { } pointLayer)
+        {
+            CenterMapOnOpen(map, theMap, pointLayer, canvas.X, clipTop, clipBottom, range, targetField, shiftX);
+            transition.CenterPending = false;
+        }
+        if (frame != null) PlaceMapBg(frame);
         UpdateMapPointsPortrait(map, frame);
         if (frame is { } stack)
         {
@@ -504,13 +562,13 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>
-    /// Room points for a finger, done once for each act's points. A room point is 56 units (19 points) with a
-    /// picture of 96, and the points sit about 150 units apart with some jitter. Each point is drawn a quarter larger around
-    /// its own centre, which leaves the centres, the paths and the centring measure where they were, and gets a square hit
-    /// area of up to 44 points: never more than half the way to the nearest other room point (measured along the longer
-    /// axis, so two hit areas cannot overlap) and never reaching a boss or the starting point. The point's own Size and
-    /// PivotOffset are never touched: NNormalMapPoint.ShowCircleVfx adds the current pivot to a visited circle's position,
-    /// so leaving it alone keeps existing circles centred on their nodes.
+    /// Room points for a finger, done once for each act's points. A room point is 56 units (19 points) with a picture of
+    /// 96. Each point is drawn a quarter larger around its own centre, which leaves the centres and the paths where they
+    /// were, and gets a square hit pad of 44 points — the pad target is in canvas units, and <see cref="EnsureHitPad"/>
+    /// divides by the node's global scale, so the graph's uniform scale never shrinks it. The native columns are as close as
+    /// 119 units a row, so after the reframe two pads can overlap by a few units; the drawn icons stay separate and each
+    /// node's centre is unambiguous. The point's own Size and PivotOffset are never touched: NNormalMapPoint.ShowCircleVfx
+    /// adds the current pivot to a visited circle's position, so leaving it alone keeps existing circles centred.
     /// </summary>
     private void UpdateMapPointsPortrait(Control map, MapFrame? frame)
     {
@@ -530,66 +588,19 @@ internal sealed partial class PortraitBetweenLayout
         if (frame != null) EnsureMapBackdrop(map, frame, ActMapTexture());
 
         var rooms = new List<Control>();
-        var others = new List<Rect2>();
         foreach (Control point in points.GetChildren().OfType<Control>())
         {
             if (point.IsQueuedForDeletion()) continue;
-            string name = point.GetType().Name;
-            if (name == "NNormalMapPoint") rooms.Add(point);
-            else if (name.EndsWith("MapPoint", StringComparison.Ordinal)) others.Add(point.GetRect());
+            if (point.GetType().Name == "NNormalMapPoint") rooms.Add(point);
         }
-        var centres = rooms.Select(p => p.Position + p.PivotOffset).ToList();
-        for (int i = 0; i < rooms.Count; i++)
+        foreach (Control point in rooms)
         {
-            Control point = rooms[i];
-            Vector2 centre = centres[i];
-            float half = PortraitBands.MinTarget / 2f;
-            for (int j = 0; j < rooms.Count; j++)
-            {
-                if (j == i) continue;
-                Vector2 apart = (centres[j] - centre).Abs();
-                half = Math.Min(half, Math.Max(apart.X, apart.Y) / 2f);
-            }
-            foreach (Rect2 other in others)
-            {
-                float gap = Math.Max(
-                    Math.Max(other.Position.X - centre.X, centre.X - other.End.X),
-                    Math.Max(other.Position.Y - centre.Y, centre.Y - other.End.Y));
-                half = Math.Min(half, gap);
-            }
             point.Scale = new Vector2(MapPointScale, MapPointScale);
             _scaledMapPoints.Add(point.GetInstanceId());
-            if (half * 2f > Math.Max(point.Size.X, point.Size.Y) * MapPointScale + 1f)
-                EnsureHitPad(point, half * 2f, half * 2f);
+            // EnsureHitPad's target is in canvas units and divides by the node's global scale, so the 127-unit pad stays
+            // 127 units after the graph transform (the icon picture itself is scaled with the graph).
+            EnsureHitPad(point, PortraitBands.MinTarget, PortraitBands.MinTarget);
         }
-    }
-
-    /// <summary>
-    /// The sideways shift that centres this map's room points, measured again only when the points change (a new act).
-    /// </summary>
-    private float MapCentreShift(Control map, MapFrame? frame, float canvasWidth)
-    {
-        Control? points = frame?.Points;
-        if (points == null || !GodotObject.IsInstanceValid(points))
-            points = MapGraph(map)?.GetNodeOrNull<Control>("Points");
-        if (points == null) return 0f;
-        int count = points.GetChildCount();
-        ulong first = count > 0 ? points.GetChild(0).GetInstanceId() : 0;
-        ulong id = map.GetInstanceId();
-        if (_mapShifts.TryGetValue(id, out (ulong First, int Count, float Width, float Shift) known) &&
-            known.First == first && known.Count == count && known.Width == canvasWidth)
-            return known.Shift;
-
-        float left = float.MaxValue, right = float.MinValue;
-        foreach (Control point in points.GetChildren().OfType<Control>())
-        {
-            if (point.GetType().Name != "NNormalMapPoint" || point.IsQueuedForDeletion()) continue;
-            left = Math.Min(left, point.Position.X);
-            right = Math.Max(right, point.Position.X + point.Size.X);
-        }
-        float shift = left <= right ? PortraitBetweenMath.MapCentreShift(left, right, canvasWidth) : 0f;
-        _mapShifts[id] = (first, count, canvasWidth, shift);
-        return shift;
     }
 
     private Button EnsureLegendPill(Control map)
@@ -655,6 +666,10 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is CanvasItem hint && GodotObject.IsInstanceValid(hint))
                 hint.Visible = visible;
         _mapHintVisibility.Clear();
+        foreach ((ulong id, PortraitControlSnapshot snap) in _mapBgSnapshots)
+            if (GodotObject.InstanceFromId(id) is Control bg && GodotObject.IsInstanceValid(bg))
+                snap.Restore(bg);
+        _mapBgSnapshots.Clear();
 
         foreach (ulong id in _maps)
         {
@@ -677,11 +692,15 @@ internal sealed partial class PortraitBetweenLayout
                 point.Scale = Vector2.One;
         _scaledMapPoints.Clear();
         _mapPointLayouts.Clear();
-        _mapShifts.Clear();
     }
 
     private static void TearDownMapFrame(Control? map, MapFrame frame)
     {
+        if (frame.VisibilityHandler is { } handler)
+        {
+            if (map != null && GodotObject.IsInstanceValid(map)) map.VisibilityChanged -= handler;
+            frame.VisibilityHandler = null;
+        }
         if (frame.Toast is { } toast && GodotObject.IsInstanceValid(toast))
         {
             frame.ToastSnapshot?.Restore(toast);
@@ -738,7 +757,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         _maps.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _mapFrames.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapFrames.Remove(id);
-        foreach (ulong id in _mapShifts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapShifts.Remove(id);
+        foreach (ulong id in _mapBgSnapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapBgSnapshots.Remove(id);
         foreach (ulong id in _stretchModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _stretchModes.Remove(id);
         foreach (ulong id in _mapHintVisibility.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapHintVisibility.Remove(id);
         _scaledMapPoints.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -749,9 +768,7 @@ internal sealed partial class PortraitBetweenLayout
     public static (float Top, float Bottom) VisibleBand(Window root)
     {
         float canvasHeight = Math.Max(root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
-        double inset = SafeAreaCanvas.TopInset();
-        float cap = inset > 0 ? MathF.Ceiling((float)(inset * canvasHeight)) : 162f;
-        cap = Math.Max(cap, 136f);
+        float cap = PortraitLayout.ComputeCapHeight(root);
         return (cap + PortraitBands.TopBarHeight + 200f, canvasHeight - MapFooterBand);
     }
 

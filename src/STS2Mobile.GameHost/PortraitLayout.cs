@@ -25,8 +25,6 @@ internal sealed class PortraitLayout
     private const string PotionTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotion";
     private const string PotionPopupTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionPopup";
     private const string EarlyAccessDisclaimerTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NEarlyAccessDisclaimer";
-    private const float DefaultCapHeight = 162f;
-    private const float MinCapHeight = 136f;
     private const float TopBarRowHeight = PortraitBands.TopBarRowHeight;
     // The right margin the game's scene gives the top bar's boss icon.
     private const int BossIconMarginRight = 4;
@@ -52,7 +50,7 @@ internal sealed class PortraitLayout
     private const float RelicFadeSeconds = 0.25f;
     private const float MapDeckSeparation = 8f;
     private const float TopBarButtonWidth = PortraitBands.MinTarget;
-    private const float TopBarRowInset = 4f;
+    private const float TopBarRowInset = PortraitBands.TopBarRowInset;
     private const float TopBarTouchRise = PortraitBands.MinTarget - (TopBarRowHeight - TopBarRowInset);
     // Health, gold and floor numbers at 38 units (13 points; the game's 32 is 11) and their icons 48 wide (were
     // 40), as much as the row's width allows with three digit health.
@@ -239,9 +237,7 @@ internal sealed class PortraitLayout
     internal static float ComputeCapHeight(Window root)
     {
         float canvasHeight = Math.Max(root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
-        double insetFraction = SafeAreaCanvas.TopInset();
-        float capHeight = insetFraction > 0 ? MathF.Ceiling((float)(insetFraction * canvasHeight)) : DefaultCapHeight;
-        return Math.Max(capHeight, MinCapHeight);
+        return PortraitHeaderMath.CapHeight(SafeAreaCanvas.HasTopInset, SafeAreaCanvas.TopInset(), canvasHeight);
     }
 
     /// <summary>In a run the top bar stays over fitted screens such as the pause menu, so their band starts below it.</summary>
@@ -601,10 +597,15 @@ internal sealed class PortraitLayout
         LayoutStoneHeader(topBar, capHeight, canvas);
 
         // The row's boxes start above the row, in the safe cap, so what they hold is 44 points tall to a finger. Each
-        // picture is kept in the row itself by a top margin or by sitting at the bottom of its box.
-        float rowTop = capHeight + TopBarRowInset - TopBarTouchRise;
+        // picture is kept in the row itself by a top margin or by sitting at the bottom of its box. A phone with no top
+        // inset (9:16, no notch) has no cap to rise into: the boxes stay on the canvas and their touch areas grow
+        // downward instead, which keeps every picture where it would be inside the row.
+        float roomAboveRow = Math.Max(0f, capHeight + TopBarRowInset);
+        float rise = Math.Min(TopBarTouchRise, roomAboveRow);
+        int riseInt = (int)MathF.Round(rise);
+        int drop = (int)MathF.Round(TopBarTouchRise - rise);
+        float rowTop = capHeight + TopBarRowInset - rise;
         float rowBottom = capHeight + TopBarRowHeight;
-        int rise = (int)TopBarTouchRise;
         // The settings button is the row's only button: map and deck moved to the right of the potion row.
         float rightWidth = TopBarButtonWidth;
 
@@ -631,7 +632,7 @@ internal sealed class PortraitLayout
             if (topBar.GetNodeOrNull<Control>("%PauseButton") is { } pause)
             {
                 _pauseButtonId = pause.GetInstanceId();
-                StyleTopBarButton(pause, rise, secondRow: false);
+                StyleTopBarButton(pause, riseInt, secondRow: false, drop: drop);
             }
         }
 
@@ -650,7 +651,7 @@ internal sealed class PortraitLayout
             {
                 Capture(portraitContainer, captureVisible: false);
                 portraitContainer.AddThemeConstantOverride("margin_left", 2);
-                portraitContainer.AddThemeConstantOverride("margin_top", 4 + rise);
+                portraitContainer.AddThemeConstantOverride("margin_top", 4 + riseInt);
                 // Room on the right for the character tip's touch area (below).
                 portraitContainer.AddThemeConstantOverride("margin_right", 38);
                 portraitContainer.AddThemeConstantOverride("margin_bottom", 4);
@@ -660,7 +661,7 @@ internal sealed class PortraitLayout
             {
                 Capture(portraitTip, captureVisible: false);
                 portraitTip.CustomMinimumSize = new Vector2(72f, 72f);
-                PhoneHitArea.Grow(portraitTip, 2f, 4f + TopBarTouchRise, 36f, 4f);
+                PhoneHitArea.Grow(portraitTip, 2f, 4f + riseInt, 36f, 4f + drop);
                 if (topBar.GetNodeOrNull<Control>("%AscensionIcon") is { } ascensionIcon)
                 {
                     // The ascension number is 7 points: as large as the badge can be without covering the character.
@@ -750,7 +751,7 @@ internal sealed class PortraitLayout
                     Capture(bossIcon, captureVisible: false);
                     bossIcon.AddThemeConstantOverride("margin_left", 12);
                     bossIcon.AddThemeConstantOverride("margin_right", BossIconMarginRight + 12 + (int)MathF.Ceiling(SecondBossIconOverhang(bossIcon)));
-                    bossIcon.AddThemeConstantOverride("margin_top", -4 + rise);
+                    bossIcon.AddThemeConstantOverride("margin_top", -4 + riseInt);
                 }
                 if (topBar.GetNodeOrNull<Control>("%FloorIcon") is { } floorIcon)
                 {
@@ -760,7 +761,7 @@ internal sealed class PortraitLayout
                     if (floorIcon.GetNodeOrNull<Control>("FloorIconPositioner") is { } floorPicture)
                     {
                         Capture(floorPicture, captureVisible: false);
-                        floorPicture.AddThemeConstantOverride("margin_top", -3 + rise);
+                        floorPicture.AddThemeConstantOverride("margin_top", -3 + riseInt);
                     }
                     if (topBar.GetNodeOrNull<Control>("%FloorNumLabel") is { } floorLabel)
                     {
@@ -851,15 +852,17 @@ internal sealed class PortraitLayout
     }
 
     /// <summary>
-    /// A top bar button with a 44 point touch box. In the first row the box reaches up into the safe cap (<paramref name="rise"/>)
-    /// so the picture stays in the row; in the second row the box is the button itself. Both keep the 64 unit picture box the
-    /// game pivots its picture around: the map's margin container and the deck's picture control.
+    /// A top bar button with a 44 point touch box. In the first row the box reaches up into the safe cap
+    /// (<paramref name="rise"/>); where there is not enough cap it grows downward by <paramref name="drop"/> instead, so the
+    /// picture stays in the row. In the second row the box is the button itself. Both keep the 64 unit picture box the game
+    /// pivots its picture around: the map's margin container and the deck's picture control.
     /// </summary>
-    private void StyleTopBarButton(Control button, int rise, bool secondRow)
+    private void StyleTopBarButton(Control button, int rise, bool secondRow, int drop = 0)
     {
         Capture(button, captureVisible: false);
         button.CustomMinimumSize = new Vector2(TopBarButtonWidth, secondRow ? PortraitBands.MinTarget : 80f);
-        if (button.IsClass("MarginContainer"))
+        bool container = button.IsClass("MarginContainer");
+        if (container)
         {
             // Map is a margin container to the engine (its script class derives from a plain control, so a C# type test
             // would miss it): the picture fills the box inside the margins. The gear's box stays as the game has it: the
@@ -875,7 +878,10 @@ internal sealed class PortraitLayout
             else
             {
                 button.AddThemeConstantOverride("margin_top", 8 + rise);
-                button.AddThemeConstantOverride("margin_bottom", 8);
+                // The extra height below the row keeps the 44 point box, and the matching bottom margin keeps the picture
+                // where the row would have drawn it.
+                button.AddThemeConstantOverride("margin_bottom", 8 + drop);
+                if (drop > 0) button.CustomMinimumSize = new Vector2(TopBarButtonWidth, PortraitBands.MinTarget);
             }
         }
         else if (button.GetNodeOrNull<Control>("Control") is { } pictureBox)
@@ -890,6 +896,8 @@ internal sealed class PortraitLayout
                 SetFontSize(deckCount, (int)MathF.Round(GameFontSize(deckCount) * 1.2f));
             }
         }
+        // A button that is not a container takes the extra touch below its box; the picture inside keeps its place.
+        if (!secondRow && drop > 0 && !container) PhoneHitArea.Grow(button, 0f, 0f, 0f, drop);
     }
 
     /// <summary>

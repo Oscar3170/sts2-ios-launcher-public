@@ -39,6 +39,9 @@ public static unsafe class SafeAreaCanvas
     /// </summary>
     public static double SideInset() => SideInsetFunction != null ? SideInsetFunction() : 0;
 
+    /// <summary>Whether the native top-inset query exists: true on iOS, false on a desktop host that does not provide it.</summary>
+    public static bool HasTopInset => TopInsetFunction != null;
+
     /// <summary>
     /// The top safe-area inset in portrait as a fraction of the screen's height, from <c>native/orientation_guard.mm</c>.
     /// 0 off the phone, in landscape, and on a screen with no top inset.

@@ -88,8 +88,8 @@ internal sealed partial class PortraitBetweenLayout
             state = new RestState();
             _restStates[id] = state;
         }
-        float headerTop = LayoutRestChoices(room, state, canvas);
-        LayoutRestText(room, canvas, headerTop);
+        (float headerTop, float rowsBottom) = LayoutRestChoices(room, state, canvas);
+        LayoutRestText(room, canvas, headerTop, rowsBottom);
         if (!state.Framed || !state.Canvas.IsEqualApprox(canvas)) ApplyRestArt(room, state, canvas);
     }
 
@@ -137,18 +137,20 @@ internal sealed partial class PortraitBetweenLayout
     /// <c>Container</c> emits <c>sort_children</c> after the box fit (<c>scene/gui/container.cpp</c>), so the handler this
     /// file connects re-places the buttons on that signal, after every native re-sort including the game's rebuild.
     /// </summary>
-    private float LayoutRestChoices(Control room, RestState state, Vector2 canvas)
+    private (float HeaderTop, float RowsBottom) LayoutRestChoices(Control room, RestState state, Vector2 canvas)
     {
         float pinnedTop = canvas.Y - PortraitRestMath.OptionsBottomInset;
-        if (room.GetNodeOrNull<Container>("%ChoicesContainer") is not { } choices) return pinnedTop;
+        float emptyBottom = PortraitRestMath.OptionsDrawnBottom(pinnedTop, 1f);
+        if (room.GetNodeOrNull<Container>("%ChoicesContainer") is not { } choices) return (pinnedTop, emptyBottom);
         int count = RestOptionCount(choices);
-        if (count <= 0) return pinnedTop;
+        if (count <= 0) return (pinnedTop, emptyBottom);
         if (PortraitRestMath.OptionsRowCount(count) <= 1)
         {
             DisconnectRestSort(state);
             for (int i = 0; i < choices.GetChildCount(); i++)
                 if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) StyleRestOptionLabel(button);
-            RestOptionsRow row = PortraitRestMath.OptionsRow(count, choices.GetCombinedMinimumSize().X, canvas.X, canvas.Y);
+            float lift = RestCopyLift(count, choices.GetCombinedMinimumSize().X, canvas);
+            RestOptionsRow row = PortraitRestMath.OptionsRow(count, choices.GetCombinedMinimumSize().X, canvas.X, canvas.Y, lift);
             bool placed = Mathf.IsEqualApprox(choices.Scale.X, row.Scale)
                 && Mathf.IsEqualApprox(choices.Size.X, row.Width) && Mathf.IsEqualApprox(choices.Size.Y, row.Height)
                 && Mathf.IsEqualApprox(choices.Position.X, row.X) && Mathf.IsEqualApprox(choices.Position.Y, row.Y)
@@ -163,9 +165,23 @@ internal sealed partial class PortraitBetweenLayout
                 choices.PivotOffset = Vector2.Zero;
                 choices.Scale = new Vector2(row.Scale, row.Scale);
             }
-            return row.Y;
+            return (row.Y, PortraitRestMath.OptionsDrawnBottom(row.Y, row.Scale));
         }
         return LayoutRestRows(state, choices, count, canvas);
+    }
+
+    /// <summary>
+    /// How far the options must rise so the copy's band keeps its floor between their labels and the footer lane
+    /// (<see cref="PortraitRestMath.DescriptionLift"/>). The copy never shrinks instead; for every count the phone layout
+    /// draws, the lift is zero.
+    /// </summary>
+    private static float RestCopyLift(int count, float minimumWidth, Vector2 canvas)
+    {
+        float scale = PortraitRestMath.OptionsRowCount(count) <= 1
+            ? PortraitRestMath.OptionsScale(PortraitRestMath.OptionsWidth(count, minimumWidth), canvas.X)
+            : PortraitRestMath.OptionsGridScale(count, canvas.X);
+        float drawnBottom = PortraitRestMath.OptionsDrawnBottom(canvas.Y - PortraitRestMath.OptionsBottomInset, scale);
+        return PortraitRestMath.DescriptionLift(drawnBottom, canvas.Y, PortraitRestMath.DescriptionHeight);
     }
 
     /// <summary>
@@ -173,10 +189,12 @@ internal sealed partial class PortraitBetweenLayout
     /// line of all its buttons), which is at least the widest wrapped row; only its height takes the grid's, so its rect
     /// covers every row. The buttons inside are placed by <see cref="PlaceRestGrid"/> after each native re-sort.
     /// </summary>
-    private float LayoutRestRows(RestState state, Container choices, int count, Vector2 canvas)
+    private (float HeaderTop, float RowsBottom) LayoutRestRows(RestState state, Container choices, int count, Vector2 canvas)
     {
         state.GridCanvas = canvas;
-        RestOptionsRow first = RestGridFirst(count, canvas);
+        float lift = RestCopyLift(count, 0f, canvas);
+        RestOptionsRow first = RestGridFirst(count, canvas, lift);
+        int rows = PortraitRestMath.OptionsRowCount(count);
         float height = RestGridHeightUnits(count);
         bool placed = Mathf.IsEqualApprox(choices.Scale.X, first.Scale)
             && Mathf.IsEqualApprox(choices.Position.X, first.X) && Mathf.IsEqualApprox(choices.Position.Y, first.Y)
@@ -203,7 +221,8 @@ internal sealed partial class PortraitBetweenLayout
         PlaceRestGrid(state);
         for (int i = 0; i < choices.GetChildCount(); i++)
             if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) StyleRestOptionLabel(button);
-        return first.Y;
+        float bottomRowTop = first.Y + (rows - 1) * (PortraitRestMath.OptionsHeight + PortraitRestMath.OptionsRowGap) * first.Scale;
+        return (first.Y, PortraitRestMath.OptionsDrawnBottom(bottomRowTop, first.Scale));
     }
 
     /// <summary>
@@ -253,10 +272,10 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>The first wrapped row's box: where the row container goes and at what scale.</summary>
-    private static RestOptionsRow RestGridFirst(int count, Vector2 canvas)
+    private static RestOptionsRow RestGridFirst(int count, Vector2 canvas, float lift)
     {
         Span<RestOptionsRow> boxes = stackalloc RestOptionsRow[1];
-        PortraitRestMath.OptionsGrid(count, canvas.X, canvas.Y, boxes);
+        PortraitRestMath.OptionsGrid(count, canvas.X, canvas.Y, boxes, lift);
         return boxes[0];
     }
 
@@ -289,14 +308,17 @@ internal sealed partial class PortraitBetweenLayout
 
     // ---- the question and the copy -------------------------------------------------------------------------------
 
-    private void LayoutRestText(Control room, Vector2 canvas, float rowTop)
+    private void LayoutRestText(Control room, Vector2 canvas, float rowTop, float rowsBottom)
     {
         if (room.GetNodeOrNull<Control>("%Header") is { } header)
             PlaceRestText(header, PortraitRestMath.Header(rowTop, canvas.X),
                 PortraitRestMath.HeaderFontSize, rich: false, move: true);
         if (room.GetNodeOrNull<Control>("%Description") is { } description)
         {
-            RestTextBlock block = PortraitRestMath.Description(canvas.X, canvas.Y);
+            // The copy starts right under the options' labels; its band is as tall as the text the game put in it, so the
+            // rendered lines never reach the question above or the footer lane below.
+            float measured = description is RichTextLabel rich ? rich.GetContentHeight() : 0f;
+            RestTextBlock block = PortraitRestMath.Description(canvas.X, canvas.Y, rowsBottom, measured);
             // The game slides the copy down while a card is being picked; hold its own y until that tween is done.
             bool moving = !Mathf.IsEqualApprox(description.Position.Y, block.Y)
                 && RestDescriptionTween(room) is { } tween && tween.IsValid() && tween.IsRunning();

@@ -254,12 +254,12 @@ internal static partial class PortraitProof
             ? $"{alts.GetType().Name}[{string.Join(",", alts.GetChildren().OfType<Control>().Select(c => $"{c.Name}:{CanvasRect(c)}"))}]"
             : "none";
         List<Control> cards = RewardCards(cardScreen);
-        int outlined = cards.FindIndex(c => c.GetNodeOrNull<Node>(PhoneSelectConfirm.OutlineName) is { } o && !o.IsQueuedForDeletion());
+        int reticle = cards.FindIndex(c => c.GetNodeOrNull<Node>(PhoneSelectConfirm.ReticleName) is { } o && !o.IsQueuedForDeletion());
         string names = string.Join(",", cards.Select(c => c.GetType().GetProperty("CardModel")?.GetValue(c)?.GetType().Name ?? "?"));
         // Each card's place in its row, in the game's option order: equal before and after a tap when no card moved.
         string slots = string.Join(";", cards.Select(c => $"{c.Position.X:F0},{c.Position.Y:F0}"));
         return $"card-screen=open cards={cards.Count}[{names}] slots=[{slots}] selected={PhoneCardRewardChoice.SelectedIndex(cardScreen)} " +
-            $"outlined={outlined} confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} " +
+            $"reticle={reticle} confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} " +
             $"clears={PhoneSelectConfirm.Clears} alternatives={alternatives} deck={DeckCards(player).Count}";
     }
 

@@ -185,17 +185,50 @@ public class PortraitRestMathTests
         Assert.Equal(96.429f, header.Height, 3);
         Assert.Equal(51, PortraitRestMath.HeaderFontSize);
 
-        RestTextBlock copy = PortraitRestMath.Description(1080f, 2340f);
+        float drawnBottom = PortraitRestMath.OptionsDrawnBottom(row.Y, row.Scale);
+        RestTextBlock copy = PortraitRestMath.Description(1080f, 2340f, drawnBottom, measuredTextHeight: 0f);
         Assert.Equal(61.714f, copy.X, 3);
-        Assert.Equal(1992.857f, copy.Y, 3);
+        Assert.Equal(1918.514f, copy.Y, 3);   // the labels' drawn bottom plus the 28 unit gap
         Assert.Equal(956.571f, copy.Width, 3);
-        Assert.Equal(231.429f, copy.Height, 3);
+        Assert.Equal(PortraitRestMath.DescriptionMinHeight, copy.Height, 3);
         Assert.Equal(41, PortraitRestMath.DescriptionFontSize);
 
         // The copy starts below the labels that hang under the buttons (165 button units plus a 48 unit label).
-        float labelBottom = row.Y + ((row.Height - PortraitRestMath.NativeOptionHeight) * 0.5f + 165f + 48f) * row.Scale;
+        float labelBottom = row.Y + PortraitRestMath.RowInkBottom * row.Scale;
+        Assert.Equal(drawnBottom, labelBottom, 3);
         Assert.True(copy.Y > labelBottom, $"copy {copy.Y:F0} under labels {labelBottom:F0}");
-        Assert.Equal(1920f - 347.143f, PortraitRestMath.Description(1080f, 1920f).Y, 3);
+        // A full four-line text still ends above the footer lane, and the options never need lifting for it.
+        RestTextBlock tall = PortraitRestMath.Description(1080f, 2340f, drawnBottom, 231.429f);
+        Assert.Equal(231.429f, tall.Height, 3);   // the band has 240.8 units of room between the labels and the footer lane
+        Assert.True(tall.Y + tall.Height < PortraitRestMath.FooterLaneTop(2340f) - PortraitRestMath.DescriptionGap);
+        Assert.Equal(0f, PortraitRestMath.DescriptionLift(drawnBottom, 2340f, PortraitRestMath.DescriptionHeight));
+        float compactBottom = PortraitRestMath.OptionsDrawnBottom(1920f - PortraitRestMath.OptionsBottomInset, row.Scale);
+        Assert.Equal(0f, PortraitRestMath.DescriptionLift(compactBottom, 1920f, PortraitRestMath.DescriptionHeight));
+    }
+
+    [Fact]
+    public void TheCopyBandStaysBetweenTheLabelsAndTheFooterLaneAtEveryCountAndShape()
+    {
+        Span<RestOptionsRow> rows = stackalloc RestOptionsRow[2];
+        foreach (int count in new[] { 2, 4, 6, 10 })
+        {
+            foreach (float canvasHeight in new[] { 1920f, 2340f })
+            {
+                float scale = PortraitRestMath.OptionsRowCount(count) <= 1
+                    ? PortraitRestMath.OptionsScale(PortraitRestMath.OptionsWidth(count, 0f), 1080f)
+                    : PortraitRestMath.OptionsGridScale(count, 1080f);
+                float drawnBottom = PortraitRestMath.OptionsDrawnBottom(
+                    canvasHeight - PortraitRestMath.OptionsBottomInset, scale);
+                // No lift is needed: the copy's reserved block fits above the footer lane.
+                Assert.Equal(0f, PortraitRestMath.DescriptionLift(drawnBottom, canvasHeight, PortraitRestMath.DescriptionHeight));
+                RestTextBlock copy = PortraitRestMath.Description(1080f, canvasHeight, drawnBottom, measuredTextHeight: 0f);
+                Assert.Equal(drawnBottom + PortraitRestMath.DescriptionGap, copy.Y, 3);
+                Assert.True(copy.Y + copy.Height <= PortraitRestMath.FooterLaneTop(canvasHeight) - PortraitRestMath.DescriptionGap + 0.01f,
+                    $"{count} at {canvasHeight}: copy ends above the footer lane");
+                Assert.True(copy.Y + copy.Height <= canvasHeight, "copy inside the canvas");
+                Assert.True(copy.Y > drawnBottom, "copy under the labels");
+            }
+        }
     }
 
     [Fact]

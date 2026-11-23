@@ -70,10 +70,35 @@ internal static class PortraitAudit
             if (node is not Control control || !IsContent(control) || !control.IsVisibleInTree()) continue;
             if (EffectiveAlpha(control) < 0.05f) continue;
             if (!DrawnRect(control, out Rect2 rect) || rect.Size.X < 2f || rect.Size.Y < 2f) continue;
-            if (rect.Intersects(canvas) || IsParked(control, canvas)) continue;
+            if (rect.Intersects(canvas) || IsParked(control, canvas) || IsScrollableContent(control, canvas)) continue;
             outside.Add($"{control.GetType().Name}:{control.Name} [{rect.Position.X:F0},{rect.Position.Y:F0} {rect.Size.X:F0}x{rect.Size.Y:F0}]");
         }
         return outside;
+    }
+
+    /// <summary>
+    /// Whether the control lives in a scrolling or clipping container that is itself on the canvas: a row further down a
+    /// scroll list (settings, modifiers, card grids, relic collection, stats) or an epoch off the panned timeline is reachable
+    /// by scrolling, not off-canvas content. The container being off the canvas does not excuse the control.
+    /// </summary>
+    private static bool IsScrollableContent(Control control, Rect2 canvas)
+    {
+        for (Node? node = control.GetParent(); node is not null; node = node.GetParent())
+        {
+            if (node is not Control ancestor || !GodotObject.IsInstanceValid(ancestor)) continue;
+            string typeName = ancestor.GetType().Name;
+            string name = ancestor.Name.ToString();
+            bool scroller = ancestor is ScrollContainer
+                || typeName.Contains("Scroll", StringComparison.Ordinal)
+                || typeName is "NTimelineScreen"
+                || name is "WhatsMoved" or "WhatsZoomed"
+                || name.Contains("Scroll", StringComparison.Ordinal)
+                || name is "Mask" or "Clipper"
+                || ancestor.ClipContents;
+            if (!scroller) continue;
+            return ancestor.GetGlobalRect().Intersects(canvas);
+        }
+        return false;
     }
 
     /// <summary>A disabled clickable the game has slid wholly out of the canvas (its hide position), e.g. the Unready button.</summary>

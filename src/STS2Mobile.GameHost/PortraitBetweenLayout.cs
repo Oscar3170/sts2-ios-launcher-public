@@ -723,17 +723,20 @@ internal sealed partial class PortraitBetweenLayout
         float footerTop = canvas.Y - RewardBottomMargin - altHeight;
         float bandTop = bannerBottom + RewardBannerGap;
         float bandBottom = footerTop - RewardCardClearance;
-        CardGridFit grid = PortraitBetweenMath.CardGrid(
-            holders.Count, canvas.X, bandTop, bandBottom, RewardCardWidth, RewardCardHeight,
-            RewardCardGapX, RewardCardGapY, RewardMaxCardScale, RewardCardSideMargin, RewardCardFloorScale);
+        CardGridFit grid = holders.Count <= 3
+            ? PortraitBetweenMath.CardRow(
+                holders.Count, canvas.X, bandTop, bandBottom, RewardCardWidth, RewardCardHeight)
+            : PortraitBetweenMath.CardGrid(
+                holders.Count, canvas.X, bandTop, bandBottom, RewardCardWidth, RewardCardHeight,
+                RewardCardGapX, RewardCardGapY, RewardMaxCardScale, RewardCardSideMargin, RewardCardFloorScale);
         float cardScale = grid.Scale;
         float holderScale = 0.8f;
         float rowScale = cardScale / holderScale;
         float focusGrow = PortraitBetweenMath.CardFocusGrowth * RewardCardHeight * cardScale;
 
         float blockHeight = grid.BlockHeight;
-        float blockTop = bandTop + focusGrow +
-                         Math.Max(0f, (bandBottom - bandTop - 2f * focusGrow - blockHeight) / 2f);
+        // One row of cards sits under the banner like the reference's row; a taller widening grid fills the band.
+        float blockTop = bandTop + focusGrow;
         float blockCentreY = blockTop + blockHeight / 2f;
 
         Capture(row, captureVisible: false);
@@ -785,7 +788,7 @@ internal sealed partial class PortraitBetweenLayout
             fresh = true;
         }
         IReadOnlyList<GridSlot> slots = PortraitBetweenMath.RewardSlots(
-            order.Count, grid.Columns, RewardCardWidth * cardScale, RewardCardHeight * cardScale, RewardCardGapX, RewardCardGapY);
+            order.Count, grid.Columns, RewardCardWidth * cardScale, RewardCardHeight * cardScale, grid.GapX, RewardCardGapY);
         Vector2 SlotOf(Control holder)
         {
             GridSlot slot = slots[order.IndexOf(holder.GetInstanceId())];

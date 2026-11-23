@@ -14,7 +14,7 @@ namespace STS2Mobile.GameHost;
 /// One tap selects, a second tap confirms, on the screens whose items a touch would otherwise take at once (portrait only;
 /// landscape plays as the desktop game does):
 /// <list type="bullet">
-/// <item>Shop items (cards, relics, potions, card removal): the first press outlines the item and shows its tip, a press on
+/// <item>Shop items (cards, relics, potions, card removal): the first press shows the item's selection reticle and its tip, a press on
 /// another item moves the selection, a press elsewhere lets it go, and the release of a second tap on the selected item buys
 /// it through the slot's own <c>OnSelected</c>.</item>
 /// <item>Card rewards (<see cref="PhoneCardRewardChoice"/>, which also answers the reward), choose-a-card, relic choice and
@@ -33,12 +33,19 @@ namespace STS2Mobile.GameHost;
 /// </summary>
 internal sealed class PhoneSelectConfirm
 {
-    internal const string OutlineName = "PhoneSelectedOutline";
+    /// <summary>The game's selection reticle, added to the selected item (the name the proofs and the harness look for).</summary>
+    internal const string ReticleName = "PhoneSelectedReticle";
+
+    private const string ReticleScenePath = "res://scenes/ui/selection_reticle.tscn";
+    // OnDeselect fades over 0.2 s; the reticle is freed just after, so the fade is seen and nothing is left behind.
+    private const double ReticleFadeSeconds = 0.22;
 
     private const string CardSelectionNamespace = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection";
     private const string ChooseCardTypeName = CardSelectionNamespace + ".NChooseACardSelectionScreen";
     private const string ChooseRelicTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NChooseARelicSelection";
     private const string TreasureTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic.NTreasureRoomRelicCollection";
+    private const string RestSiteRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NRestSiteRoom";
+    private const string RestSiteButtonTypeName = "MegaCrit.Sts2.Core.Nodes.RestSite.NRestSiteButton";
     private const string MerchantSlotTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantSlot";
     private const string CardHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NCardHolder";
     private const string HoverTipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
@@ -47,14 +54,14 @@ internal sealed class PhoneSelectConfirm
     private const BindingFlags InstAll = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private const BindingFlags StaticAll = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
 
-    // The card's own outline colour (NCardHighlight.playableColor), as a border only; nothing is laid over the item.
-    private static readonly Color OutlineColor = new(0f, 0.957f, 0.988f, 0.98f);
+    // The game's own reticle scene, loaded once (one instance per selection; nothing is rebuilt per frame).
+    private static PackedScene? _reticleScene;
 
     // ---- The per-screen adapters -----------------------------------------------------------------------------------------
 
     /// <summary>
     /// What one screen's items are and what confirming, inspecting and tipping one means. The policy owns the selection,
-    /// outline, tip lifetime, press tracking and thresholds; an adapter only answers for its items.
+    /// reticle, tip lifetime, press tracking and thresholds; an adapter only answers for its items.
     /// </summary>
     internal abstract class SelectAdapter(PhoneSelectConfirm owner)
     {
@@ -65,8 +72,8 @@ internal sealed class PhoneSelectConfirm
         /// <summary>For the log ("shop item", "card reward").</summary>
         internal abstract string Label { get; }
 
-        /// <summary>Whether an outline goes around a whole card (328 x 450) or the item's own rectangle.</summary>
-        internal abstract bool CardOutline { get; }
+        /// <summary>Whether an item is a whole card, whose drawn rectangle is its hitbox about the holder's middle.</summary>
+        internal abstract bool IsCard { get; }
 
         /// <summary>Whether <see cref="Model"/> may change under a selected item (a restock, a reroll).</summary>
         internal virtual bool ModelCanChange => true;
@@ -82,8 +89,8 @@ internal sealed class PhoneSelectConfirm
         /// <summary>The item's current model: what must stay the same between the press and the confirming tap.</summary>
         internal abstract object? Model(Control item);
 
-        /// <summary>The outline for this item, already added to it.</summary>
-        internal abstract Panel AttachOutline(Control item);
+        /// <summary>The game's reticle for this item, already added to it and selected.</summary>
+        internal abstract Control AttachReticle(Control item);
 
         /// <summary>The item's native tip (and, for cards, the hover that comes with it).</summary>
         internal abstract void ShowTip(Control screen, Control item);
@@ -139,7 +146,7 @@ internal sealed class PhoneSelectConfirm
         internal Control Item = null!;
         internal SelectAdapter Adapter = null!;
         internal object? Model;
-        internal Panel? Outline;
+        internal Control? Reticle;
     }
 
     // ---- Reflection into the game ----------------------------------------------------------------------------------------
@@ -147,6 +154,7 @@ internal sealed class PhoneSelectConfirm
     private readonly Type? _merchantSlotType;
     private readonly FieldInfo? _isHovered;
     private readonly FieldInfo? _ignoreMouseRelease;
+    private readonly FieldInfo? _restUnclickable;
     private readonly MethodInfo? _slotOnSelected;
     private readonly MethodInfo? _slotClearTip;
     private readonly MethodInfo? _createTips;
@@ -168,6 +176,7 @@ internal sealed class PhoneSelectConfirm
     private readonly CardChoiceAdapter _chooseCard;
     private readonly RelicChoiceAdapter _chooseRelic;
     private readonly TreasureAdapter _treasure;
+    private readonly RestAdapter _rest;
 
     private Selection? _selected;
 
@@ -253,6 +262,7 @@ internal sealed class PhoneSelectConfirm
         Type? cardHolderType = sts2.GetType(CardHolderTypeName);
         _isHovered = cardHolderType?.GetField("_isHovered", InstAll);
         _ignoreMouseRelease = _merchantSlotType?.GetField("_ignoreMouseRelease", InstAll);
+        _restUnclickable = sts2.GetType(RestSiteButtonTypeName)?.GetField("_isUnclickable", InstAll);
         _slotOnSelected = _merchantSlotType?.GetMethod("OnSelected", InstAll, Type.EmptyTypes);
         _slotClearTip = _merchantSlotType?.GetMethod("ClearHoverTip", InstAll, Type.EmptyTypes);
         Type? tipSet = sts2.GetType(HoverTipSetTypeName);
@@ -276,6 +286,7 @@ internal sealed class PhoneSelectConfirm
         _chooseCard = new CardChoiceAdapter(this);
         _chooseRelic = new RelicChoiceAdapter(this);
         _treasure = new TreasureAdapter(this);
+        _rest = new RestAdapter(this);
         if (!PhoneSwipeRelease.Shared.Ready || _ignoreMouseRelease == null || _slotOnSelected == null)
         {
             _failed = true;
@@ -294,6 +305,7 @@ internal sealed class PhoneSelectConfirm
             if (name == ChooseCardTypeName && node is Control chooseCard) Track(chooseCard, _chooseCard);
             else if (name == ChooseRelicTypeName && node is Control chooseRelic) Track(chooseRelic, _chooseRelic);
             else if (name == TreasureTypeName && node is Control treasure) Track(treasure, _treasure);
+            else if (name == RestSiteRoomTypeName && node is Control rest && _restUnclickable != null) Track(rest, _rest);
             else if (_merchantSlotType != null && _merchantSlotType.IsInstanceOfType(node))
             {
                 // A slot already in the shop when Portrait Mode is turned on is ready; a new one is not yet.
@@ -486,7 +498,7 @@ internal sealed class PhoneSelectConfirm
             Selection? previous = _selected;
             if (second)
             {
-                if (adapter.CardOutline) HoverOnly(item);
+                if (adapter.IsCard) HoverOnly(item);
                 GD.Print($"Phone select confirm: {adapter.Label} {item.Name} tapped again; releasing confirms.");
             }
             else
@@ -522,7 +534,7 @@ internal sealed class PhoneSelectConfirm
 
     /// <summary>
     /// A press that has become a swipe never made a selection: it lets go of the one the press made and puts back the one
-    /// that stood before, so scrolling a card grid or a shop page never moves the outline, and the next tap selects afresh.
+    /// that stood before, so scrolling a card grid or a shop page never moves the reticle, and the next tap selects afresh.
     /// A second tap on the selected item owns nothing, so a swipe from it only cancels its confirmation (the selection stays).
     /// </summary>
     private void CancelSwipedSelection()
@@ -617,11 +629,11 @@ internal sealed class PhoneSelectConfirm
 
     private void Select(Control screen, Control item, SelectAdapter adapter)
     {
-        Panel outline = adapter.AttachOutline(item);
+        Control reticle = adapter.AttachReticle(item);
         object? model = adapter.Model(item);
         _selected = new Selection
         {
-            Screen = screen, ScreenId = screen.GetInstanceId(), Item = item, Adapter = adapter, Model = model, Outline = outline,
+            Screen = screen, ScreenId = screen.GetInstanceId(), Item = item, Adapter = adapter, Model = model, Reticle = reticle,
         };
         try
         {
@@ -675,7 +687,7 @@ internal sealed class PhoneSelectConfirm
             _clears++;
             GD.Print($"Phone select confirm: selection let go ({reason}).");
         }
-        if (selection.Outline != null && GodotObject.IsInstanceValid(selection.Outline)) selection.Outline.QueueFree();
+        if (selection.Reticle != null) DeselectReticle(selection.Reticle, selection.Item);
         try
         {
             selection.Adapter.HideTip(selection.Screen, selection.Item);
@@ -769,7 +781,7 @@ internal sealed class PhoneSelectConfirm
     private sealed class ShopAdapter(PhoneSelectConfirm owner) : SelectAdapter(owner)
     {
         internal override string Label => "shop item";
-        internal override bool CardOutline => false;
+        internal override bool IsCard => false;
         internal override int ItemCount(Control screen) => 0;
         internal override Control? ItemAt(Control screen, int index) => null;
         internal override Control PressTarget(Control item) => item.GetNodeOrNull<Control>("%Hitbox") ?? item;
@@ -784,12 +796,11 @@ internal sealed class PhoneSelectConfirm
             return Owner.Prop(entry, "Model") ?? entry;
         }
 
-        internal override Panel AttachOutline(Control item)
+        internal override Control AttachReticle(Control item)
         {
+            // The slot's hitbox is the item's whole drawn rectangle (its card, relic or potion), as the old border was.
             Control target = PressTarget(item);
-            Panel panel = MakeRectOutline(target.Size, 10f, 6f);
-            target.AddChild(panel);
-            return panel;
+            return PhoneSelectConfirm.AttachReticle(target, new Rect2(Vector2.Zero, target.Size));
         }
 
         internal override void ShowTip(Control screen, Control item) => Owner.SlotTip(item)?.Invoke(item, null);
@@ -822,11 +833,11 @@ internal sealed class PhoneSelectConfirm
         }
     }
 
-    /// <summary>Choose a card: the row's card holders; the outline is the card's, the hover gives its keyword tips.</summary>
+    /// <summary>Choose a card: the row's card holders; the reticle follows the card's drawn rect, the hover gives its keyword tips.</summary>
     private class CardChoiceAdapter(PhoneSelectConfirm owner) : SelectAdapter(owner)
     {
         internal override string Label => "choose a card";
-        internal override bool CardOutline => true;
+        internal override bool IsCard => true;
 
         protected virtual string RowPath => "CardRow";
         protected virtual string CommitMethod => "SelectHolder";
@@ -838,11 +849,10 @@ internal sealed class PhoneSelectConfirm
         internal override Rect2 HitRect(Control screen, Control item) => PressTarget(item).GetGlobalRect();
         internal override object? Model(Control item) => Owner.Prop(item, "CardModel");
 
-        internal override Panel AttachOutline(Control item)
+        internal override Control AttachReticle(Control item)
         {
-            Panel panel = MakeCardOutline();
-            item.AddChild(panel);
-            return panel;
+            // The card's drawn rectangle about the holder's middle; the holder's own scale (focus, row) carries the reticle too.
+            return PhoneSelectConfirm.AttachReticle(item, CardRect(item));
         }
 
         internal override void ShowTip(Control screen, Control item)
@@ -864,19 +874,15 @@ internal sealed class PhoneSelectConfirm
     private sealed class RelicChoiceAdapter(PhoneSelectConfirm owner) : SelectAdapter(owner)
     {
         internal override string Label => "relic choice";
-        internal override bool CardOutline => false;
+        internal override bool IsCard => false;
         internal override int ItemCount(Control screen) => Row(screen, "RelicRow")?.GetChildCount() ?? 0;
         internal override Control? ItemAt(Control screen, int index) => Row(screen, "RelicRow")?.GetChild(index) as Control;
         internal override Control PressTarget(Control item) => item;
         internal override Rect2 HitRect(Control screen, Control item) => item.GetGlobalRect();
         internal override object? Model(Control item) => Owner.RelicModel(item);
 
-        internal override Panel AttachOutline(Control item)
-        {
-            Panel panel = MakeRectOutline(item.Size, 6f, 4f);
-            item.AddChild(panel);
-            return panel;
-        }
+        internal override Control AttachReticle(Control item) =>
+            PhoneSelectConfirm.AttachReticle(item, new Rect2(Vector2.Zero, item.Size));
 
         internal override void ShowTip(Control screen, Control item) => Owner.ShowRelicTip(item);
         internal override void HideTip(Control screen, Control item) => Owner.HideTip(item);
@@ -900,7 +906,7 @@ internal sealed class PhoneSelectConfirm
         private readonly Dictionary<ulong, List<(Control Holder, Callable Callable)>> _blocked = new();
 
         internal override string Label => "treasure relic";
-        internal override bool CardOutline => false;
+        internal override bool IsCard => false;
 
         private IList? Holders(Control screen)
         {
@@ -997,12 +1003,8 @@ internal sealed class PhoneSelectConfirm
             }
         }
 
-        internal override Panel AttachOutline(Control item)
-        {
-            Panel panel = MakeRectOutline(item.Size, 6f, 4f);
-            item.AddChild(panel);
-            return panel;
-        }
+        internal override Control AttachReticle(Control item) =>
+            PhoneSelectConfirm.AttachReticle(item, new Rect2(Vector2.Zero, item.Size));
 
         internal override void ShowTip(Control screen, Control item) => Owner.ShowRelicTip(item);
         internal override void HideTip(Control screen, Control item) => Owner.HideTip(item);
@@ -1013,6 +1015,80 @@ internal sealed class PhoneSelectConfirm
         // picks for its first 200 ms (its own guard). The entrance state is not part of the selection's life: a live
         // MouseFilter read there would let a closing animation drop a selection that is still on screen.
         internal override bool CanConfirm(Control screen, Control item) => item.MouseFilter != Control.MouseFilterEnum.Ignore;
+    }
+
+    /// <summary>
+    /// Rest-site options: the room's own choice buttons. The first tap selects one and keeps the game's option description on
+    /// screen (an option's focus is what makes the room show it); the second tap on the same option runs the game's own
+    /// release, which takes the option. The selecting press is stopped by the button's own unclickable guard, so its release
+    /// cannot take the option; the guard is put back on the confirming tap and whenever the selection is let go.
+    /// </summary>
+    private sealed class RestAdapter(PhoneSelectConfirm owner) : SelectAdapter(owner)
+    {
+        // Buttons whose clickable guard this file turned off, and what it was.
+        private readonly Dictionary<ulong, bool> _suppressed = new();
+
+        internal override string Label => "rest option";
+        internal override bool IsCard => false;
+
+        internal override int ItemCount(Control screen) => Row(screen, "%ChoicesContainer")?.GetChildCount() ?? 0;
+
+        internal override Control? ItemAt(Control screen, int index) =>
+            Row(screen, "%ChoicesContainer")?.GetChild(index) as Control;
+
+        internal override Control PressTarget(Control item) => item;
+        internal override Rect2 HitRect(Control screen, Control item) => item.GetGlobalRect();
+        internal override object? Model(Control item) => Owner.Prop(item, "Option");
+
+        internal override Control AttachReticle(Control item) =>
+            PhoneSelectConfirm.AttachReticle(item, new Rect2(Vector2.Zero, item.Size));
+
+        // An option's focus is what makes the room show its description (`NRestSiteButton.RefreshTextState`); losing it fades
+        // the copy out again. Both are the game's own paths, so the text and its fade stay native.
+        internal override void ShowTip(Control screen, Control item) => item.GrabFocus();
+        internal override void HideTip(Control screen, Control item) => item.ReleaseFocus();
+        internal override void Inspect(Control screen, Control item) => item.GrabFocus();
+
+        internal override void Suppress(Control screen, Control item)
+        {
+            if (Owner._restUnclickable == null) return;
+            foreach (ulong dead in _suppressed.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _suppressed.Remove(dead);
+            ulong id = item.GetInstanceId();
+            if (!_suppressed.ContainsKey(id))
+                _suppressed[id] = Owner._restUnclickable.GetValue(item) is true;
+            Owner._restUnclickable.SetValue(item, true);
+        }
+
+        internal override void Restore(Control screen, Control item)
+        {
+            if (Owner._restUnclickable == null) return;
+            if (!_suppressed.Remove(item.GetInstanceId(), out bool was)) return;
+            if (GodotObject.IsInstanceValid(item)) Owner._restUnclickable.SetValue(item, was);
+        }
+
+        internal override void Detach(Control screen)
+        {
+            if (Owner._restUnclickable == null) return;
+            foreach ((ulong id, bool was) in _suppressed)
+                if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button))
+                    Owner._restUnclickable.SetValue(button, was);
+            _suppressed.Clear();
+        }
+
+        /// <summary>The confirming tap: the button is clickable again, and its own release is what takes the option.</summary>
+        internal override void Commit(Control screen, Control item)
+        {
+            Restore(screen, item);
+            item.Call("OnRelease");
+        }
+
+        /// <summary>A button the game disabled for its fade, or an option it turned off, cannot be confirmed.</summary>
+        internal override bool CanConfirm(Control screen, Control item)
+        {
+            if (Owner.Prop(item, "IsEnabled") is not true) return false;
+            object? option = Owner.Prop(item, "Option");
+            return option == null || Owner.Prop(option, "IsEnabled") is true;
+        }
     }
 
     // ---- Shared item knowledge --------------------------------------------------------------------------------------------
@@ -1187,45 +1263,59 @@ internal sealed class PhoneSelectConfirm
         return tree.Root.GetFinalTransform().AffineInverse() * windowPosition;
     }
 
-    /// <summary>A border around a control's rectangle, in the card's own outline colour; nothing is laid over the item.</summary>
-    internal static Panel MakeRectOutline(Vector2 size, float pad, float border)
+    /// <summary>
+    /// Adds the game's own selection reticle (<c>selection_reticle.tscn</c>: four gold corners and their shadow) as a child of
+    /// <paramref name="owner" />, covering <paramref name="rect" /> in the owner's coordinates, and selects it. The scene anchors
+    /// its corners 10 units outside the root's rectangle, so the corners sit just outside the item, as they do on the game's
+    /// reward buttons. It is the last child, so it draws above the item, and it takes no touch input.
+    /// </summary>
+    internal static Control AttachReticle(Control owner, Rect2 rect)
     {
-        var style = new StyleBoxFlat
-        {
-            DrawCenter = false,
-            BorderColor = OutlineColor,
-            BorderWidthLeft = (int)border, BorderWidthTop = (int)border, BorderWidthRight = (int)border, BorderWidthBottom = (int)border,
-            CornerRadiusTopLeft = 14, CornerRadiusTopRight = 14, CornerRadiusBottomLeft = 14, CornerRadiusBottomRight = 14,
-        };
-        var panel = new Panel
-        {
-            Name = OutlineName,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            Position = new Vector2(-pad, -pad),
-            Size = size + new Vector2(2f * pad, 2f * pad),
-        };
-        panel.AddThemeStyleboxOverride("panel", style);
-        return panel;
+        PackedScene scene = _reticleScene ??= ResourceLoader.Load<PackedScene>(ReticleScenePath) ??
+            throw new InvalidOperationException($"The game's selection reticle is missing ({ReticleScenePath}).");
+        if (scene.Instantiate() is not Control reticle)
+            throw new InvalidOperationException($"The game's selection reticle is not a control ({ReticleScenePath}).");
+        reticle.Name = ReticleName;
+        reticle.MouseFilter = Control.MouseFilterEnum.Ignore;
+        reticle.Position = rect.Position;
+        reticle.Size = rect.Size;
+        // The node enters the tree here, so its _Ready (transparent, pivot at the rectangle's middle) runs before OnSelect.
+        owner.AddChild(reticle);
+        if (!reticle.HasMethod("OnSelect"))
+            throw new InvalidOperationException("The game's selection reticle has no OnSelect.");
+        reticle.Call("OnSelect");
+        return reticle;
     }
 
-    /// <summary>A border around a card (300 x 422, drawn centred on its holder), the card's own outline colour.</summary>
-    internal static Panel MakeCardOutline()
+    /// <summary>
+    /// Fades a reticle out through the game's own OnDeselect and frees it once that 0.2 s fade has run, so it never pops off.
+    /// If the item or screen is already gone there is nothing to see: the reticle is freed at once (the item would free it
+    /// with itself either way).
+    /// </summary>
+    internal static void DeselectReticle(Control reticle, Control owner)
     {
-        var style = new StyleBoxFlat
+        if (!GodotObject.IsInstanceValid(reticle)) return;
+        if (!GodotObject.IsInstanceValid(owner) || !owner.IsInsideTree() || owner.IsQueuedForDeletion() || !reticle.IsInsideTree())
         {
-            DrawCenter = false,
-            BorderColor = OutlineColor,
-            BorderWidthLeft = 8, BorderWidthTop = 8, BorderWidthRight = 8, BorderWidthBottom = 8,
-            CornerRadiusTopLeft = 22, CornerRadiusTopRight = 22, CornerRadiusBottomLeft = 22, CornerRadiusBottomRight = 22,
-        };
-        var panel = new Panel
+            reticle.QueueFree();
+            return;
+        }
+        if (reticle.HasMethod("OnDeselect")) reticle.Call("OnDeselect");
+        SceneTreeTimer? fade = reticle.GetTree()?.CreateTimer(ReticleFadeSeconds);
+        if (fade == null)
         {
-            Name = OutlineName,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            Position = new Vector2(-164f, -225f),
-            Size = new Vector2(328f, 450f),
+            reticle.QueueFree();
+            return;
+        }
+        fade.Timeout += () =>
+        {
+            if (GodotObject.IsInstanceValid(reticle)) reticle.QueueFree();
         };
-        panel.AddThemeStyleboxOverride("panel", style);
-        return panel;
     }
+
+    /// <summary>A card holder's card: the 300 x 422 rectangle its hitbox covers, about the holder's middle.</summary>
+    internal static Rect2 CardRect(Control holder) =>
+        holder.GetNodeOrNull<Control>("%Hitbox") is { } hitbox
+            ? new Rect2(hitbox.Position, hitbox.Size)
+            : new Rect2(-150f, -211f, 300f, 422f);
 }
