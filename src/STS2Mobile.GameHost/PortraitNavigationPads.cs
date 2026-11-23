@@ -40,8 +40,29 @@ internal sealed class PortraitNavigationPads
     private readonly HashSet<ulong> _hoveredBacks = new();
     private readonly HashSet<ulong> _hoverWired = new();
     private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _placedTargets = new();
-    private static Type? _backType;
-    private static FieldInfo? _showPos, _hidePos, _enabled, _moveTween, _posOffset, _hoverTween;
+    /// <summary>The members one concrete button type declares; resolved once per type, never applied to another type.</summary>
+    private sealed class Fields
+    {
+        public FieldInfo? ShowPos, HidePos, Enabled, MoveTween, PosOffset, HoverTween;
+    }
+
+    private static readonly Dictionary<Type, Fields> FieldCache = new();
+
+    private static Fields FieldsFor(Type type)
+    {
+        if (FieldCache.TryGetValue(type, out Fields? fields)) return fields;
+        fields = new Fields
+        {
+            ShowPos = type.GetField(ShowPosField, AnyField),
+            HidePos = type.GetField(HidePosField, AnyField),
+            Enabled = type.GetField(EnabledField, AnyField),
+            MoveTween = type.GetField(MoveTweenField, AnyField),
+            PosOffset = type.GetField(PosOffsetField, AnyField),
+            HoverTween = type.GetField(HoverTweenField, AnyField),
+        };
+        FieldCache[type] = fields;
+        return fields;
+    }
 
     public static bool Handles(string? typeName) => typeName == BackTypeName || typeName == ArrowTypeName;
 
@@ -61,8 +82,9 @@ internal sealed class PortraitNavigationPads
         {
             if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
             if (!control.IsVisibleInTree()) continue;
+            Fields fields = FieldsFor(control.GetType());
             float factor = 1f;
-            if (_hoverTween?.GetValue(control) is Tween hover && hover.IsValid() && hover.IsRunning())
+            if (fields.HoverTween?.GetValue(control) is Tween hover && hover.IsValid() && hover.IsRunning())
                 factor = Math.Clamp(control.Scale.X, 1f, 1.05f);
             else if (_hoveredBacks.Contains(id)) factor = 1.05f;
             var target = new Vector2(scale * factor, scale * factor);
@@ -98,10 +120,10 @@ internal sealed class PortraitNavigationPads
             _ => input.GetClass(),
         };
         if (kind.StartsWith("InputEvent", StringComparison.Ordinal)) return;
-        EnsureBackFields(control.GetType());
+        Fields fields = FieldsFor(control.GetType());
         Control? hovered = control.GetViewport().GuiGetHoveredControl();
         GD.Print($"Portrait back input: {control.Name} {kind} at ({control.GlobalPosition.X:F1},{control.GlobalPosition.Y:F1}) " +
-                 $"size=({control.Size.X:F1}x{control.Size.Y:F1}) enabled={_enabled?.GetValue(control)} " +
+                 $"size=({control.Size.X:F1}x{control.Size.Y:F1}) enabled={fields.Enabled?.GetValue(control)} " +
                  $"hovered={(hovered is null ? "none" : hovered.GetType().Name + ":" + hovered.Name)}");
     }
 
@@ -142,12 +164,23 @@ internal sealed class PortraitNavigationPads
     {
         foreach (ulong id in _tracked)
         {
-            if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
-            PhoneHitArea.Remove(control);
-            if (_moveTween?.GetValue(control) is Tween tween && tween.IsValid()) tween.Kill();
-            _moveTween?.SetValue(control, null);
-            if (_originalPositions.TryGetValue(id, out (Vector2 Show, Vector2 Hide, Vector2 Pivot, Vector2 Scale) original))
+            try
+            {
+                if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+                PhoneHitArea.Remove(control);
+                // Only a Back has the slide fields; a gold arrow is untracked here beyond its pad.
+                if (!IsBack(control) ||
+                    !_originalPositions.TryGetValue(id, out (Vector2 Show, Vector2 Hide, Vector2 Pivot, Vector2 Scale) original))
+                    continue;
+                Fields fields = FieldsFor(control.GetType());
+                if (fields.MoveTween?.GetValue(control) is Tween tween && tween.IsValid()) tween.Kill();
+                fields.MoveTween?.SetValue(control, null);
                 RestoreBack(control, original);
+            }
+            catch (Exception error)
+            {
+                GD.PushWarning($"Portrait nav: could not restore {id}: {error.GetType().Name}: {error.Message}");
+            }
         }
         _tracked.Clear();
         _paddedAt.Clear();
@@ -170,7 +203,8 @@ internal sealed class PortraitNavigationPads
     /// </summary>
     private void PlaceBack(Control control)
     {
-        if (!EnsureBackFields(control.GetType()) || _showPos is null) return;
+        Fields fields = FieldsFor(control.GetType());
+        if (fields.ShowPos is null) return;
         Vector2 parentScale = control.GetParent() is Control parent ? parent.GetGlobalTransform().Scale.Abs() : Vector2.One;
         if (parentScale.X < 0.01f || parentScale.Y < 0.01f) return;
         Rect2 canvas = control.GetViewport().GetVisibleRect();
@@ -182,7 +216,7 @@ internal sealed class PortraitNavigationPads
         // game's own scale tweens have run.
         control.PivotOffset = new Vector2(0f, control.Size.Y);
         if (!control.Scale.IsEqualApprox(new Vector2(scale, scale))) control.Scale = new Vector2(scale, scale);
-        Vector2 offset = _posOffset?.GetValue(control) is Vector2 value ? value : new Vector2(40f, 354f);
+        Vector2 offset = fields.PosOffset?.GetValue(control) is Vector2 value ? value : new Vector2(40f, 354f);
         // The native footer gap below the canvas bottom (the button's own bottom before the screen edge), mapped to the canvas.
         float gap = Math.Max(0f, offset.Y - control.Size.Y) * parentScale.Y;
         float bottom = Math.Min(canvas.End.Y - FooterBottomMargin, canvas.End.Y - gap);
@@ -195,61 +229,48 @@ internal sealed class PortraitNavigationPads
         ulong id = control.GetInstanceId();
         if (!_originalPositions.ContainsKey(id))
         {
-            var currentShow = (Vector2)_showPos.GetValue(control)!;
-            var currentHide = _hidePos is null ? currentShow : (Vector2)_hidePos.GetValue(control)!;
+            var currentShow = (Vector2)fields.ShowPos.GetValue(control)!;
+            var currentHide = fields.HidePos is null ? currentShow : (Vector2)fields.HidePos.GetValue(control)!;
             _originalPositions[id] = (currentShow, currentHide, control.PivotOffset, control.Scale);
         }
         bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed)
             || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
-        bool enabled = _enabled?.GetValue(control) is true;
+        bool enabled = fields.Enabled?.GetValue(control) is true;
         Vector2 target = enabled ? show : hide;
-        Tween? tween = _moveTween?.GetValue(control) as Tween;
+        Tween? tween = fields.MoveTween?.GetValue(control) as Tween;
         if (changed)
         {
             _placedTargets[id] = (show, hide);
-            _showPos.SetValue(control, show);
-            if (_hidePos is not null) _hidePos.SetValue(control, hide);
+            fields.ShowPos.SetValue(control, show);
+            fields.HidePos?.SetValue(control, hide);
             if (tween is not null && tween.IsValid()) tween.Kill();
-            _moveTween?.SetValue(control, null);
+            fields.MoveTween?.SetValue(control, null);
             if (control.GlobalPosition.DistanceTo(target) > 2f)
             {
                 Tween slide = control.CreateTween();
                 slide.TweenProperty(control, "global_position", target, 0.35)
                     .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
-                _moveTween?.SetValue(control, slide);
+                fields.MoveTween?.SetValue(control, slide);
             }
             else control.GlobalPosition = target;
             return;
         }
         // The game's own window handler rewrites the cached positions in its local space; restore ours only when it did.
-        var storedShow = (Vector2)_showPos.GetValue(control)!;
-        if (storedShow.DistanceTo(show) > 0.5f) _showPos.SetValue(control, show);
-        if (_hidePos is not null && _hidePos.GetValue(control) is Vector2 storedHide && storedHide.DistanceTo(hide) > 0.5f)
-            _hidePos.SetValue(control, hide);
+        var storedShow = (Vector2)fields.ShowPos.GetValue(control)!;
+        if (storedShow.DistanceTo(show) > 0.5f) fields.ShowPos.SetValue(control, show);
+        if (fields.HidePos is not null && fields.HidePos.GetValue(control) is Vector2 storedHide && storedHide.DistanceTo(hide) > 0.5f)
+            fields.HidePos.SetValue(control, hide);
         if (tween is not null && tween.IsValid() && tween.IsRunning()) return;
         if (control.GlobalPosition.DistanceTo(target) > 0.5f) control.GlobalPosition = target;
     }
 
     private static void RestoreBack(Control control, (Vector2 Show, Vector2 Hide, Vector2 Pivot, Vector2 Scale) original)
     {
-        if (!EnsureBackFields(control.GetType())) return;
-        _showPos?.SetValue(control, original.Show);
-        _hidePos?.SetValue(control, original.Hide);
+        Fields fields = FieldsFor(control.GetType());
+        if (fields.ShowPos is not null) fields.ShowPos.SetValue(control, original.Show);
+        fields.HidePos?.SetValue(control, original.Hide);
         control.PivotOffset = original.Pivot;
         control.Scale = original.Scale;
-    }
-
-    private static bool EnsureBackFields(Type type)
-    {
-        if (_backType == type) return _showPos is not null;
-        _backType = type;
-        _showPos = type.GetField(ShowPosField, AnyField);
-        _hidePos = type.GetField(HidePosField, AnyField);
-        _enabled = type.GetField(EnabledField, AnyField);
-        _moveTween = type.GetField(MoveTweenField, AnyField);
-        _posOffset = type.GetField(PosOffsetField, AnyField);
-        _hoverTween = type.GetField(HoverTweenField, AnyField);
-        return _showPos is not null;
     }
 
     public void PruneDead()

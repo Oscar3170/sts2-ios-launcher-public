@@ -161,8 +161,6 @@ internal sealed class PhoneHoverTips
             }
             Rect2 canvas = tree.Root.GetVisibleRect();
             float safeTop = PortraitLayout.ComputeCapHeight(tree.Root);
-            // Tips stay inside the phone's safe area: above the safe top is under the island/notch.
-            var fitArea = new Rect2(0f, safeTop, canvas.Size.X, Math.Max(0f, canvas.Size.Y - safeTop));
             float stageTop = safeTop + PortraitBands.RunContentTop;
             float railTop = PortraitCombatMath.ComputeCombatBands(canvas.Size.Y, 0f).RailTopY;
             (float Top, float Bottom) handBand = TouchCardMath.HandTipBand(stageTop, railTop);
@@ -176,7 +174,7 @@ internal sealed class PhoneHoverTips
                 }
                 try
                 {
-                    FitSet(set, fitArea, PortraitTipScale, handBand);
+                    FitSet(set, canvas, safeTop, PortraitTipScale, handBand);
                 }
                 catch (Exception error)
                 {
@@ -218,7 +216,7 @@ internal sealed class PhoneHoverTips
         return _gameInstance!.GetValue(null) is Node game && GodotObject.IsInstanceValid(game) ? _containerProp!.GetValue(game) as Node : null;
     }
 
-    private void FitSet(Control set, Rect2 canvas, float scale, (float Top, float Bottom) handBand)
+    private void FitSet(Control set, Rect2 canvas, float safeTop, float scale, (float Top, float Bottom) handBand)
     {
         Control? ownerControl = _ownerField?.GetValue(set) as Control;
         Rect2? owner = ownerControl != null && GodotObject.IsInstanceValid(ownerControl) && ownerControl.IsInsideTree()
@@ -243,10 +241,10 @@ internal sealed class PhoneHoverTips
         if (text != null && GodotObject.IsInstanceValid(text))
         {
             if (text is FlowContainer flow) MakeOneColumn(flow);
-            placedText = FitColumn(text, toCanvas, canvas, owner, scale, avoid: popup, band);
+            placedText = FitColumn(text, toCanvas, canvas, owner, scale, popup, band, safeTop);
         }
         if (cards != null && GodotObject.IsInstanceValid(cards))
-            FitColumn(cards, toCanvas, canvas, owner, scale, placedText, band);
+            FitColumn(cards, toCanvas, canvas, owner, scale, placedText, band, safeTop);
 
         Rect2? union = UnionRect(set);
         if (_handTipLogged.Add(set.GetInstanceId()))
@@ -352,7 +350,7 @@ internal sealed class PhoneHoverTips
     }
 
     private Rect2? FitColumn(Control column, Transform2D toCanvas, Rect2 canvas, Rect2? owner, float scale, Rect2? avoid,
-        (float Top, float Bottom)? band = null)
+        (float Top, float Bottom)? band = null, float safeTop = 0f)
     {
         if (!column.Visible || column.Size.X < 2f || column.Size.Y < 2f || column.GetChildCount() == 0) return null;
         ulong id = column.GetInstanceId();
@@ -387,6 +385,10 @@ internal sealed class PhoneHoverTips
             (placed, s) = moved;
         if (avoid is { } other && placed.Intersects(other) && AboveOrBelow(other, column.Size, s, canvas) is { } apart)
             (placed, s) = apart;
+
+        // The phone's safe top is under the island; a tip that would start above it is moved down, never off the canvas.
+        if (safeTop > 0f && placed.Position.Y < safeTop + Margin)
+            placed = new Rect2(placed.Position.X, safeTop + Margin, placed.Size);
 
         // A hand-card tip stays between the stage top and the rail: clamp the bottom (never over the hand) and, if it is
         // taller than the band, shrink it to the band.

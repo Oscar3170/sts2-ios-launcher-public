@@ -61,8 +61,10 @@ internal sealed partial class PortraitBetweenLayout
         public int IconPassesLeft;
         /// <summary>Rewards-phase clip bottom and fade band; the crop itself is framed once for the dialogue band.</summary>
         public float RewardBottom, RewardFadeStart, RewardFadeEnd;
-        /// <summary>The clip bottom and fade band drawn this frame (tweened at the dialogue/rewards edge).</summary>
+        /// <summary>The clip bottom and fade band drawn this frame, eased to the phase target in 0.3 s.</summary>
         public float ClipBottomNow, FadeStartNow, FadeEndNow;
+        public float ClipTarget, FadeStartTarget, FadeEndTarget;
+        public float ClipSpeed, FadeStartSpeed, FadeEndSpeed;
         public AncientArtFrame Frame;
         public float ContentTop;
         public float ContentWidth;
@@ -136,13 +138,17 @@ internal sealed partial class PortraitBetweenLayout
         // One crop for the whole event: only the clip and fade bottom move when the rewards are revealed.
         bool lastLine = layout.GetType().GetProperty("IsDialogueOnLastLine", BindingFlags.Instance | BindingFlags.NonPublic)
             ?.GetValue(layout) is true;
-        float targetBottom = lastLine ? state.RewardBottom : state.Frame.ClipBottom;
-        float targetFadeStart = lastLine ? state.RewardFadeStart : state.Frame.FadeStart;
-        float targetFadeEnd = lastLine ? state.RewardFadeEnd : state.Frame.FadeEnd;
-        float step = (float)Math.Min(1.0, layout.GetProcessDeltaTime() / 0.3);
-        state.ClipBottomNow = Mathf.Lerp(state.ClipBottomNow, targetBottom, step);
-        state.FadeStartNow = Mathf.Lerp(state.FadeStartNow, targetFadeStart, step);
-        state.FadeEndNow = Mathf.Lerp(state.FadeEndNow, targetFadeEnd, step);
+        float dt = (float)layout.GetProcessDeltaTime();
+        SetPhaseTarget(ref state.ClipTarget, ref state.ClipSpeed, lastLine ? state.RewardBottom : state.Frame.ClipBottom,
+            state.ClipBottomNow);
+        SetPhaseTarget(ref state.FadeStartTarget, ref state.FadeStartSpeed,
+            lastLine ? state.RewardFadeStart : state.Frame.FadeStart, state.FadeStartNow);
+        SetPhaseTarget(ref state.FadeEndTarget, ref state.FadeEndSpeed,
+            lastLine ? state.RewardFadeEnd : state.Frame.FadeEnd, state.FadeEndNow);
+        // Constant speed so the edge lands exactly on the target 0.3 s after it starts: no creeping rect for the checks.
+        state.ClipBottomNow = Mathf.MoveToward(state.ClipBottomNow, state.ClipTarget, state.ClipSpeed * dt);
+        state.FadeStartNow = Mathf.MoveToward(state.FadeStartNow, state.FadeStartTarget, state.FadeStartSpeed * dt);
+        state.FadeEndNow = Mathf.MoveToward(state.FadeEndNow, state.FadeEndTarget, state.FadeEndSpeed * dt);
         if (state.ClipId == 0 || GodotObject.InstanceFromId(state.ClipId) is not Control existing || !GodotObject.IsInstanceValid(existing))
             CreateAncientClip(state, layout, bg);
         EnsureAncientArt(state, layout, bg, canvas);
@@ -286,9 +292,9 @@ internal sealed partial class PortraitBetweenLayout
         state.RewardBottom = rewards.ClipBottom;
         state.RewardFadeStart = rewards.FadeStart;
         state.RewardFadeEnd = rewards.FadeEnd;
-        state.ClipBottomNow = state.Frame.ClipBottom;
-        state.FadeStartNow = state.Frame.FadeStart;
-        state.FadeEndNow = state.Frame.FadeEnd;
+        state.ClipBottomNow = state.ClipTarget = state.Frame.ClipBottom;
+        state.FadeStartNow = state.FadeStartTarget = state.Frame.FadeStart;
+        state.FadeEndNow = state.FadeEndTarget = state.Frame.FadeEnd;
 
         // The column holds the dialogue stack over the art; the game later grows it down to the nameplate for the rewards.
         state.ContentWidth = state.Canvas.X - 2f * PortraitAncientMath.ContentSideInset;
@@ -305,6 +311,14 @@ internal sealed partial class PortraitBetweenLayout
                 CreateAncientClip(state, layout, bg);
             EnsureAncientArt(state, layout, bg, state.Canvas);
         }
+    }
+
+    /// <summary>Starts a 0.3 s constant-speed move when the phase target changes.</summary>
+    private static void SetPhaseTarget(ref float target, ref float speed, float wanted, float current)
+    {
+        if (Mathf.IsEqualApprox(target, wanted)) return;
+        target = wanted;
+        speed = Mathf.Abs(wanted - current) / 0.3f;
     }
 
     private void ApplyAncientColumn(AncientState state, Control layout, float optionsHeight)

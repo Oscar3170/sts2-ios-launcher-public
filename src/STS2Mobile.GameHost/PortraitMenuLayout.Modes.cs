@@ -15,48 +15,34 @@ internal sealed partial class PortraitMenuLayout
     private const float ModeReserved = 430f;
     // Room between a right-aligned header icon and the safe edge, so its pad can reach 127 units on both sides.
     private const float HeaderRightMargin = 32f;
+    private readonly Dictionary<ulong, Rect2> _modeDrawnLogged = new();
 
     /// <summary>
     /// The singleplayer and multiplayer-host mode cards: the native buttons stay in their own row (their input connections,
-    /// hotkeys and hover tweens stay intact and nothing leaves the tree); the row is drawn larger and its children are put two
-    /// to a line, an odd last card centred, re-applied right after any native sort. Their interior is the measured card
-    /// layout: a 340 wide plate, the title, the mode's portrait and the description under it, in a card 545 units tall
-    /// instead of the desktop's 705.
+    /// hotkeys and hover tweens stay intact), the row is scaled, and the cards are placed two to a line with the last card
+    /// centred. Their interior is the reference card (545 units tall). The rows are laid out from each card's DRAWN bounds,
+    /// not its control rectangle: the native background art is taller than the control, and spacing the controls made the
+    /// art of one row cover the next. The row scale is whatever fits 2 columns plus the centred Custom card in the band.
     /// </summary>
     private void LayoutModeCards(Control screen, ScreenState state)
     {
         if (Node(screen, state, "ButtonContainer") is not BoxContainer row) return;
-        List<Control> cards = row.GetChildren().OfType<Control>().Where(card => card.Visible).ToList();
         EnsureBackOnTop(screen, state);
-        if (cards.Count == 0) return;
-
-        int rows = Math.Max(1, (cards.Count + 1) / 2);
-        float rowWidth = 2f * ModeCardWidth + ModeGap;
-        float height = rows * (ModeCardHeight + ModeGap) - ModeGap;
-        Rect2 safe = state.Safe;
-        float available = Math.Max(200f, safe.Size.Y - ModeReserved);
-        float scale = Math.Min((safe.Size.X - 80f) / rowWidth, available / height);
-        scale = Math.Max(0.3f, scale);
-        float top = safe.Position.Y + ModeTop + Math.Max(0f, available - height * scale) / 2f;
-
         Capture(row);
         row.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
-        SetScale(row, new Vector2(scale, scale), Vector2.Zero);
-        Vector2 target = screen.GetGlobalTransformWithCanvas() * new Vector2(safe.GetCenter().X, top);
-        if (row.GlobalPosition.DistanceSquaredTo(target) > 0.25f) row.GlobalPosition = target;
-
         if (state.ModeRow != row)
         {
             if (state.ModeSort != null && GodotObject.IsInstanceValid(state.ModeRow)) state.ModeRow!.SortChildren -= state.ModeSort;
             state.ModeRow = row;
             state.ModeSort = () =>
             {
-                if (GodotObject.IsInstanceValid(row) && state.Scale > 0f) ArrangeModeCards(state, row);
+                if (GodotObject.IsInstanceValid(row) && state.Scale > 0f) ArrangeModeCards(state, screen, row);
             };
             row.SortChildren += state.ModeSort;
         }
-        ArrangeModeCards(state, row);
+        ArrangeModeCards(state, screen, row);
 
+        List<Control> cards = row.GetChildren().OfType<Control>().Where(card => card.Visible).ToList();
         if (state.FocusCount != cards.Count)
         {
             for (int i = 0; i < cards.Count; i++)
@@ -73,10 +59,10 @@ internal sealed partial class PortraitMenuLayout
     }
 
     /// <summary>
-    /// Positions the visible cards in the row's own units: two per line around the row's origin (the middle of the screen
-    /// width), each 362 by 545 with its measured interior.
+    /// Lays out the visible cards from their drawn bounds: interiors first, then the union of their texture/plate children,
+    /// then the row scale and each card's position so one card's drawn art never reaches the next.
     /// </summary>
-    private void ArrangeModeCards(ScreenState state, BoxContainer row)
+    private void ArrangeModeCards(ScreenState state, Control screen, BoxContainer row)
     {
         List<Control> cards = row.GetChildren().OfType<Control>().Where(card => card.Visible).ToList();
         if (cards.Count == 0) return;
@@ -84,22 +70,16 @@ internal sealed partial class PortraitMenuLayout
         {
             Control card = cards[i];
             Capture(card);
-            int line = i / 2, col = i % 2, inLine = Math.Min(2, cards.Count - line * 2);
             SetMinSize(card, new Vector2(ModeCardWidth, ModeCardHeight));
             if (card.Size.DistanceSquaredTo(new Vector2(ModeCardWidth, ModeCardHeight)) > 0.25f)
                 card.Size = new Vector2(ModeCardWidth, ModeCardHeight);
             var pivot = new Vector2(ModeCardWidth / 2f, ModeCardHeight / 2f);
             if (card.PivotOffset.DistanceSquaredTo(pivot) > 0.25f) card.PivotOffset = pivot;
 
-            var place = new Vector2(
-                col * (ModeCardWidth + ModeGap) - (inLine * (ModeCardWidth + ModeGap) - ModeGap) * 0.5f,
-                line * (ModeCardHeight + ModeGap));
-            if (card.Position.DistanceSquaredTo(place) > 0.25f) card.Position = place;
-
             Place(card.GetNodeOrNull<Control>("BgPanel"), 11f, 0f, 340f, ModeCardHeight);
             Place(card.GetNodeOrNull<Control>("Title"), 28f, 30f, 306f, 61f);
-            // The reference card's own interior, scaled with the card: the art, its frame, the title and the description
-            // keep their native proportions, so nothing spills out of the card and the rows need no extra gap.
+            // The reference card's own interior, scaled with the card: art, frame, title and description keep their native
+            // proportions, so nothing spills out of the card.
             Place(card.GetNodeOrNull<Control>("SubmenuPortrait"), 42f, 108f, 252f, 192f);
             if (card.GetNodeOrNull<RichTextLabel>("Description") is { } description)
             {
@@ -108,6 +88,69 @@ internal sealed partial class PortraitMenuLayout
                 Place(description, 43f, 331f, 276f, ModeCardHeight - 381f);
             }
         }
+
+        var drawn = new Rect2[cards.Count];
+        float cellWidth = 1f, cellHeight = 1f;
+        for (int i = 0; i < cards.Count; i++)
+        {
+            drawn[i] = CardDrawnBounds(cards[i]);
+            cellWidth = Math.Max(cellWidth, drawn[i].Size.X);
+            cellHeight = Math.Max(cellHeight, drawn[i].Size.Y);
+            ulong id = cards[i].GetInstanceId();
+            if (!_modeDrawnLogged.TryGetValue(id, out Rect2 seen) || !seen.IsEqualApprox(drawn[i]))
+            {
+                _modeDrawnLogged[id] = drawn[i];
+                GD.Print($"Portrait mode card: {cards[i].Name} control={cards[i].Size.X:F0}x{cards[i].Size.Y:F0} " +
+                         $"drawn={drawn[i].Position.X:F0},{drawn[i].Position.Y:F0} {drawn[i].Size.X:F0}x{drawn[i].Size.Y:F0}");
+            }
+        }
+
+        int rows = Math.Max(1, (cards.Count + 1) / 2);
+        float rowWidth = 2f * cellWidth + ModeGap;
+        float height = rows * cellHeight + (rows - 1) * ModeGap;
+        Rect2 safe = state.Safe;
+        float available = Math.Max(200f, safe.Size.Y - ModeReserved);
+        float scale = Math.Min((safe.Size.X - 80f) / rowWidth, available / height);
+        scale = Math.Max(0.3f, scale);
+        float top = safe.Position.Y + ModeTop + Math.Max(0f, available - height * scale) / 2f;
+
+        SetScale(row, new Vector2(scale, scale), Vector2.Zero);
+        Vector2 target = screen.GetGlobalTransformWithCanvas() * new Vector2(safe.GetCenter().X, top);
+        if (row.GlobalPosition.DistanceSquaredTo(target) > 0.25f) row.GlobalPosition = target;
+
+        for (int i = 0; i < cards.Count; i++)
+        {
+            int line = i / 2, col = i % 2, inLine = Math.Min(2, cards.Count - line * 2);
+            float cellLeft = col * (cellWidth + ModeGap) - (inLine * (cellWidth + ModeGap) - ModeGap) * 0.5f;
+            var place = new Vector2(
+                cellLeft + (cellWidth - drawn[i].Size.X) * 0.5f - drawn[i].Position.X,
+                line * (cellHeight + ModeGap) + (cellHeight - drawn[i].Size.Y) * 0.5f - drawn[i].Position.Y);
+            if (cards[i].Position.DistanceSquaredTo(place) > 0.25f) cards[i].Position = place;
+        }
+    }
+
+    /// <summary>The union of a card's visible texture and nine-patch children, in the card's own units (its drawn box).</summary>
+    private static Rect2 CardDrawnBounds(Control card)
+    {
+        Transform2D inverse = card.GetGlobalTransformWithCanvas().AffineInverse();
+        Rect2? union = null;
+        void Walk(Node node)
+        {
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control || !GodotObject.IsInstanceValid(control) || !control.IsVisibleInTree()) continue;
+                if (control is TextureRect or NinePatchRect)
+                {
+                    Rect2 rect = inverse * control.GetGlobalRect();
+                    union = union is { } current ? current.Merge(rect) : rect;
+                }
+                Walk(control);
+            }
+        }
+        Walk(card);
+        return union is { } bounds && bounds.Size.X >= 1f && bounds.Size.Y >= 1f
+            ? bounds
+            : new Rect2(Vector2.Zero, card.Size);
     }
 
     /// <summary>
