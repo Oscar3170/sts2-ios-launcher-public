@@ -23,9 +23,10 @@ namespace STS2Mobile.GameHost;
 /// A hold (still for <see cref="SelectConfirmMath.HoldSeconds"/>) opens the item's native inspection and never confirms; moving
 /// past <see cref="SelectConfirmMath.ConfirmSlop"/> cancels the confirmation, so a swipe never buys or takes. The release is
 /// read from the window's own touch and mouse events, not the game's release signals, which need a hover that touch does not
-/// always set on the simulator. Every press in portrait also clears the game's record of it (<c>_ignoreMouseRelease</c>,
-/// <c>_currentPressedAction</c>, <c>_isPressed</c>) so the game cannot take the item on its own; those are restored when the
-/// selection goes or portrait is left.
+/// always set on the simulator. Every press in portrait also lets go of the game's record of it through
+/// <see cref="PhoneSwipeRelease"/> (<c>_ignoreMouseRelease</c>, <c>_currentPressedAction</c>, <c>_isPressed</c>), so the game
+/// cannot take the item on its own; the slot's ignore flag is put back when the selection goes, and the game writes the
+/// other two again on the next press.
 /// <para>The selection remembers the item and its current model (a shop entry's card, relic or potion, a card, a relic): a
 /// Courier restock, a reroll or a rebuilt choice swaps the model, which clears the selection instead of confirming a
 /// replacement. Each screen only supplies where its items are, how to read and take one, and how to show its tip.</para>
@@ -40,7 +41,6 @@ internal sealed class PhoneSelectConfirm
     private const string TreasureTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic.NTreasureRoomRelicCollection";
     private const string MerchantSlotTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantSlot";
     private const string CardHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NCardHolder";
-    private const string ClickableTypeName = "MegaCrit.Sts2.Core.Nodes.GodotExtensions.NClickableControl";
     private const string HoverTipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
     private const string HoverTipAlignmentTypeName = "MegaCrit.Sts2.Core.HoverTips.HoverTipAlignment";
     private const string HoverTipTypeName = "MegaCrit.Sts2.Core.HoverTips.IHoverTip";
@@ -145,10 +145,7 @@ internal sealed class PhoneSelectConfirm
     // ---- Reflection into the game ----------------------------------------------------------------------------------------
 
     private readonly Type? _merchantSlotType;
-    private readonly Type? _clickableType;
-    private readonly FieldInfo? _currentPressedAction;
     private readonly FieldInfo? _isHovered;
-    private readonly FieldInfo? _isPressed;
     private readonly FieldInfo? _ignoreMouseRelease;
     private readonly MethodInfo? _slotOnSelected;
     private readonly MethodInfo? _slotClearTip;
@@ -248,11 +245,7 @@ internal sealed class PhoneSelectConfirm
         Assembly sts2 = typeof(NGame).Assembly;
         _merchantSlotType = sts2.GetType(MerchantSlotTypeName);
         Type? cardHolderType = sts2.GetType(CardHolderTypeName);
-        Type? clickableType = sts2.GetType(ClickableTypeName);
-        _clickableType = clickableType;
-        _currentPressedAction = cardHolderType?.GetField("_currentPressedAction", InstAll);
         _isHovered = cardHolderType?.GetField("_isHovered", InstAll);
-        _isPressed = clickableType?.GetField("_isPressed", InstAll);
         _ignoreMouseRelease = _merchantSlotType?.GetField("_ignoreMouseRelease", InstAll);
         _slotOnSelected = _merchantSlotType?.GetMethod("OnSelected", InstAll, Type.EmptyTypes);
         _slotClearTip = _merchantSlotType?.GetMethod("ClearHoverTip", InstAll, Type.EmptyTypes);
@@ -277,7 +270,7 @@ internal sealed class PhoneSelectConfirm
         _chooseCard = new CardChoiceAdapter(this);
         _chooseRelic = new RelicChoiceAdapter(this);
         _treasure = new TreasureAdapter(this);
-        if (_currentPressedAction == null || _isPressed == null || _ignoreMouseRelease == null || _slotOnSelected == null)
+        if (!PhoneSwipeRelease.Shared.Ready || _ignoreMouseRelease == null || _slotOnSelected == null)
         {
             _failed = true;
             GD.PrintErr("Phone select confirm: the game's choice screens changed; one tap takes a card, relic or shop item as in the game.");
@@ -785,7 +778,7 @@ internal sealed class PhoneSelectConfirm
             return GodotObject.IsInstanceValid(hitbox) && hitbox.IsVisibleInTree();
         }
 
-        internal override void Suppress(Control screen, Control item) => Owner._ignoreMouseRelease!.SetValue(item, true);
+        internal override void Suppress(Control screen, Control item) => PhoneSwipeRelease.Shared.ReleaseOne(item);
 
         internal override void Restore(Control screen, Control item)
         {
@@ -1075,13 +1068,10 @@ internal sealed class PhoneSelectConfirm
     }
 
     /// <summary>The pressed card lets go of the press the game would take on: its own release takes it.</summary>
-    internal void ClearCardPress(Control holder) => _currentPressedAction?.SetValue(holder, null);
+    internal void ClearCardPress(Control holder) => PhoneSwipeRelease.Shared.ReleaseOne(holder);
 
     /// <summary>A relic or chest holder lets go of its press, so its own release takes nothing.</summary>
-    internal void ClearPress(Control item)
-    {
-        if (_isPressed != null && _clickableType != null && _clickableType.IsInstanceOfType(item)) _isPressed.SetValue(item, false);
-    }
+    internal void ClearPress(Control item) => PhoneSwipeRelease.Shared.ReleaseOne(item);
 
     internal void ShowCardTip(Control holder)
     {

@@ -20,7 +20,6 @@ internal sealed partial class PortraitBetweenLayout
     public const string RewardsScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen";
     public const string CardRewardTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NCardRewardSelectionScreen";
     public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
-    public const string DeckCardSelectTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NDeckCardSelectScreen";
     public const string MerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantInventory";
     public const string FakeMerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NFakeMerchantInventory";
     public const string MerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom";
@@ -36,25 +35,16 @@ internal sealed partial class PortraitBetweenLayout
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
-        MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName, DeckCardSelectTypeName,
+        MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
         MerchantInventoryTypeName, FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
         BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, TreasureRoomTypeName, AncientDialogueLineTypeName,
         MerchantRoomTypeName, BlitzMerchantRoomTypeName, FakeMerchantRoomTypeName,
         EventRoomTypeName, CombatEventLayoutTypeName,
     };
 
-    // Card grids in portrait: two cards to a row at 1.8, each card 432 units (150 points) wide. The grid's
-    // cards are 240 units with 40 between, so a 540 unit scroll area holds two, 40 units from each side: a selected card grows
-    // to 300 and its cost badge still stays inside; the scrollbar sits in the right margin.
-    private const float GridScrollInsetLeft = 30f;
-    private const float GridScrollInsetRight = 30f;
-    private const float GridScrollbarLeft = -38f;
-    private const float GridScrollbarRight = -8f;
-    // The deck's sort buttons stand in one row above the cards (which start 180 units down the scroll area), 75 units tall.
-    private const float SortRowTop = 98f;
-    private const float SortRowHeight = 75f;
-    private const float SortRowGap = 6f;
-    private const float SortButtonPad = 4f;
+    // Card grids in portrait: three cards to a row, the screen's footer band kept at the bottom. The size arithmetic lives in
+    // PortraitGridMath and the layout in PortraitBetweenLayout.Grid.cs.
+    private const string UpgradeTickboxTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens.NUpgradePreviewTickbox";
 
     // Sizes for a finger. 127 units are 44 points and a font of 32 units is 11 points (PortraitBands).
     private const string HitPadHolderName = PhoneHitArea.HolderName;
@@ -92,7 +82,6 @@ internal sealed partial class PortraitBetweenLayout
     private readonly HashSet<ulong> _cardRewards = new();
     private readonly Dictionary<ulong, List<ulong>> _laidOutRewardHolders = new();
     private readonly HashSet<ulong> _mapFtues = new();
-    private readonly HashSet<ulong> _grids = new();
     private readonly HashSet<ulong> _hitAreaTargets = new();
     private readonly HashSet<ulong> _liftedBanners = new();
     private readonly HashSet<ulong> _shops = new();
@@ -204,10 +193,6 @@ internal sealed partial class PortraitBetweenLayout
                 break;
             case CardGridTypeName:
                 LayoutCardGridPortrait(control, capHeight, canvasHeight, canvasWidth);
-                if (control.GetType().FullName == CardGridTypeName) _grids.Add(control.GetInstanceId());
-                break;
-            case DeckCardSelectTypeName:
-                LayoutShopRemovalPreview(control);
                 break;
             case AncientLayoutTypeName:
                 LayoutAncientPortrait(control, capHeight, canvasWidth, canvasHeight);
@@ -261,6 +246,8 @@ internal sealed partial class PortraitBetweenLayout
         if (typeName == EventOptionTypeName) return ApplyEventOption(control);
         if (typeName == EventLayoutTypeName) return HoldEventArtUntilFramed(control);
         if (typeName == TreasureRoomTypeName) return BeginTreasureRoom(control);
+        // A View Upgrades tickbox joins the box this file keeps in the deck and selection screens' footers.
+        if (typeName == UpgradeTickboxTypeName) return TrackViewUpgradesBox(control);
         return false;
     }
 
@@ -287,9 +274,12 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _cardRewards)
             if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) && screen.IsInsideTree())
                 UpdateCardRewardPortrait(screen, canvas, capHeight);
-        foreach (ulong id in _grids)
+        foreach (ulong id in _gridStates.Keys)
             if (GodotObject.InstanceFromId(id) is Control grid && GodotObject.IsInstanceValid(grid) && grid.IsVisibleInTree())
-                KeepGridColumnsPortrait(grid);
+                KeepGridPortrait(grid, capHeight, canvas);
+        foreach ((ulong id, PortraitGridScreen screen) in _viewUpgrades)
+            if (GodotObject.InstanceFromId(id) is Control box && GodotObject.IsInstanceValid(box) && box.IsVisibleInTree())
+                UpdateViewUpgradesBox(box, screen, canvas);
         foreach (ulong id in _mapFtues)
             if (GodotObject.InstanceFromId(id) is Control ftue && GodotObject.IsInstanceValid(ftue) && ftue.IsVisibleInTree())
                 KeepMapFtueOnScreen(ftue, canvas);
@@ -318,6 +308,7 @@ internal sealed partial class PortraitBetweenLayout
                 RestoreCardRewardLandscape(screen);
         _laidOutRewardHolders.Clear();
         RestoreEventsLandscape();
+        RestoreGridsLandscape();
 
         // The loot window's entrance and the ribbons' slides are ours while portrait; kill them before the snapshots put the
         // game's own layout back.
@@ -358,7 +349,6 @@ internal sealed partial class PortraitBetweenLayout
         _hitAreaTargets.Clear();
         RestoreBanners(_liftedBanners);
         RestoreShopRoomsLandscape();
-        RestoreShopPreviewButtons();
         foreach (ulong id in _shops)
             if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop))
                 RestoreShopLandscape(shop);
@@ -410,7 +400,7 @@ internal sealed partial class PortraitBetweenLayout
         _proceedButtons.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _cardRewards.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _mapFtues.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _grids.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        PruneGridInstances();
         foreach (ulong id in _laidOutRewardHolders.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList())
             _laidOutRewardHolders.Remove(id);
         _hitAreaTargets.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -867,106 +857,6 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control banner && GodotObject.IsInstanceValid(banner) && banner.HasMethod("OnWindowChange"))
                 banner.Call("OnWindowChange");
         lifted.Clear();
-    }
-
-    // ---- Card grids: deck, piles, card selection --------------------------------------------------------------------------
-
-    private void LayoutCardGridPortrait(Control grid, float capHeight, float canvasHeight, float canvasWidth)
-    {
-        if (grid.GetType().FullName != CardGridTypeName) return;
-        float top = capHeight + PortraitBands.TopBarHeight + 8f;
-        PortraitControlSnapshot snap = Capture(grid, captureVisible: false);
-        float parentTop = grid.GetParent() is Control parent ? parent.GlobalPosition.Y : 0f;
-        float localTop = Math.Max(top - parentTop, snap.InitialOffsetTop);
-        grid.AnchorLeft = 0f;
-        grid.AnchorTop = 0f;
-        grid.AnchorRight = 0f;
-        grid.AnchorBottom = 0f;
-        grid.PivotOffset = Vector2.Zero;
-        grid.Scale = new Vector2(GridScale, GridScale);
-        grid.OffsetLeft = 0f;
-        grid.OffsetTop = localTop;
-        grid.OffsetRight = canvasWidth / GridScale;
-        grid.OffsetBottom = localTop + (canvasHeight - parentTop - localTop) / GridScale;
-
-        // The deck view instances the grid with editable children, so the unique name does not resolve from the grid there.
-        if (GridScroll(grid) is { } scroll)
-        {
-            Capture(scroll, captureVisible: false);
-            scroll.OffsetLeft = GridScrollInsetLeft;
-            scroll.OffsetRight = -GridScrollInsetRight;
-            if (scroll.GetNodeOrNull<Control>("SortingOptions") is { } sorting)
-                LayoutSortRowPortrait(sorting, canvasWidth / GridScale - GridScrollInsetLeft - GridScrollInsetRight);
-        }
-        if (grid.GetNodeOrNull<Control>("Scrollbar") is { } scrollbar)
-        {
-            Capture(scrollbar, captureVisible: false);
-            scrollbar.OffsetLeft = GridScrollbarLeft;
-            scrollbar.OffsetRight = GridScrollbarRight;
-        }
-    }
-
-    /// <summary>
-    /// The deck's four sort buttons (Obtained, Card Type, Cost, A - Z) are 250 x 42 units with 22 unit text, 50 apart: at the
-    /// grid's portrait scale they would be 1150 units wide, so the game's row was shrunk to 0.66 (11.6 points tall). In portrait
-    /// the row is the scroll area's width and 75 units tall (47 points at 1.8, its text 13.8 points), each button as wide as its
-    /// own text and arrow need and the spare width shared out; if the texts do not fit, their font is made smaller to fit.
-    /// </summary>
-    private void LayoutSortRowPortrait(Control sorting, float width)
-    {
-        Capture(sorting, captureVisible: false);
-        sorting.Scale = Vector2.One;
-        sorting.PivotOffset = Vector2.Zero;
-        sorting.OffsetLeft = 0f;
-        sorting.OffsetRight = 0f;
-        sorting.OffsetTop = SortRowTop;
-        sorting.OffsetBottom = SortRowTop + SortRowHeight;
-        if (sorting.GetNodeOrNull<Control>("HBoxContainer") is not { } row) return;
-        Capture(row, captureVisible: false);
-        row.OffsetTop = -SortRowHeight / 2f;
-        row.OffsetBottom = SortRowHeight / 2f;
-        row.AddThemeConstantOverride("separation", (int)SortRowGap);
-
-        List<Control> buttons = row.GetChildren().OfType<Control>().Where(b => b.Visible).ToList();
-        if (buttons.Count == 0) return;
-        // A button is its text, 12 units, a 36 unit arrow and 8 units of inset (deck_view_sort_button.tscn), plus some padding.
-        float Need(Control button, int font)
-        {
-            if (button.GetNodeOrNull<Label>("%Label") is not { } label) return 120f;
-            Font? face = label.GetThemeFont("font");
-            float text = face?.GetStringSize(label.Text, HorizontalAlignment.Left, -1, font).X ?? label.Text.Length * font * 0.55f;
-            return text + 12f + 36f + 8f + SortButtonPad;
-        }
-        float room = width - SortRowGap * (buttons.Count - 1);
-        int gameFont = buttons[0].GetNodeOrNull<Label>("%Label") is { } first ? first.GetThemeFontSize("font_size") : 22;
-        if (_labelFontSizes.TryGetValue(buttons[0].GetNodeOrNull<Label>("%Label")?.GetInstanceId() ?? 0, out (bool Had, int Size) kept))
-            gameFont = kept.Size;
-        int fontSize = gameFont;
-        while (fontSize > 14 && buttons.Sum(b => Need(b, fontSize)) > room) fontSize--;
-        float spare = Math.Max(0f, room - buttons.Sum(b => Need(b, fontSize))) / buttons.Count;
-        foreach (Control button in buttons)
-        {
-            Capture(button, captureVisible: false);
-            button.CustomMinimumSize = new Vector2(MathF.Floor(Need(button, fontSize) + spare), SortRowHeight);
-            if (button.GetNodeOrNull<Label>("%Label") is { } label && fontSize != gameFont) SetLabelFontSize(label, fontSize);
-        }
-        GD.Print($"Portrait between layout: deck sort row {buttons.Count} buttons in {width:F0} units, text {fontSize}.");
-    }
-
-    private static Control? GridScroll(Control grid) =>
-        grid.GetNodeOrNull<Control>("%ScrollContainer") ?? grid.GetNodeOrNull<Control>("ScrollContainer");
-
-    private static void KeepGridColumnsPortrait(Control grid)
-    {
-        // The grid sizes its scroll container itself after laying out cards, which can put back the old width. Columns follow
-        // that width, so hold the portrait width and ask the grid to lay out again when it drifts.
-        if (GridScroll(grid) is not { } scroll) return;
-        float target = grid.Size.X - GridScrollInsetLeft - GridScrollInsetRight;
-        if (Math.Abs(scroll.Size.X - target) < 1f) return;
-        scroll.OffsetLeft = GridScrollInsetLeft;
-        scroll.OffsetRight = -GridScrollInsetRight;
-        scroll.Size = new Vector2(target, scroll.Size.Y);
-        grid.GetType().GetField("_needsReinit", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(grid, true);
     }
 
     // ---- Map tutorial tip ------------------------------------------------------------------------------------------------

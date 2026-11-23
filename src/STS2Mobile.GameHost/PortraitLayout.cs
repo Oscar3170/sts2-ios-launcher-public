@@ -90,6 +90,7 @@ internal sealed class PortraitLayout
     private readonly HashSet<ulong> _wiredMenuLabels = new();
     private readonly PortraitCombatLayout _combat = new();
     private readonly PortraitBetweenLayout _between = new();
+    private readonly PortraitSelectionPreview _previews = new();
     private readonly PortraitScreenFit _fit = new();
     private readonly PortraitMenuLayout _menus = new();
     private readonly PortraitOverlayLayout _overlays = new();
@@ -222,7 +223,8 @@ internal sealed class PortraitLayout
         // The combat-rules FTUE is the one node worth searching the scene tree for again; the combat layout remembers it.
         _combat.NoteNodeAdded(fullName);
         if (fullName is TopBarTypeName or RelicInventoryTypeName or EarlyAccessDisclaimerTypeName or PortraitCombatLayout.CombatRoomTypeName ||
-            (fullName != null && (PortraitBetweenLayout.WatchedTypeNames.Contains(fullName) || PortraitScreenFit.Handles(fullName) ||
+            (fullName != null && (PortraitBetweenLayout.WatchedTypeNames.Contains(fullName) ||
+             PortraitSelectionPreview.WatchedTypeNames.Contains(fullName) || PortraitScreenFit.Handles(fullName) ||
              PortraitMenuLayout.WatchedTypeNames.Contains(fullName) || PortraitOverlayLayout.WatchedTypeNames.Contains(fullName))))
             QueueApply();
     }
@@ -234,6 +236,7 @@ internal sealed class PortraitLayout
         _needsRestore = true;
         float capHeight = ComputeCapHeight(_tree.Root);
         _combat.OnProcessFrame(_tree, capHeight);
+        _previews.OnProcessFrame(_tree.Root, capHeight);
         _between.OnProcessFrame(_tree.Root, capHeight);
         _fit.OnProcessFrame(_tree.Root, capHeight);
         _menus.OnProcessFrame(_tree.Root, capHeight);
@@ -301,6 +304,8 @@ internal sealed class PortraitLayout
                 }
                 else if (typeName == EarlyAccessDisclaimerTypeName) LayoutEarlyAccessPortrait(control);
                 else if (typeName == PortraitCombatLayout.CombatRoomTypeName) _combat.ApplyRoomImmediate(control, capHeight, canvasHeight);
+                else if (typeName != null && PortraitSelectionPreview.WatchedTypeNames.Contains(typeName))
+                    _previews.ApplyNode(control, typeName, capHeight, canvas);
                 else if (typeName != null && PortraitBetweenLayout.WatchedTypeNames.Contains(typeName))
                     _between.ApplyNode(control, typeName, capHeight, canvasHeight, _tree.Root.GetVisibleRect().Size.X);
                 else if (typeName != null && PortraitScreenFit.Handles(typeName))
@@ -329,6 +334,7 @@ internal sealed class PortraitLayout
     private void RestoreLandscape(Node root)
     {
         _combat.RestoreLandscape(root);
+        _previews.RestoreLandscape();
         _between.RestoreLandscape();
         _fit.RestoreLandscape();
         _menus.RestoreLandscape();
@@ -1673,6 +1679,7 @@ internal sealed class PortraitLayout
             if (!GodotObject.IsInstanceIdValid(id) || !GodotObject.IsInstanceValid(state.Clip)) dead.Add(id);
         foreach (ulong id in dead) _relicClips.Remove(id);
         _combat.PruneDead();
+        _previews.PruneDead();
         _between.PruneDead();
         _fit.PruneDead();
         _menus.PruneDead();

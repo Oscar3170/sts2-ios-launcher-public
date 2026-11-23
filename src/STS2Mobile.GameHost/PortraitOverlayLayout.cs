@@ -192,7 +192,9 @@ internal sealed class PortraitOverlayLayout
             _ftues.Add(control.GetInstanceId());
         else if (type.FullName == PeekButtonTypeName)
             _peekButtons.Add(control.GetInstanceId());
-        else if (control.Name == "Cards" && control.GetParent() is Control parent && parent.Name.ToString().Contains("PreviewContainer", StringComparison.Ordinal))
+        else if (control.Name == "Cards" && control.GetParent() is Control parent &&
+                 parent.Name.ToString().Contains("PreviewContainer", StringComparison.Ordinal) &&
+                 !PortraitSelectionPreview.Owns(control))
             _previewRows.Add(control.GetInstanceId());
         else
             TrackChoice(control, type.FullName);
@@ -376,9 +378,6 @@ internal sealed class PortraitOverlayLayout
     private const float PotionPopupGap = 12f;
     private const float PotionPopupMaxScale = 1.6f;
     private const float InspectTickboxRaise = 10f;
-    // The View Upgrades tickbox of the deck and the deck's select screens: its bottom stands this far above the screen's bottom
-    // edge, clear of the screen's bottom text.
-    private const float ViewUpgradesBottom = 70f;
 
     private sealed class ChoiceButton(PortraitControlSnapshot snapshot, Vector2 minSize, Vector2 pivot)
     {
@@ -402,7 +401,6 @@ internal sealed class PortraitOverlayLayout
     private readonly HashSet<ulong> _potionPopups = new();
     private readonly Dictionary<ulong, (Vector2 Position, Vector2 Scale, bool TopLevel)> _fittedPopups = new();
     private readonly HashSet<ulong> _inspectTickboxes = new();
-    private readonly HashSet<ulong> _viewUpgrades = new();
     private readonly HashSet<ulong> _liftedChoiceBanners = new();
     private readonly HashSet<ulong> _gridConfirms = new();
     private readonly Dictionary<ulong, float> _confirmPads = new();
@@ -430,13 +428,15 @@ internal sealed class PortraitOverlayLayout
                 _potionPopups.Add(id);
                 return;
             case UpgradeTickboxTypeName:
+                // The deck and deck-selection screens' View Upgrades box belongs to the card grid layout (PortraitBetweenLayout).
                 if (control.GetParent()?.GetType().FullName == InspectCardScreenTypeName) _inspectTickboxes.Add(id);
-                else if (ViewUpgradesBox(control) is { } box) _viewUpgrades.Add(box.GetInstanceId());
                 return;
             case ConfirmButtonTypeName:
-                // The card selection screens' own confirm, and the one in their preview panels.
-                if (control.GetParent() is { } holder && (holder.GetType().Namespace == CardSelectionNamespace ||
-                        holder.GetParent()?.GetType().Namespace == CardSelectionNamespace))
+                // The card selection screens' own confirm, and the one in their preview panels. The deck's upgrade, enchant,
+                // transform and deck-select screens place and draw theirs themselves (PortraitSelectionPreview).
+                if (!PortraitSelectionPreview.Owns(control) && control.GetParent() is { } holder &&
+                    (holder.GetType().Namespace == CardSelectionNamespace ||
+                     holder.GetParent()?.GetType().Namespace == CardSelectionNamespace))
                     _gridConfirms.Add(id);
                 return;
             default:
@@ -472,8 +472,6 @@ internal sealed class PortraitOverlayLayout
                 if (Live(id) is { } popup) FitPotionPopup(popup, canvas);
             foreach (ulong id in _inspectTickboxes)
                 if (Live(id) is { } tickbox) GrowInspectTickbox(tickbox);
-            foreach (ulong id in _viewUpgrades)
-                if (Live(id) is { } box) GrowViewUpgrades(box);
             foreach (ulong id in _gridConfirms)
                 if (Live(id) is { } confirm) GrowGridConfirm(confirm);
         }
@@ -1017,40 +1015,6 @@ internal sealed class PortraitOverlayLayout
         if (_logged.Add(tickbox.GetInstanceId())) GD.Print($"Portrait overlay: the inspect screen's upgrade tickbox is {height:F0} tall.");
     }
 
-    /// <summary>The "ViewUpgrades" box a View Upgrades tickbox stands in (the deck view and the deck's select screens).</summary>
-    private static Control? ViewUpgradesBox(Control tickbox)
-    {
-        for (Node? node = tickbox.GetParent(); node != null; node = node.GetParent())
-            if (node is Control { Name: var name } box && name == "ViewUpgrades") return box;
-        return null;
-    }
-
-    /// <summary>
-    /// The View Upgrades tickbox in the bottom left corner of the deck and its select screens is a 64 unit tall box drawn at 0.75
-    /// (17 points, its text 7). In portrait the box is drawn 44 points tall from its bottom left corner (its text about 18
-    /// points), and stands a little higher so the screen's bottom text stays clear under it.
-    /// </summary>
-    private void GrowViewUpgrades(Control box)
-    {
-        if (box.Size.Y < 1f) return;
-        PortraitControlSnapshot snap = CaptureChoice(box);
-        float parentScale = box.GetParent() is Control parent ? Math.Max(parent.GetGlobalTransformWithCanvas().Scale.Y, 0.01f) : 1f;
-        float scale = PortraitBands.MinTarget / (box.Size.Y * parentScale);
-        if (scale <= snap.InitialScale.Y) return;
-        var target = new Vector2(scale, scale);
-        var pivot = new Vector2(0f, box.Size.Y);
-        if (box.Scale != target) box.Scale = target;
-        if (box.PivotOffset != pivot) box.PivotOffset = pivot;
-        float bottom = -ViewUpgradesBottom;
-        float top = bottom - (snap.InitialOffsetBottom - snap.InitialOffsetTop);
-        if (Math.Abs(box.OffsetBottom - bottom) > 0.25f || Math.Abs(box.OffsetTop - top) > 0.25f)
-        {
-            box.OffsetTop = top;
-            box.OffsetBottom = bottom;
-        }
-        if (_logged.Add(box.GetInstanceId())) GD.Print($"Portrait overlay: View Upgrades drawn at {scale:F2} in {box.GetParent()?.GetType().Name}.");
-    }
-
     /// <summary>
     /// The confirm button of the card selection screens is 38 points tall and slides in and out by its position, which the game
     /// works out from its size: its touch area grows above and below it instead (<see cref="PhoneHitArea"/>).
@@ -1108,7 +1072,6 @@ internal sealed class PortraitOverlayLayout
         _choiceSnapshots.RemoveWhere(Dead);
         _potionPopups.RemoveWhere(Dead);
         _inspectTickboxes.RemoveWhere(Dead);
-        _viewUpgrades.RemoveWhere(Dead);
         _liftedChoiceBanners.RemoveWhere(Dead);
         _gridConfirms.RemoveWhere(Dead);
         foreach (ulong id in _choiceButtons.Keys.Where(Dead).ToList()) _choiceButtons.Remove(id);

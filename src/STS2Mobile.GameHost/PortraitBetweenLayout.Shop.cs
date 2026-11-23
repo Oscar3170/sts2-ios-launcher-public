@@ -51,7 +51,6 @@ internal sealed partial class PortraitBetweenLayout
     private readonly Dictionary<ulong, ShopState> _shopStates = new();
     private readonly Dictionary<ulong, ShopRoomState> _shopRoomStates = new();
     private readonly Dictionary<ulong, Texture2D> _rotatedCloths = new();
-    private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _previewButtonHomes = new();
     private static Shader? _shopBlitzFadeShader;
 
     private sealed class ShopState
@@ -999,86 +998,6 @@ internal sealed partial class PortraitBetweenLayout
             _shopRoomStates.Remove(id);
         foreach (ulong id in _rotatedCloths.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList())
             _rotatedCloths.Remove(id);
-        foreach (ulong id in _previewButtonHomes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList())
-            _previewButtonHomes.Remove(id);
-    }
-
-    /// <summary>
-    /// The deck select's card-removal preview: its Confirm and Cancel are 110 units tall natively and the Confirm is laid
-    /// out for a desktop edge (its right side runs past the portrait canvas). Both grow to the phone's smallest touch
-    /// target and move inside the canvas through their own show/hide positions, so the game's slide drives them there.
-    /// </summary>
-    private void LayoutShopRemovalPreview(Control screen)
-    {
-        if (screen.GetNodeOrNull<Control>("%PreviewContainer") is not { } preview) return;
-        float canvasWidth = screen.GetViewport().GetVisibleRect().Size.X;
-        if (preview.GetNodeOrNull<Control>("%PreviewConfirm") is { } confirm)
-        {
-            GrowShopButton(confirm);
-            PlacePreviewButton(confirm, canvasWidth - PreviewSideMargin - confirm.Size.X);
-        }
-        if (preview.GetNodeOrNull<Control>("%PreviewCancel") is { } cancel)
-        {
-            GrowShopButton(cancel);
-            PlacePreviewButton(cancel, PreviewSideMargin);
-        }
-    }
-
-    private const float PreviewSideMargin = 24f;
-
-    private void GrowShopButton(Control button)
-    {
-        if (!GodotObject.IsInstanceValid(button) || button.Size.Y >= PortraitBands.MinTarget) return;
-        Capture(button, captureVisible: false);
-        float grow = PortraitBands.MinTarget - button.Size.Y;
-        button.Size = new Vector2(button.Size.X, PortraitBands.MinTarget);
-        button.Position -= new Vector2(0f, grow / 2f);
-    }
-
-    /// <summary>
-    /// Moves a button to <paramref name="left"/> on the canvas by rewriting the show/hide point the game animates to.
-    /// NBackButton animates its <c>global_position</c>; NConfirmButton animates its parent-local <c>position</c>, so the
-    /// point is converted for the latter. The vertical point is kept.
-    /// </summary>
-    private void PlacePreviewButton(Control button, float left)
-    {
-        FieldInfo? showField = FindPrivateField(button.GetType(), "_showPos");
-        if (showField?.GetValue(button) is not Vector2 show) return;
-        FieldInfo? hideField = FindPrivateField(button.GetType(), "_hidePos");
-        Vector2 hide = hideField?.GetValue(button) is Vector2 hidden ? hidden : show;
-        ulong id = button.GetInstanceId();
-        if (!_previewButtonHomes.TryGetValue(id, out (Vector2 Show, Vector2 Hide) home))
-            _previewButtonHomes[id] = home = (show, hide);
-        bool global = button.GetType().Name.Contains("BackButton", StringComparison.Ordinal);
-        Vector2 parent = button.GetParent() is Control parentControl ? parentControl.GlobalPosition
-            : button.GetParent() is Node2D parentNode ? parentNode.GlobalPosition
-            : Vector2.Zero;
-        var target = new Vector2(global ? left : left - parent.X, home.Show.Y);
-        showField.SetValue(button, target);
-        if (hideField != null) hideField.SetValue(button, target + (home.Hide - home.Show));
-        if (FindPrivateField(button.GetType(), "_moveTween")?.GetValue(button) is Tween move &&
-            GodotObject.IsInstanceValid(move) && move.IsRunning())
-            return;
-        if (global) button.GlobalPosition = target;
-        else button.Position = target;
-    }
-
-    private void RestoreShopPreviewButtons()
-    {
-        foreach ((ulong id, (Vector2 Show, Vector2 Hide) home) in _previewButtonHomes)
-        {
-            if (GodotObject.InstanceFromId(id) is not Control button || !GodotObject.IsInstanceValid(button)) continue;
-            if (FindPrivateField(button.GetType(), "_showPos") is { } showField) showField.SetValue(button, home.Show);
-            if (FindPrivateField(button.GetType(), "_hidePos") is { } hideField) hideField.SetValue(button, home.Hide);
-            if (FindPrivateField(button.GetType(), "_moveTween")?.GetValue(button) is Tween move &&
-                GodotObject.IsInstanceValid(move))
-                move.Kill();
-            bool enabled = button.GetType().GetProperty("IsEnabled", ShopInstance)?.GetValue(button) is true;
-            Vector2 target = enabled ? home.Show : home.Hide;
-            if (button.GetType().Name.Contains("BackButton", StringComparison.Ordinal)) button.GlobalPosition = target;
-            else button.Position = target;
-        }
-        _previewButtonHomes.Clear();
     }
 
     // ---- The room behind the shop --------------------------------------------------------------------------------------

@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes;
@@ -29,7 +28,6 @@ internal sealed class PhoneHeaderSwipe
     private const float WheelStep = 160f;
 
     private readonly Type? _clickableType;
-    private readonly FieldInfo? _clickablePressed;
     private readonly Type? _tipSetType;
     private readonly FieldInfo? _tipBlocked;
     private readonly MethodInfo? _clearTips;
@@ -79,7 +77,6 @@ internal sealed class PhoneHeaderSwipe
         {
             Assembly game = typeof(NGame).Assembly;
             _clickableType = game.GetType(ClickableTypeName);
-            _clickablePressed = _clickableType?.GetField("_isPressed", InstAll);
             _tipSetType = game.GetType(TipSetTypeName);
             _tipBlocked = _tipSetType?.GetField("shouldBlockHoverTips", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             _clearTips = _tipSetType?.GetMethod("Clear", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
@@ -216,8 +213,9 @@ internal sealed class PhoneHeaderSwipe
             Vector2 moved = ToCanvas(point) - _start;
             if (!_swiping)
             {
-                float along = Horizontal(row) ? moved.X : moved.Y;
-                if (MathF.Abs(along) < StartDistance || MathF.Abs(along) < MathF.Abs(Horizontal(row) ? moved.Y : moved.X) * 1.2f)
+                bool horizontal = Horizontal(row);
+                if (!SwipeMath.Along(horizontal ? moved.X : moved.Y, horizontal ? moved.Y : moved.X,
+                        StartDistance, SwipeMath.Dominance))
                     return;
                 _swiping = true;
                 ReleasePresses(row);
@@ -341,17 +339,5 @@ internal sealed class PhoneHeaderSwipe
     }
 
     /// <summary>Lets go of every press inside the row, so the potion or relic under the finger does nothing when it lifts.</summary>
-    private void ReleasePresses(Node node)
-    {
-        if (_clickableType == null || _clickablePressed == null) return;
-        var stack = new Stack<Node>();
-        stack.Push(node);
-        while (stack.Count > 0)
-        {
-            Node current = stack.Pop();
-            if (_clickableType.IsInstanceOfType(current) && _clickablePressed.GetValue(current) is true)
-                _clickablePressed.SetValue(current, false);
-            foreach (Node child in current.GetChildren()) stack.Push(child);
-        }
-    }
+    private void ReleasePresses(Node node) => PhoneSwipeRelease.Shared.Release(node);
 }

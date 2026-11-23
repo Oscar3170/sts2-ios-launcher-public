@@ -18,14 +18,11 @@ namespace STS2Mobile.GameHost;
 internal sealed class PhoneDragScroll
 {
     private const BindingFlags InstAll = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-    private const string ClickableTypeName = "MegaCrit.Sts2.Core.Nodes.GodotExtensions.NClickableControl";
     private const string TipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
 
     /// <summary>How far one wheel notch scrolls a region; the desktop host's mouse scrolls the same regions.</summary>
     private const float WheelStep = 160f;
 
-    private readonly Type? _clickableType;
-    private readonly FieldInfo? _clickablePressed;
     private readonly FieldInfo? _tipBlocked;
     private readonly MethodInfo? _clearTips;
     private readonly List<ulong> _targets = new(4);
@@ -43,8 +40,6 @@ internal sealed class PhoneDragScroll
         try
         {
             Assembly game = typeof(NGame).Assembly;
-            _clickableType = game.GetType(ClickableTypeName);
-            _clickablePressed = _clickableType?.GetField("_isPressed", InstAll);
             Type? tipSet = game.GetType(TipSetTypeName);
             _tipBlocked = tipSet?.GetField("shouldBlockHoverTips", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             _clearTips = tipSet?.GetMethod("Clear", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
@@ -159,10 +154,10 @@ internal sealed class PhoneDragScroll
         float distance = _startY - point.Y;
         if (!_dragging)
         {
-            if (MathF.Abs(distance) < PortraitEventMath.DragThreshold) return;
+            if (!SwipeMath.Vertical(distance, PortraitEventMath.DragThreshold)) return;
             _dragging = true;
             ClearTips();
-            ReleasePresses();
+            PhoneSwipeRelease.Shared.Release(PressedLayout());
         }
         if (Scrolls(region))
         {
@@ -175,7 +170,7 @@ internal sealed class PhoneDragScroll
 
     private void End()
     {
-        if (_dragging) ReleasePresses();
+        if (_dragging) PhoneSwipeRelease.Shared.Release(PressedLayout());
         _down = false;
         _dragging = false;
         _active = 0;
@@ -218,19 +213,10 @@ internal sealed class PhoneDragScroll
         _clearTips?.Invoke(null, null);
     }
 
-    /// <summary>Lets go of every press in the layout, so the choice under the finger does nothing when it lifts.</summary>
-    private void ReleasePresses()
+    /// <summary>The layout whose pressed choices a drag lets go of, or null when it has gone.</summary>
+    private Node? PressedLayout()
     {
-        if (_clickableType == null || _clickablePressed == null || _layout == 0) return;
-        if (GodotObject.InstanceFromId(_layout) is not Node layout || !GodotObject.IsInstanceValid(layout)) return;
-        var stack = new Stack<Node>();
-        stack.Push(layout);
-        while (stack.Count > 0)
-        {
-            Node current = stack.Pop();
-            if (_clickableType.IsInstanceOfType(current) && _clickablePressed.GetValue(current) is true)
-                _clickablePressed.SetValue(current, false);
-            foreach (Node child in current.GetChildren()) stack.Push(child);
-        }
+        if (_layout == 0) return null;
+        return GodotObject.InstanceFromId(_layout) is Node layout && GodotObject.IsInstanceValid(layout) ? layout : null;
     }
 }
