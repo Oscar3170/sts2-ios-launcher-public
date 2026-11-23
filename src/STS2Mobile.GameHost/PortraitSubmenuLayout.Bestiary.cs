@@ -118,7 +118,7 @@ internal static partial class PortraitSubmenuLayout
         bool sliding = BestiaryTweenRunning(screen, "_tween");
         float panelBottom = modeTop - Gap;
         LayoutBestiaryPanel(screen.GetNodeOrNull<Control>("StatsContainer"), lowerTop, panelBottom, sliding, capture);
-        LayoutBestiaryPanel(screen.GetNodeOrNull<Control>("MoveContainer"), lowerTop, panelBottom, sliding, capture);
+        LayoutBestiaryPanel(screen.GetNodeOrNull<Control>("MoveContainer"), lowerTop, panelBottom, sliding, capture, fixedScale: true);
         if (screen.GetNodeOrNull<Control>("MoveContainer") is { } moves)
             GrowBestiaryMoves(screen, moves, lowerTop, panelBottom, capture);
 
@@ -193,16 +193,26 @@ internal static partial class PortraitSubmenuLayout
     /// <summary>
     /// The stats or moves panel at the top of the left column, its content's height tall, drawn 1.1 times as large or
     /// smaller when its widest line (a long move name) or its height (many moves) would leave the column or reach the back
-    /// button.
+    /// button. The moves panel keeps the 1.1 scale once its list scrolls in place: its height is then the room the mode
+    /// leaves (<paramref name="fixedScale"/>), so the buttons stay 44 points and the list scrolls inside.
     /// </summary>
-    private static void LayoutBestiaryPanel(Control? panel, float top, float bottom, bool sliding, Action<Control> capture)
+    private static void LayoutBestiaryPanel(Control? panel, float top, float bottom, bool sliding, Action<Control> capture,
+        bool fixedScale = false)
     {
         if (panel == null) return;
         float width = BestiaryLeftColumn - 2f * BestiaryInset;
         Vector2 min = panel.GetCombinedMinimumSize();
+        float room = Math.Max(100f, bottom - top);
+        if (fixedScale && panel.CustomMinimumSize.Y >= 100f)
+        {
+            float keep = Math.Min(room / BestiaryPanelScale, panel.CustomMinimumSize.Y);
+            PlaceBestiarySliding(panel, BestiaryPanelRestX, BestiaryInset, top, width / BestiaryPanelScale, keep,
+                BestiaryPanelScale, sliding, capture);
+            return;
+        }
         float scale = BestiaryPanelScale;
         if (min.X > 0f) scale = Math.Min(scale, width / min.X);
-        if (min.Y > 0f) scale = Math.Min(scale, Math.Max(100f, bottom - top) / min.Y);
+        if (min.Y > 0f) scale = Math.Min(scale, room / min.Y);
         // The pivot that keeps the game's x needs a scale other than 1.
         if (MathF.Abs(1f - scale) < 0.02f) scale = 0.98f;
         PlaceBestiarySliding(panel, BestiaryPanelRestX, BestiaryInset, top, width / scale, min.Y, scale, sliding, capture);

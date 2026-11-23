@@ -538,9 +538,15 @@ internal sealed class PortraitSettingsLayout
         if (!_dragging)
         {
             if (!SwipeMath.Vertical(moved, DragDistance)) return;
-            // The game's own drag (an emulated mouse press on the background) already owns this gesture.
-            if (_kind == DragKind.Scroll && _scrollDragging?.GetValue(target) is true) { Reset(); return; }
-            if (_kind == DragKind.List && _listDragging?.GetValue(target) is true) { Reset(); return; }
+            // A list's native drag flag is set by the emulated mouse press, but its motion path does not scroll a touch drag
+            // inside the list: clear the flag and drive the list's own drag target from here instead of deferring to it.
+            if (_kind == DragKind.Scroll && _scrollDragging?.GetValue(target) is true)
+            {
+                Note("the game's own rows drag owns this gesture", point);
+                Reset();
+                return;
+            }
+            if (_kind == DragKind.List) _listDragging?.SetValue(target, false);
             _dragging = true;
             int released = Release();
             if (_kind == DragKind.Scroll) _scrollDragging?.SetValue(target, true);
@@ -566,9 +572,11 @@ internal sealed class PortraitSettingsLayout
     {
         if (_dragging)
         {
-            if (_kind == DragKind.Scroll && _target != 0 && GodotObject.InstanceFromId(_target) is Control target &&
-                GodotObject.IsInstanceValid(target))
-                _scrollDragging?.SetValue(target, false);
+            if (_target != 0 && GodotObject.InstanceFromId(_target) is Control target && GodotObject.IsInstanceValid(target))
+            {
+                if (_kind == DragKind.Scroll) _scrollDragging?.SetValue(target, false);
+                else if (_kind == DragKind.List) _listDragging?.SetValue(target, false);
+            }
             Release();
             // The finger lift is the swipe's, not a tap: the list item or tickbox it ends over must not act on it, even
             // when press, drag and release arrive in one frame.

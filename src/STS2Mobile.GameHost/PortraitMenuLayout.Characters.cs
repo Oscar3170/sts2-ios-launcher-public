@@ -140,7 +140,7 @@ internal sealed partial class PortraitMenuLayout
         if (screen.GetNodeOrNull<Control>("%AscensionPanel") is not { } ascension) return gridTop;
         Capture(ascension);
         Vector2 size = ascension.Size;
-        ascension.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+        ascension.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.KeepSize);
         ascension.Size = size;
         SetScale(ascension, new Vector2(AscensionScale, AscensionScale), Vector2.Zero);
 
@@ -177,7 +177,7 @@ internal sealed partial class PortraitMenuLayout
         if (screen.GetNodeOrNull<Control>("InfoPanel") is not { } info) return;
         Control plate = info.GetNodeOrNull<Control>("NinePatchRect") ?? info;
         Capture(info);
-        info.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+        info.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.KeepSize);
         info.PivotOffset = Vector2.Zero;
         var size = new Vector2(InfoWidth, blitz ? InfoBlitzHeight : InfoHeight);
         if (info.Size.DistanceSquaredTo(size) > 0.25f) info.Size = size;
@@ -224,13 +224,14 @@ internal sealed partial class PortraitMenuLayout
             foreach ((Control node, Rect2 rect, Vector2 pivot) in rectangles)
             {
                 Capture(node);
-                node.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+                node.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.KeepSize);
                 node.Position = rect.Position * ConfirmScale;
                 node.Size = rect.Size * ConfirmScale;
                 node.PivotOffset = pivot * ConfirmScale;
             }
         }
-        confirm.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
+        // KeepSize: the default preset mode shrinks the box to its minimum size, which is 0x0 for this button.
+        confirm.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft, Control.LayoutPresetMode.KeepSize);
         Vector2 show = safe.End - confirm.Size - new Vector2(ConfirmRight, ConfirmBottom);
         var hide = new Vector2(screen.Size.X + 80f, show.Y);
         if (GetField(confirm, "_showPos") is not Vector2 shown || shown.DistanceSquaredTo(show) > 0.5f)

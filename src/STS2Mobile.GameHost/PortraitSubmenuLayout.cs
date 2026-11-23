@@ -272,38 +272,6 @@ internal static partial class PortraitSubmenuLayout
         Walk(root);
     }
 
-    /// <summary>
-    /// Gives the rows of a scrolling list room for their pads: the containers that hold matched controls get this separation,
-    /// so the pads can grow to a finger's target even where the rows themselves cannot grow.
-    /// </summary>
-    private static void SpaceRows(Control root, Func<string, bool> matches, int separation, Action<Control> capture)
-    {
-        var parents = new HashSet<ulong>();
-        void Walk(Node node)
-        {
-            foreach (Node child in node.GetChildren())
-            {
-                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
-                if (matches(control.GetType().Name))
-                {
-                    // The direct parent may be a margin wrapper that ignores separation; the row stack is an ancestor.
-                    int depth = 0;
-                    for (Node? ancestor = control.GetParent(); ancestor != null && ancestor != root && depth < 3;
-                         ancestor = ancestor.GetParent(), depth++)
-                    {
-                        if (ancestor is not Control parent || !parents.Add(parent.GetInstanceId())) continue;
-                        capture(parent);
-                        foreach (string name in new[] { "separation", "v_separation" })
-                            if (!parent.HasThemeConstantOverride(name) || parent.GetThemeConstant(name) != separation)
-                                parent.AddThemeConstantOverride(name, separation);
-                    }
-                }
-                Walk(control);
-            }
-        }
-        Walk(root);
-    }
-
     /// <summary>Sets a minimum width (a container lays its child out from its minimum size), changing only what differs.</summary>
     private static void GrowListWidths(Control root, Func<string, bool> matches, float minWidth, Action<Control> capture)
     {

@@ -68,12 +68,8 @@ internal static partial class PortraitSubmenuLayout
         }
         SetKept(screen.GetNodeOrNull<GridContainer>(StatsColumnPath + "/OverallStats/OverallStatsDetails/GridContainer"), "columns", 1);
 
-        // The list scrolls (its mask clips it): its rows can take a finger's height without leaving the screen. Do this before
-        // the character panels are inspected: the section rows must be grown even when that panel path is absent.
-        GrowListRows(screen, type => type == "NStatEntry", 100f, capture);
-        // Their rows are laid out by the game's own container; spacing them also lets the touch pads reach 127 where the
-        // container keeps a row shorter than its minimum.
-        SpaceRows(screen, type => type == "NStatEntry", 56, capture);
+        // NStatEntry rows are hover-tip-only controls (decision 53): they keep the game's own row density; the audit gate
+        // allowlists them.
 
         if (screen.GetNodeOrNull<GridContainer>(StatsColumnPath + "/CharacterStats/CharacterStatsContainer") is not { } characters) return;
         SetKept(characters, "columns", 1);
