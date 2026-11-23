@@ -245,7 +245,11 @@ internal sealed class PortraitLayout
     private static float FitBandTop(string typeName, float capHeight) =>
         PortraitScreenFit.InRunScreens.Contains(typeName) ? capHeight + PortraitBands.TopBarHeight : capHeight;
 
-    private void QueueApply()
+    /// <summary>
+    /// Asks for one layout pass after the current scene setup. Structural changes (the relic clip) must not run from a
+    /// <c>Ready</c>/<c>NodeAdded</c> callback while an ancestor is still adding children: Godot refuses the move then.
+    /// </summary>
+    internal void QueueApply()
     {
         if (_applyQueued || _tree == null) return;
         _applyQueued = true;
@@ -1172,7 +1176,8 @@ internal sealed class PortraitLayout
         Capture(inventory, captureVisible: false);
         SaveRelicOriginalPos(inventory);
         RelicClipState? state = EnsureRelicClip(inventory);
-        if (state == null || !GodotObject.IsInstanceValid(state.Clip) || !GodotObject.IsInstanceValid(state.Extent)) return;
+        if (state == null || !GodotObject.IsInstanceValid(state.Clip) || !GodotObject.IsInstanceValid(state.Extent) ||
+            !inventory.IsInsideTree() || inventory.GetParent() != state.Extent) return;
 
         // The clip is fixed inside the band the stage was tuned around: relics wrap into lines and scroll; neither the count
         // nor a scroll ever moves the stage, the backgrounds or the control rail.
@@ -1227,12 +1232,16 @@ internal sealed class PortraitLayout
     private RelicClipState? EnsureRelicClip(FlowContainer inventory)
     {
         ulong id = inventory.GetInstanceId();
-        if (_relicClips.TryGetValue(id, out RelicClipState? existing) && GodotObject.IsInstanceValid(existing.Clip) &&
-            GodotObject.IsInstanceValid(existing.Extent))
+        if (_relicClips.TryGetValue(id, out RelicClipState? existing))
         {
-            if (inventory.GetParent() != existing.Extent)
-                inventory.Reparent(existing.Extent, keepGlobalTransform: false);
-            return existing;
+            if (RelicClipUsable(existing))
+            {
+                if (inventory.GetParent() != existing.Extent)
+                    inventory.Reparent(existing.Extent, keepGlobalTransform: false);
+                if (!inventory.IsInsideTree() || inventory.GetParent() != existing.Extent) return null;
+                return existing;
+            }
+            if (!DiscardRelicClip(inventory, existing)) return null;
         }
 
         if (inventory.GetParent() is not { } parent) return null;
@@ -1255,6 +1264,13 @@ internal sealed class PortraitLayout
         var extent = new Control { Name = RelicExtentName, MouseFilter = Control.MouseFilterEnum.Ignore };
         clip.AddChild(extent);
         parent.AddChild(clip);
+        // A parent that is still setting up children refuses the clip. It has not entered the tree, so it must not be
+        // cached or used for the inventory: leave the inventory under the game's own parent and try again after setup.
+        if (!clip.IsInsideTree())
+        {
+            clip.Free();
+            return null;
+        }
         // Just above the top bar, so the band draws over the room but under every screen opened later.
         Node? bar = null;
         foreach (Node child in parent.GetChildren())
@@ -1269,14 +1285,45 @@ internal sealed class PortraitLayout
         state.Extent = extent;
         (state.TweenField?.GetValue(inventory) as Tween)?.Kill();
         inventory.Reparent(extent, keepGlobalTransform: false);
+        _relicClips[id] = state;
+        if (id == _runRelicsId) _relicClipId = clip.GetInstanceId();
+        // Reparent can fail while the old parent is busy. The clip is in the tree and the inventory is still in the game's
+        // tree: keep both for the next deferred pass instead of laying out a detached inventory.
+        if (!inventory.IsInsideTree() || inventory.GetParent() != extent) return null;
         inventory.MouseFilter = Control.MouseFilterEnum.Ignore;
         inventory.PivotOffset = Vector2.Zero;
         inventory.FocusBehaviorRecursive = Control.FocusBehaviorRecursiveEnum.Inherited;
         SetRelicOriginalPos(inventory, Vector2.Zero);
         inventory.Position = Vector2.Zero;
-        _relicClips[id] = state;
-        if (id == _runRelicsId) _relicClipId = clip.GetInstanceId();
         return state;
+    }
+
+    /// <summary>A clip that can be reused: both nodes are alive and the clip is in the scene, owning its extent.</summary>
+    private static bool RelicClipUsable(RelicClipState state) =>
+        GodotObject.IsInstanceValid(state.Clip) && GodotObject.IsInstanceValid(state.Extent) &&
+        state.Clip.IsInsideTree() && state.Extent.IsInsideTree() && state.Extent.GetParent() == state.Clip;
+
+    /// <summary>
+    /// Drops a cached clip that never entered the scene. The inventory is normally still under its original parent; if a
+    /// previous build had already moved it into the dead extent, put it back before freeing the clip. False means the
+    /// inventory could not be recovered and the caller must not build another clip this pass.
+    /// </summary>
+    private bool DiscardRelicClip(FlowContainer inventory, RelicClipState state)
+    {
+        state.Fade?.Kill();
+        if (inventory.GetParent() == state.Extent)
+        {
+            if (!GodotObject.IsInstanceValid(state.OriginalParent) || !state.OriginalParent.IsInsideTree()) return false;
+            inventory.Reparent(state.OriginalParent, keepGlobalTransform: false);
+            if (inventory.GetParent() != state.OriginalParent) return false;
+        }
+        if (GodotObject.IsInstanceValid(state.Clip))
+        {
+            if (state.Clip.IsInsideTree()) state.Clip.QueueFree();
+            else state.Clip.Free();
+        }
+        _relicClips.Remove(inventory.GetInstanceId());
+        return true;
     }
 
     private void WireRelicInventorySignals(FlowContainer inventory)

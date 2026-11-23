@@ -281,7 +281,10 @@ public sealed partial class PhoneGraphics : Node
                 out _, out _, out _,
                 subtitle: "Skip hand card glow and shadows while they move (portrait). No gameplay change.");
             RefreshPortraitDefaultRow();
-            _portraitLayout.ApplyImmediate();
+            // The run's settings screen is created in NRunSubmenuStack._Ready while GlobalUi is still adding children.
+            // Moving the relic inventory into its clip from this Ready callback made AddChild/Reparent fail and left the
+            // inventory detached (no new relic holders, AnimateRelic throwing on every acquisition). Apply after setup.
+            _portraitLayout.QueueApply();
             // The panel sizes its scroll area and builds controller navigation in its own _Ready.
             panel.Call(NSettingsPanel.MethodName.RefreshSize);
             panel.Call(NSettingsPanel.MethodName.UpdateNavigation);
