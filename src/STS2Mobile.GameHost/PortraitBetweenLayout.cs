@@ -71,7 +71,7 @@ internal sealed partial class PortraitBetweenLayout
     // under the relic strip so the cards under it can grow.
     internal const float BannerTopOffset = 334f;
     internal const float BannerBottomOffset = 172f;
-    private const float BannerContentGap = 16f;
+    internal const float BannerContentGap = 16f;
 
     private static readonly Color PillFillColor = new(24f / 255f, 37f / 255f, 45f / 255f, 0.94f);
     private static readonly Color PillBorderColor = new(118f / 255f, 146f / 255f, 162f / 255f, 0.9f);

@@ -228,6 +228,8 @@ internal sealed class PortraitOverlayLayout
         if (peek.GetParent()?.GetType().Namespace != CardSelectionNamespace) return;
         // The choose a card screen places its peek with Skip in one footer row (PlaceCombatPeek).
         if (peek.GetParent()?.GetType().FullName == ChooseCardTypeName) return;
+        // The bundle choice places it in its own footer beside Cancel and Confirm.
+        if (peek.GetParent()?.GetType().FullName == ChooseBundleTypeName) return;
         Capture(peek);
         float size = peek.OffsetRight - peek.OffsetLeft;
         if (size < 1f) size = 128f;
@@ -330,6 +332,7 @@ internal sealed class PortraitOverlayLayout
     private const string SkipButtonTypeName = CardSelectionNamespace + ".NChoiceSelectionSkipButton";
     private const string ChooseCardTypeName = CardSelectionNamespace + ".NChooseACardSelectionScreen";
     private const string ChooseRelicTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NChooseARelicSelection";
+    private const string ChooseBundleTypeName = CardSelectionNamespace + ".NChooseABundleSelectionScreen";
     private const string PotionPopupTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionPopup";
     private const string UpgradeTickboxTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens.NUpgradePreviewTickbox";
     private const string InspectCardScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NInspectCardScreen";
@@ -369,6 +372,20 @@ internal sealed class PortraitOverlayLayout
     private const float RelicMaxRowScale = 1.6f;
     private const float RelicTipRoom = 230f;
 
+    // The bundle choice (the ScrollBoxes relic): two packs of three cards fanned 45 apart. Each pack's card is 300 x 422,
+    // the fan 390 x 512; in portrait the packs are drawn at the card reward's size, the chosen pack's cards in one row, and
+    // Cancel/Confirm are right-aligned in the footer with Peek at its left.
+    private const float BundleCardWidth = 300f;
+    private const float BundleCardHeight = 422f;
+    private const float BundleFanWidth = 390f;
+    private const float BundleFanHeight = 512f;
+    private const float BundleGapX = 48f;
+    private const float BundleHitboxCentreX = 5.5f;
+    private const float BundleHitboxCentreY = -27f;
+    private const float BundlePreviewMaxScale = 1.5f;
+    private const float BundleFooterGap = 24f;
+    private const float BundleCardFloorScale = 289f / BundleCardWidth;
+
     private const float PotionPopupGap = 12f;
     private const float PotionPopupMaxScale = 1.6f;
     private const float InspectTickboxRaise = 10f;
@@ -389,6 +406,8 @@ internal sealed class PortraitOverlayLayout
     private readonly Dictionary<ulong, ChoiceButton> _choiceButtons = new();
     private readonly HashSet<ulong> _chooseCardScreens = new();
     private readonly HashSet<ulong> _chooseRelicScreens = new();
+    private readonly HashSet<ulong> _chooseBundleScreens = new();
+    private readonly Dictionary<ulong, Vector2> _bundleButtonSizes = new();
     private readonly Dictionary<ulong, (Vector2 Centre, float Width)> _buttonRows = new();
     private readonly Dictionary<ulong, List<ulong>> _cardOrders = new();
     private readonly HashSet<ulong> _choiceSnapshots = new();
@@ -418,6 +437,9 @@ internal sealed class PortraitOverlayLayout
             case ChooseRelicTypeName:
                 _chooseRelicScreens.Add(id);
                 break;
+            case ChooseBundleTypeName:
+                _chooseBundleScreens.Add(id);
+                break;
             case PotionPopupTypeName:
                 _potionPopups.Add(id);
                 return;
@@ -443,6 +465,7 @@ internal sealed class PortraitOverlayLayout
         {
             Vector2 canvas = CanvasOf(control);
             if (typeName is ChooseCardTypeName or ChooseRelicTypeName) LayoutChoiceScreen(control, canvas);
+            else if (typeName == ChooseBundleTypeName) LayoutChooseBundle(control, canvas);
             else GrowChoiceButton(control, canvas);
         }
         catch (Exception error)
@@ -460,6 +483,8 @@ internal sealed class PortraitOverlayLayout
                 if (Live(id) is { } screen) LayoutChooseCard(screen, canvas);
             foreach (ulong id in _chooseRelicScreens)
                 if (Live(id) is { } screen) LayoutChooseRelic(screen, canvas);
+            foreach (ulong id in _chooseBundleScreens)
+                if (Live(id) is { } screen) LayoutChooseBundle(screen, canvas);
             foreach (ulong id in _choiceButtonIds)
                 if (Live(id) is { } button) GrowChoiceButton(button, canvas);
             foreach (ulong id in _potionPopups)
@@ -664,13 +689,27 @@ internal sealed class PortraitOverlayLayout
         PortraitBetweenLayout.LiftBanner(screen.GetNodeOrNull<Control>("Banner"), size, lift, _liftedChoiceBanners);
 
         bool peekShown = PeekShown(screen);
-        float footerHeight = peekShown ? Math.Max(PortraitBands.MinTarget, PeekSize * PeekScale) : PortraitBands.MinTarget;
+        float peekScale = PeekScale;
+        float footerHeight = peekShown ? Math.Max(PortraitBands.MinTarget, PeekSize * peekScale) : PortraitBands.MinTarget;
         float bandTop = centre.Y - ChoiceBannerBottom - lift + ChoiceBannerGap;
         float footerTopMax = size.Y - ChoiceBottomMargin - footerHeight;
         float bandBottom = footerTopMax - ChoiceFooterGap;
         CardGridFit grid = PortraitBetweenMath.CardGrid(
             count, size.X, bandTop, bandBottom, ChoiceCardWidth, ChoiceCardHeight,
             ChoiceCardGapX, ChoiceCardGapY, ChoiceMaxCardScale, ChoiceCardSideMargin, ChoiceCardFloorScale);
+        if (peekShown && count > 3 && ChoiceCardWidth * grid.Scale < ChoiceCardFloorScale * ChoiceCardWidth)
+        {
+            // Four or more cards cannot take one row: at the peek's 1.6 scale its footer is taller than a finger needs, and
+            // it pushes the second row under the phone's floor. The peek keeps its own 128 units (a 44-point target) and
+            // the cards get the row back.
+            peekScale = Math.Min(PeekScale, PortraitBands.MinTarget / PeekSize);
+            footerHeight = PortraitBands.MinTarget;
+            footerTopMax = size.Y - ChoiceBottomMargin - footerHeight;
+            bandBottom = footerTopMax - ChoiceFooterGap;
+            grid = PortraitBetweenMath.CardGrid(
+                count, size.X, bandTop, bandBottom, ChoiceCardWidth, ChoiceCardHeight,
+                ChoiceCardGapX, ChoiceCardGapY, ChoiceMaxCardScale, ChoiceCardSideMargin, ChoiceCardFloorScale);
+        }
         float cardScale = grid.Scale;
         float rowScale = cardScale / ChoiceHolderScale;
         float focusGrow = PortraitBetweenMath.CardFocusGrowth * ChoiceCardHeight * cardScale;
@@ -691,7 +730,7 @@ internal sealed class PortraitOverlayLayout
 
         float footerTop = blockCentreY + blockHeight / 2f + focusGrow + ChoiceFooterGap;
         float footerRight = size.X - ChoiceRightMargin;
-        float footerLeft = peekShown ? PeekLeft + PeekSize * PeekScale + ChoiceSideMargin : ChoiceSideMargin;
+        float footerLeft = peekShown ? PeekLeft + PeekSize * peekScale + ChoiceSideMargin : ChoiceSideMargin;
         _buttonRows[screenId] = (
             new Vector2((footerLeft + footerRight) / 2f - centre.X, footerTop + footerHeight / 2f - centre.Y),
             footerRight - footerLeft);
@@ -704,7 +743,7 @@ internal sealed class PortraitOverlayLayout
                 canvas);
         }
         if (peekShown && screen.GetNodeOrNull<Control>("%PeekButton") is { } peek)
-            PlaceCombatPeek(peek, PeekLeft, footerTop);
+            PlaceCombatPeek(peek, PeekLeft, footerTop, peekScale);
 
         if (holders.Count == 0) return;
         // A card keeps its slot: the game moves a hovered card to the end of the row, so the row's order is not the cards'.
@@ -751,13 +790,13 @@ internal sealed class PortraitOverlayLayout
     /// The peek button in a fight: drawn at 1.6 of its 128 units (the reference's phone size) in the footer row's left end,
     /// clear of Skip at the right. Its control keeps the scene's 128 units; the scale grows its picture and its touch area.
     /// </summary>
-    private void PlaceCombatPeek(Control peek, float left, float top)
+    private void PlaceCombatPeek(Control peek, float left, float top, float scale = PeekScale)
     {
         if (!GodotObject.IsInstanceValid(peek)) return;
         Capture(peek);
-        var scale = new Vector2(PeekScale, PeekScale);
+        var targetScale = new Vector2(scale, scale);
         if (peek.PivotOffset != Vector2.Zero) peek.PivotOffset = Vector2.Zero;
-        if (peek.Scale != scale) peek.Scale = scale;
+        if (peek.Scale != targetScale) peek.Scale = targetScale;
         if (peek.AnchorLeft != 0f || peek.AnchorRight != 0f || peek.AnchorTop != 0f || peek.AnchorBottom != 0f)
         {
             peek.AnchorLeft = 0f;
@@ -811,6 +850,21 @@ internal sealed class PortraitOverlayLayout
     }
 
     /// <summary>
+    /// The bundle choice's preview holders were drawn at the phone's card size; the desktop layout draws them at their own
+    /// (1.0), so the screen's cards come back before the layout's captured places are restored.
+    /// </summary>
+    private static void RestoreChooseBundle(Control screen)
+    {
+        if (screen.GetNodeOrNull<Control>("%Cards") is not { } cards) return;
+        foreach (Control holder in cards.GetChildren().OfType<Control>())
+        {
+            MethodInfo? setCardScale = holder.GetType().GetMethod("SetCardScale", InstAll);
+            if (setCardScale != null) setCardScale.Invoke(holder, new object[] { Vector2.One });
+            else holder.Scale = Vector2.One;
+        }
+    }
+
+    /// <summary>
     /// The relic choice shows its relics 47 points across in one row in the middle of the screen. In portrait the row is drawn
     /// larger (up to 1.6 times, less when more relics are offered) about the middle, and Skip keeps its distance under it,
     /// where the picked relic's tip opens.
@@ -842,6 +896,201 @@ internal sealed class PortraitOverlayLayout
         PlaceSkip(screen, _buttonRows[screenId].Centre, canvas);
         if (_logged.Add(screenId))
             GD.Print($"Portrait overlay: relic choice laid out, {count} relics at {rowScale:F2} of the game's size.");
+    }
+
+    // ---- The bundle choice (ScrollBoxes) -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The bundle choice is 1160 wide, so the fallback fit draws it at about 0.93 and its 240-unit pack cards come out 223
+    /// wide (the phone's floor is 289); Confirm and Cancel stay desktop-small too. In portrait the packs are laid out on the
+    /// screen's own virtual canvas at the card reward's size (the fit stays as it is, so the screen still fills the phone),
+    /// with two to a row, the chosen pack's cards in one row under the banner, and Peek, Cancel and Confirm in a footer row.
+    /// All of it is captured first, so turning Portrait Mode off restores the desktop layout.
+    /// </summary>
+    private void LayoutChooseBundle(Control screen, Vector2 canvas)
+    {
+        if (screen.GetNodeOrNull<Control>("%BundleRow") is not { } row || screen.GetNodeOrNull<Control>("%BundlePreviewContainer") is not { } preview)
+            return;
+        Vector2 size = ScreenSize(screen, canvas);
+        if (size.X <= 1f || size.Y <= 1f) return;
+        // The screen is fitted by its width: its own units are this many canvas units. Constants that the launcher states
+        // in canvas units are converted before they are used on it.
+        float screenScale = Math.Max(canvas.X / size.X, 0.01f);
+        float Local(float units) => units / screenScale;
+        float centreY = size.Y / 2f;
+
+        // The banner rises under the relic strip, as on the other choice screens, measured from this screen's canvas top.
+        float canvasTop = screen.GetGlobalTransformWithCanvas().Origin.Y;
+        float capHeight = PortraitLayout.ComputeCapHeight(screen.GetTree().Root);
+        float bannerTopLocal = (capHeight + PortraitBands.RunContentTop + PortraitBetweenLayout.BannerContentGap - canvasTop) / screenScale;
+        float lift = Math.Max(0f, centreY - PortraitBetweenLayout.BannerTopOffset - bannerTopLocal);
+        PortraitBetweenLayout.LiftBanner(screen.GetNodeOrNull<Control>("Banner"), size, lift, _liftedChoiceBanners);
+
+        float side = Local(ChoiceCardSideMargin);
+        float gapX = Local(BundleGapX);
+        float gapY = Local(ChoiceCardGapY);
+        float footerHeight = Local(PortraitBands.MinTarget);
+        float footerTop = size.Y - Local(ChoiceBottomMargin) - footerHeight;
+        float bannerBottom = centreY - PortraitBetweenLayout.BannerBottomOffset - lift;
+        float bandTop = bannerBottom + Local(ChoiceBannerGap);
+        float bandBottom = footerTop - Local(ChoiceFooterGap);
+
+        // The packs, two to a row (or one pack, centred), each at the card reward's drawn size.
+        List<Control> bundles = row.GetChildren().OfType<Control>()
+            .Where(child => !child.IsQueuedForDeletion() && child.GetType().Name == "NCardBundle").ToList();
+        int bundleCount = bundles.Count > 0 ? bundles.Count : CountOf(screen, "_bundles");
+        if (bundleCount > 0)
+        {
+            CardGridFit grid = PortraitBetweenMath.CardGrid(
+                bundleCount, size.X, bandTop, bandBottom, BundleFanWidth, BundleFanHeight,
+                gapX, gapY, ChoiceMaxCardScale, side, BundleCardFloorScale);
+            float scale = grid.Scale;
+            float focusGrow = PortraitBetweenMath.CardFocusGrowth * BundleFanHeight * scale;
+            float blockTop = bandTop + focusGrow +
+                             Math.Max(0f, (bandBottom - bandTop - 2f * focusGrow - grid.BlockHeight) / 2f);
+            float blockCentreY = blockTop + grid.BlockHeight / 2f;
+
+            CaptureChoice(row);
+            if (row.Scale != Vector2.One) row.Scale = Vector2.One;
+            float rowY = blockCentreY - centreY;
+            if (Math.Abs(row.OffsetTop - rowY) > 0.25f || Math.Abs(row.OffsetBottom - rowY) > 0.25f)
+            {
+                row.OffsetTop = rowY;
+                row.OffsetBottom = rowY;
+            }
+            if (Math.Abs(row.OffsetLeft) > 0.25f || Math.Abs(row.OffsetRight) > 0.25f)
+            {
+                row.OffsetLeft = 0f;
+                row.OffsetRight = 0f;
+            }
+
+            IReadOnlyList<GridSlot> slots = PortraitBetweenMath.RewardSlots(
+                bundleCount, grid.Columns, BundleFanWidth * scale, BundleFanHeight * scale, gapX, gapY);
+            for (int i = 0; i < bundles.Count && i < slots.Count; i++)
+            {
+                Control bundle = bundles[i];
+                CaptureChoice(bundle);
+                var bundleScale = new Vector2(scale, scale);
+                if (bundle.Scale != bundleScale) bundle.Scale = bundleScale;
+                // The pack's touch box is centred just off its fan's middle; place that centre on the slot's.
+                var position = new Vector2(
+                    slots[i].CenterX - scale * BundleHitboxCentreX,
+                    slots[i].CenterY - scale * BundleHitboxCentreY);
+                if (bundle.Position.DistanceSquaredTo(position) > 0.25f) bundle.Position = position;
+            }
+            if (_logged.Add(screen.GetInstanceId()))
+                GD.Print($"Portrait overlay: bundle choice laid out, {bundleCount} packs at {scale:F2}, cards " +
+                         $"{BundleCardWidth * scale:F0} wide.");
+        }
+
+        // The chosen pack's cards: one row under the banner, at the card reward's size, the screen's slide taken over.
+        if (preview.Visible && screen.GetNodeOrNull<Control>("%Cards") is { } previewCards)
+        {
+            List<Control> holders = previewCards.GetChildren().OfType<Control>()
+                .Where(holder => !holder.IsQueuedForDeletion()).ToList();
+            if (holders.Count > 0)
+            {
+                if (screen.GetType().GetField("_cardTween", InstAll)?.GetValue(screen) is Tween { } tween &&
+                    tween.IsValid() && tween.IsRunning())
+                    tween.Kill();
+                int columns = Math.Min(holders.Count, 4);
+                int rows = (holders.Count + columns - 1) / columns;
+                float byWidth = (size.X - 2f * side - (columns - 1) * gapX) / (columns * BundleCardWidth);
+                float byHeight = (bandBottom - bandTop - (rows - 1) * gapY) /
+                                 (rows * BundleCardHeight * (1f + 2f * PortraitBetweenMath.CardFocusGrowth));
+                float cardScale = Math.Clamp(Math.Min(BundlePreviewMaxScale, Math.Min(byWidth, byHeight)),
+                    0.2f, BundlePreviewMaxScale);
+                float focusGrow = PortraitBetweenMath.CardFocusGrowth * BundleCardHeight * cardScale;
+                float blockHeight = rows * BundleCardHeight * cardScale + (rows - 1) * gapY;
+                float blockTop = bandTop + focusGrow +
+                                 Math.Max(0f, (bandBottom - bandTop - 2f * focusGrow - blockHeight) / 2f);
+                float blockCentreY = blockTop + blockHeight / 2f;
+
+                CaptureChoice(previewCards);
+                float cardsY = blockCentreY - centreY;
+                if (Math.Abs(previewCards.OffsetTop - cardsY) > 0.25f || Math.Abs(previewCards.OffsetBottom - cardsY) > 0.25f)
+                {
+                    previewCards.OffsetTop = cardsY;
+                    previewCards.OffsetBottom = cardsY;
+                }
+                if (Math.Abs(previewCards.OffsetLeft) > 0.25f || Math.Abs(previewCards.OffsetRight) > 0.25f)
+                {
+                    previewCards.OffsetLeft = 0f;
+                    previewCards.OffsetRight = 0f;
+                }
+
+                IReadOnlyList<GridSlot> slots = PortraitBetweenMath.RewardSlots(
+                    holders.Count, columns, BundleCardWidth * cardScale, BundleCardHeight * cardScale, gapX, gapY);
+                var cardHolderScale = new Vector2(cardScale, cardScale);
+                MethodInfo? setCardScale = null;
+                for (int i = 0; i < holders.Count && i < slots.Count; i++)
+                {
+                    Control holder = holders[i];
+                    CaptureChoice(holder);
+                    // SetCardScale keeps the holder's own hover/small scale in step: a focus grows it only a tenth.
+                    setCardScale ??= holder.GetType().GetMethod("SetCardScale", InstAll);
+                    if (setCardScale != null) setCardScale.Invoke(holder, new object[] { cardHolderScale });
+                    else if (holder.Scale != cardHolderScale) holder.Scale = cardHolderScale;
+                    var position = new Vector2(slots[i].CenterX, slots[i].CenterY);
+                    if (holder.Position.DistanceSquaredTo(position) > 0.25f) holder.Position = position;
+                }
+                if (_logged.Add(previewCards.GetInstanceId()))
+                    GD.Print($"Portrait overlay: bundle preview cards laid out, {holders.Count} cards at {cardScale:F2}.");
+            }
+        }
+
+        // The footer: Peek at the left, Skip (or the preview's Cancel and Confirm) right-aligned and grown to a finger.
+        if (screen.GetNodeOrNull<Control>("%SkipButton") is { } skip && skip.Visible)
+        {
+            Vector2 skipSize = GrowChoiceButton(skip, canvas);
+            PlaceSkip(screen, new Vector2(
+                size.X - Local(ChoiceRightMargin) - skipSize.X / 2f - size.X / 2f,
+                footerTop + skipSize.Y / 2f - centreY), canvas);
+        }
+        if (screen.GetNodeOrNull<Control>("%PeekButton") is { } peek)
+            PlaceCombatPeek(peek, PeekLeft, footerTop, Math.Min(PeekScale, PortraitBands.MinTarget / (PeekSize * screenScale)));
+        float rightEdge = size.X - Local(ChoiceRightMargin);
+        if (screen.GetNodeOrNull<Control>("%Confirm") is { } confirm)
+        {
+            Vector2 confirmSize = PlaceBundleButton(confirm, rightEdge, footerTop, footerHeight);
+            rightEdge -= confirmSize.X + Local(BundleFooterGap);
+        }
+        if (screen.GetNodeOrNull<Control>("%Cancel") is { } cancel)
+            PlaceBundleButton(cancel, rightEdge, footerTop, footerHeight);
+    }
+
+    /// <summary>
+    /// A preview's Confirm or Cancel: its desktop picture stays, placed in the portrait footer row, with a touch area of 44
+    /// points added around it where the picture is smaller. Its place is captured first for the landscape restore. Returns the
+    /// control's own width (the touch area can reach past it).
+    /// </summary>
+    private Vector2 PlaceBundleButton(Control button, float right, float footerTop, float footerHeight)
+    {
+        ulong id = button.GetInstanceId();
+        if (!_bundleButtonSizes.TryGetValue(id, out Vector2 native))
+        {
+            native = button.Size;
+            if (native.X <= 1f || native.Y <= 1f) return native;
+            _bundleButtonSizes[id] = native;
+        }
+        CaptureChoice(button);
+        float top = footerTop + (footerHeight - native.Y) / 2f;
+        float left = right - native.X;
+        if (button.AnchorLeft != 0f || button.AnchorTop != 0f || button.AnchorRight != 0f || button.AnchorBottom != 0f ||
+            Math.Abs(button.OffsetLeft - left) > 0.25f || Math.Abs(button.OffsetTop - top) > 0.25f ||
+            Math.Abs(button.OffsetRight - right) > 0.25f || Math.Abs(button.OffsetBottom - (top + native.Y)) > 0.25f)
+        {
+            button.AnchorLeft = 0f;
+            button.AnchorTop = 0f;
+            button.AnchorRight = 0f;
+            button.AnchorBottom = 0f;
+            button.OffsetLeft = left;
+            button.OffsetTop = top;
+            button.OffsetRight = right;
+            button.OffsetBottom = top + native.Y;
+        }
+        GrowGridConfirm(button);
+        return native;
     }
 
     // ---- Potion popup -------------------------------------------------------------------------------------------------------
@@ -1036,6 +1285,10 @@ internal sealed class PortraitOverlayLayout
         foreach (ulong id in _chooseCardScreens)
             if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
                 RestoreChooseCard(screen);
+        foreach (ulong id in _chooseBundleScreens)
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
+                RestoreChooseBundle(screen);
+        _bundleButtonSizes.Clear();
         _buttonRows.Clear();
         PortraitBetweenLayout.RestoreBanners(_liftedChoiceBanners);
         foreach (ulong id in _choiceSnapshots)
@@ -1063,6 +1316,7 @@ internal sealed class PortraitOverlayLayout
         _choiceButtonIds.RemoveWhere(Dead);
         _chooseCardScreens.RemoveWhere(Dead);
         _chooseRelicScreens.RemoveWhere(Dead);
+        _chooseBundleScreens.RemoveWhere(Dead);
         _choiceSnapshots.RemoveWhere(Dead);
         _potionPopups.RemoveWhere(Dead);
         _inspectTickboxes.RemoveWhere(Dead);
@@ -1070,6 +1324,7 @@ internal sealed class PortraitOverlayLayout
         _gridConfirms.RemoveWhere(Dead);
         foreach (ulong id in _choiceButtons.Keys.Where(Dead).ToList()) _choiceButtons.Remove(id);
         foreach (ulong id in _buttonRows.Keys.Where(Dead).ToList()) _buttonRows.Remove(id);
+        foreach (ulong id in _bundleButtonSizes.Keys.Where(Dead).ToList()) _bundleButtonSizes.Remove(id);
         foreach (ulong id in _cardOrders.Keys.Where(Dead).ToList()) _cardOrders.Remove(id);
         foreach (ulong id in _fittedPopups.Keys.Where(Dead).ToList()) _fittedPopups.Remove(id);
         foreach (ulong id in _confirmPads.Keys.Where(Dead).ToList()) _confirmPads.Remove(id);

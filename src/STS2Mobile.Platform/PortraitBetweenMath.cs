@@ -284,7 +284,9 @@ public static class PortraitBetweenMath
     /// <paramref name="bandBottom"/>, with a margin either side of the canvas, reserving <see cref="CardFocusGrowth"/> of a
     /// card's height above and below the block for the focused card. Two to a row is preferred; when that cannot give a card
     /// at least <paramref name="minScale"/> (the phone's floor of 289 units), three cards take one row instead, which is
-    /// larger on the shorter canvas.
+    /// larger on the shorter canvas. Larger sets cannot take one row; they add a third (then a fourth or fifth) column while
+    /// that keeps the cards closer to the floor, so a five-card choice is two rows of three and two rather than three rows
+    /// squeezed onto the tall screen.
     /// </summary>
     public static CardGridFit CardGrid(
         int count,
@@ -310,9 +312,21 @@ public static class PortraitBetweenMath
             return new CardGridFit(scale, rows * cardHeight * scale + (rows - 1) * gapY, rows, columns);
         }
         CardGridFit grid = Fit(Math.Min(count, 2));
-        if (grid.Scale >= minScale || count > 3) return grid;
-        // Three cards: one row is wider than half as wide, and it is the taller canvas that makes the pair too short.
-        CardGridFit singleRow = Fit(count);
-        return singleRow.Scale > grid.Scale ? singleRow : grid;
+        if (grid.Scale >= minScale) return grid;
+        if (count <= 3)
+        {
+            // Three cards: one row is wider than half as wide, and it is the taller canvas that makes the pair too short.
+            CardGridFit singleRow = Fit(count);
+            return singleRow.Scale > grid.Scale ? singleRow : grid;
+        }
+        // Four or more: the pair's rows cannot hold the floor, so widen the grid a column at a time and keep the largest
+        // arrangement (ties keep the narrower one, so the pair still wins when widening does not help).
+        CardGridFit best = grid;
+        for (int columns = 3; columns <= Math.Min(count, 5); columns++)
+        {
+            CardGridFit candidate = Fit(columns);
+            if (candidate.Scale > best.Scale + 0.0001f) best = candidate;
+        }
+        return best;
     }
 }

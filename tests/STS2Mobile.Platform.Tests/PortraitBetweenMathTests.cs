@@ -316,6 +316,25 @@ public class PortraitBetweenMathTests
         Assert.True(top + grow + fit.BlockHeight + grow + 8f + 204.8f <= height - 24f + 0.1f);
     }
 
+    [Theory]
+    [InlineData(1920f, 796f, 1761f, 0.98262f, 294.8f)]
+    [InlineData(2340f, 798f, 2181f, 0.99556f, 298.7f)]
+    public void FiveCardChoiceWidensToThreeColumnsToKeepThePhoneFloor(
+        float height, float top, float bottom, float scale, float width)
+    {
+        CardGridFit fit = PortraitBetweenMath.CardGrid(
+            5, 1080f, top, bottom, 300f, 422f, 48f, 32f, 1.5f, 44f, 289f / 300f);
+        Assert.Equal(2, fit.Rows);
+        Assert.Equal(3, fit.Columns);
+        Assert.Equal(scale, fit.Scale, 3);
+        Assert.Equal(width, 300f * fit.Scale, 1);
+        Assert.True(300f * fit.Scale >= 289f, $"scale {fit.Scale:F3} gives {300f * fit.Scale:F1}");
+        Assert.Equal(2f * 422f * fit.Scale + 32f, fit.BlockHeight, 1);
+        float grow = PortraitBetweenMath.CardFocusGrowth * 422f * fit.Scale;
+        Assert.True(top + grow + fit.BlockHeight + grow <= bottom + 0.01f);
+        Assert.True(top + grow + fit.BlockHeight + grow + 8f + 127f <= height - 24f + 0.1f);
+    }
+
     [Fact]
     public void ThreeColumnsGiveASingleRow()
     {
