@@ -187,6 +187,7 @@ internal sealed class PortraitSettingsLayout
         Detach();
         _tree = tree;
         tree.Root.WindowInput += OnWindowInput;
+        GD.Print("Portrait settings: window input attached.");
     }
 
     public void Detach()
@@ -479,33 +480,51 @@ internal sealed class PortraitSettingsLayout
         End();
         if (!_ready) return;
         NSettingsScreen? screen = VisibleScreen();
-        if (screen == null || !_screens.TryGetValue(screen.GetInstanceId(), out ScreenState? state)) return;
+        if (screen == null) { Note("no settings screen is visible", point); return; }
+        if (!_screens.TryGetValue(screen.GetInstanceId(), out ScreenState? state)) { Note("screen not registered", point); return; }
         // An open dropdown's list is drawn over the rows and scrolls itself.
         foreach (ulong id in state.Dropdowns)
         {
-            if (!_dropdowns.TryGetValue(id, out DropdownState? drop) || Resolve(id, drop) is not { } list ||
-                !list.IsVisibleInTree() || !list.GetGlobalRect().HasPoint(point)) continue;
-            if (_listDrag?.GetValue(list) is not Vector2 listDrag) continue;
+            if (!_dropdowns.TryGetValue(id, out DropdownState? drop)) continue;
+            if (Resolve(id, drop) is not { } list) continue;
+            if (!list.IsVisibleInTree()) continue;
+            Rect2 listRect = list.GetGlobalRect();
+            if (!listRect.HasPoint(point))
+            {
+                if (listRect.Intersects(new Rect2(point, Vector2.One)))
+                    Note($"list {listRect} does not hold {point}", point);
+                continue;
+            }
+            if (_listDrag?.GetValue(list) is not Vector2 listDrag) { Note("list has no drag target", point); continue; }
             // A list too short to scroll still owns the press: a swipe on it is not a language change.
             float listLimit = _listLimit?.GetValue(list) is float room ? Math.Min(room, 0f) : 0f;
             Start(DragKind.List, list, screen, point, listDrag.Y, listLimit);
             return;
         }
         if (state.Clip == 0 || GodotObject.InstanceFromId(state.Clip) is not Control clip ||
-            !GodotObject.IsInstanceValid(clip) || !clip.GetGlobalRect().HasPoint(point)) return;
+            !GodotObject.IsInstanceValid(clip))
+        {
+            Note("no rows area", point);
+            return;
+        }
+        if (!clip.GetGlobalRect().HasPoint(point)) { Note($"outside the rows area {clip.GetGlobalRect()}", point); return; }
         if (state.Scrollbar != 0 && GodotObject.InstanceFromId(state.Scrollbar) is Control bar &&
-            GodotObject.IsInstanceValid(bar) && bar.GetGlobalRect().HasPoint(point)) return;
+            GodotObject.IsInstanceValid(bar) && bar.GetGlobalRect().HasPoint(point)) { Note("on the scrollbar", point); return; }
         foreach (ulong id in state.Sliders)
         {
             if (GodotObject.InstanceFromId(id) is Control slider && GodotObject.IsInstanceValid(slider) &&
-                slider.IsVisibleInTree() && slider.GetGlobalRect().HasPoint(point)) return;
+                slider.IsVisibleInTree() && slider.GetGlobalRect().HasPoint(point)) { Note("on a slider", point); return; }
         }
         if (state.Scroll == 0 || GodotObject.InstanceFromId(state.Scroll) is not Control scroll ||
-            !GodotObject.IsInstanceValid(scroll)) return;
-        if (_scrollLimit?.GetValue(scroll) is not float limit || limit > -0.5f) return;
-        if (_scrollDragY?.GetValue(scroll) is not float initial) return;
+            !GodotObject.IsInstanceValid(scroll)) { Note("no scroll view", point); return; }
+        if (_scrollLimit?.GetValue(scroll) is not float limit || limit > -0.5f) { Note("the rows fit", point); return; }
+        if (_scrollDragY?.GetValue(scroll) is not float initial) { Note("no scroll target", point); return; }
         Start(DragKind.Scroll, scroll, screen, point, initial, limit);
     }
+
+    /// <summary>Why a press started no swipe; printed once per press while settings is open (a handful per run).</summary>
+    private static void Note(string why, Vector2 point) =>
+        GD.Print($"Portrait settings: press at ({point.X:F0},{point.Y:F0}) starts no swipe: {why}.");
 
     private void Start(DragKind kind, Control target, Control screen, Vector2 point, float initial, float limit)
     {

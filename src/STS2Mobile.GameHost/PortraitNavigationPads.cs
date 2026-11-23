@@ -24,14 +24,18 @@ internal sealed class PortraitNavigationPads
     private const string HidePosField = "_hidePos";
     private const string EnabledField = "_isEnabled";
     private const string MoveTweenField = "_moveTween";
+    private const string PosOffsetField = "_posOffset";
+    private const float HideOffsetX = -180f;
+    private const float FooterBottomMargin = 8f;
     private const BindingFlags AnyField = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
 
     private readonly HashSet<ulong> _tracked = new();
     private readonly Dictionary<ulong, Vector2> _paddedAt = new();
     private readonly List<ulong> _dead = new();
     private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _originalPositions = new();
+    private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _placedTargets = new();
     private static Type? _backType;
-    private static FieldInfo? _showPos, _hidePos, _enabled, _moveTween;
+    private static FieldInfo? _showPos, _hidePos, _enabled, _moveTween, _posOffset;
 
     public static bool Handles(string? typeName) => typeName == BackTypeName || typeName == ArrowTypeName;
 
@@ -92,41 +96,70 @@ internal sealed class PortraitNavigationPads
         {
             if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
             PhoneHitArea.Remove(control);
+            if (_moveTween?.GetValue(control) is Tween tween && tween.IsValid()) tween.Kill();
+            _moveTween?.SetValue(control, null);
             if (_originalPositions.TryGetValue(id, out (Vector2 Show, Vector2 Hide) original)) RestoreBack(control, original);
         }
         _tracked.Clear();
         _paddedAt.Clear();
         _originalPositions.Clear();
+        _placedTargets.Clear();
     }
 
     /// <summary>Whether this is a back button (they are the only buttons that cache a slide position).</summary>
     public static bool IsBack(Control control) => control.GetType().FullName == BackTypeName;
 
     /// <summary>
-    /// The native Back sits with 40 units of its art past the left edge (its cached show position is the offset). Move its
-    /// cached show and hide positions to x = 0 so the slide in lands fully inside the canvas, and settle a button that already
-    /// finished sliding; a slide still running is left to land and corrected the frame it stops.
+    /// Places every Back in canvas space: drawn left edge at the canvas's left, bottom at the game's native footer gap
+    /// below its parent screen (mapped through the parent's scale), never below 8 units from the canvas bottom. The cached
+    /// show and hide positions are written in canvas coordinates, which is what the native slide (global_position) uses, so a
+    /// screen scaled on a virtual canvas still lands at the same place. A slide already running is retargeted once; after that
+    /// the settled position is corrected whenever the game moves it back.
     /// </summary>
     private void PlaceBack(Control control)
     {
         if (!EnsureBackFields(control.GetType()) || _showPos is null) return;
-        var show = (Vector2)_showPos.GetValue(control)!;
-        var hide = _hidePos is null ? show : (Vector2)_hidePos.GetValue(control)!;
+        Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
+        if (scale.X < 0.01f || scale.Y < 0.01f) return;
+        Rect2 canvas = control.GetViewport().GetVisibleRect();
+        float sizeY = control.Size.Y * scale.Y;
+        Vector2 offset = _posOffset?.GetValue(control) is Vector2 value ? value : new Vector2(40f, 354f);
+        // The native footer gap below the screen's bottom edge (the button's own bottom before the screen edge).
+        float gap = Math.Max(0f, offset.Y - control.Size.Y) * scale.Y;
+        // The native back is anchored to ContentScaleSize.Y, the canvas bottom, not to its screen's own rect.
+        float bottom = Math.Min(canvas.End.Y - FooterBottomMargin, canvas.End.Y - gap);
+        float top = Math.Max(canvas.Position.Y, bottom - sizeY);
+        var show = new Vector2(canvas.Position.X, top);
+        var hide = show + new Vector2(HideOffsetX * scale.X, 0f);
         ulong id = control.GetInstanceId();
-        if (!_originalPositions.ContainsKey(id)) _originalPositions[id] = (show, hide);
-        if (show.X < -0.5f)
+        if (!_originalPositions.ContainsKey(id))
         {
-            float shift = -show.X;
-            var shifted = new Vector2(0f, show.Y);
-            var shiftedHide = hide + new Vector2(shift, 0f);
-            _showPos.SetValue(control, shifted);
-            if (_hidePos is not null) _hidePos.SetValue(control, shiftedHide);
-            show = shifted;
-            hide = shiftedHide;
+            var currentShow = (Vector2)_showPos.GetValue(control)!;
+            var currentHide = _hidePos is null ? currentShow : (Vector2)_hidePos.GetValue(control)!;
+            _originalPositions[id] = (currentShow, currentHide);
         }
-        if (_moveTween?.GetValue(control) is Tween tween && tween.IsValid() && tween.IsRunning()) return;
+        bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed) || !placed.Show.IsEqualApprox(show);
+        _placedTargets[id] = (show, hide);
+        _showPos.SetValue(control, show);
+        if (_hidePos is not null) _hidePos.SetValue(control, hide);
         bool enabled = _enabled?.GetValue(control) is true;
-        Vector2 target = enabled ? (Vector2)_showPos.GetValue(control)! : (_hidePos is null ? show : (Vector2)_hidePos.GetValue(control)!);
+        Vector2 target = enabled ? show : hide;
+        Tween? tween = _moveTween?.GetValue(control) as Tween;
+        if (changed)
+        {
+            if (tween is not null && tween.IsValid()) tween.Kill();
+            _moveTween?.SetValue(control, null);
+            if (control.GlobalPosition.DistanceTo(target) > 2f)
+            {
+                Tween slide = control.CreateTween();
+                slide.TweenProperty(control, "global_position", target, 0.35)
+                    .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+                _moveTween?.SetValue(control, slide);
+            }
+            else control.GlobalPosition = target;
+            return;
+        }
+        if (tween is not null && tween.IsValid() && tween.IsRunning()) return;
         if (control.GlobalPosition.DistanceTo(target) > 0.6f) control.GlobalPosition = target;
     }
 
@@ -145,6 +178,7 @@ internal sealed class PortraitNavigationPads
         _hidePos = type.GetField(HidePosField, AnyField);
         _enabled = type.GetField(EnabledField, AnyField);
         _moveTween = type.GetField(MoveTweenField, AnyField);
+        _posOffset = type.GetField(PosOffsetField, AnyField);
         return _showPos is not null;
     }
 
@@ -155,5 +189,7 @@ internal sealed class PortraitNavigationPads
             if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _paddedAt.Remove(id);
         foreach (ulong id in new List<ulong>(_originalPositions.Keys))
             if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _originalPositions.Remove(id);
+        foreach (ulong id in new List<ulong>(_placedTargets.Keys))
+            if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _placedTargets.Remove(id);
     }
 }

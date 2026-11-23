@@ -40,7 +40,7 @@ internal sealed partial class PortraitMenuLayout
         Rect2 safe = state.Safe;
         float gridTop = ArrangeCharacterButtons(state, screen, Roster(screen), safe);
         PrepareConfirm(state, screen, safe);
-        PlaceBackButton(screen, state);
+        EnsureBackOnTop(screen);
 
         // Blitz's title, its badge and its info button sit along the top edge, under the notch.
         foreach (string name in new[] { "BlitzPlaceholder", "%UnderConstruction", "%BlitzInfoButton" })

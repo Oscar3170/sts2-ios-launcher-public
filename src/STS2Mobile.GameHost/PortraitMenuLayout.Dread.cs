@@ -20,7 +20,7 @@ internal sealed partial class PortraitMenuLayout
         Rect2 safe = state.Safe;
         float gridTop = ArrangeCharacterButtons(state, screen, Roster(screen), safe);
         PrepareConfirm(state, screen, safe);
-        PlaceBackButton(screen, state);
+        EnsureBackOnTop(screen);
 
         // Dread's badge and info button sit on the top edge on the desktop, under the notch here: shift them with the safe
         // band like Blitz's header.

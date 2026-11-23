@@ -25,7 +25,7 @@ internal sealed partial class PortraitMenuLayout
     {
         if (screen.GetNodeOrNull<BoxContainer>("ButtonContainer") is not { } row) return;
         List<Control> cards = row.GetChildren().OfType<Control>().Where(card => card.Visible).ToList();
-        PlaceBackButton(screen, state);
+        EnsureBackOnTop(screen);
         if (cards.Count == 0) return;
 
         int rows = Math.Max(1, (cards.Count + 1) / 2);
