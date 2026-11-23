@@ -29,6 +29,9 @@ internal sealed partial class PortraitBetweenLayout
         public Vector2 Canvas;
         public float Cap;
         public bool Built, ArtDone, GoldTweaked;
+        // The relic collection is shown when the chest opens and hidden once the last relic is taken; the tips it put up go
+        // with it.
+        public bool CollectionSeen, TipsCleared;
 
         // The game's banner measures where it shows from the window, so the portrait place is re-asserted whenever it drifts.
         public Vector2 BannerTop, BannerTarget, BannerShow, BannerHide;
@@ -76,6 +79,18 @@ internal sealed partial class PortraitBetweenLayout
                 banner.IsNodeReady() && TreasureBannerDrifted(banner, state))
                 PlaceTreasureBanner(banner, state);
             if (!state.ArtDone) state.ArtDone = EnsureTreasureArt(room, canvas);
+            // A relic's hover tip is a node of the game's own in the hover-tip container, anchored to the relic inside the
+            // holder; the collection hides when the last relic is taken, not frees, so the tip would stay — and the relic
+            // tips are laid out at the bottom right, over the Proceed ribbon. Take them down the frame the picking ends.
+            if (GodotObject.InstanceFromId(state.Collection) is Control collection && GodotObject.IsInstanceValid(collection))
+            {
+                if (collection.IsVisibleInTree()) state.CollectionSeen = true;
+                else if (state.CollectionSeen && !state.TipsCleared && ClearTreasureRelicTips(collection))
+                {
+                    state.TipsCleared = true;
+                    GD.Print("Portrait between layout: the chest's relic tips are down; the footer is clear.");
+                }
+            }
             return;
         }
         BuildTreasureRoom(room, capHeight, canvas, state);
@@ -280,6 +295,22 @@ internal sealed partial class PortraitBetweenLayout
             banner.Call("AnimateIn");
         else
             banner.Position = state.BannerTop;
+    }
+
+    /// <summary>
+    /// Takes down every tip the chest's relic holders put up: the game anchors a relic's tip to the relic node inside the
+    /// holder, so a holder-keyed removal alone leaves it behind. Runs once, when the collection hides after the last relic is
+    /// taken, so nothing of the picking is left over the footer.
+    /// </summary>
+    private static bool ClearTreasureRelicTips(Control collection)
+    {
+        if (collection.GetNodeOrNull<Control>("Container") is not { } container ||
+            PhoneSelectConfirm.Instance is not { } confirm)
+            return false;
+        foreach (Control layout in container.GetChildren().OfType<Control>())
+            foreach (Control holder in layout.GetChildren().OfType<Control>())
+                confirm.HideTip(holder);
+        return true;
     }
 
     /// <summary>

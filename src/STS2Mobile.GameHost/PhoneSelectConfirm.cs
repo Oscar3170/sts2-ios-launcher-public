@@ -1114,7 +1114,18 @@ internal sealed class PhoneSelectConfirm
             hitbox.EmitSignal("Unfocused", hitbox);
     }
 
-    internal void HideTip(Control owner) => _removeTips?.Invoke(null, [owner]);
+    /// <summary>
+    /// Takes down the tip a selection put up. The game keys each tip set by the control it is anchored to, and a relic's tip
+    /// is anchored to the relic node inside the holder (its alignment is measured from it), while selections are dropped by
+    /// the holder: both owners are cleared, or the relic's tip would outlive the selection.
+    /// </summary>
+    internal void HideTip(Control owner)
+    {
+        if (_removeTips == null || !GodotObject.IsInstanceValid(owner)) return;
+        _removeTips.Invoke(null, [owner]);
+        if (RelicNode(owner) is { } relic && !ReferenceEquals(relic, owner) && GodotObject.IsInstanceValid(relic))
+            _removeTips.Invoke(null, [relic]);
+    }
 
     /// <summary>The relic's own inspection screen, as a hold on a relic opens it.</summary>
     internal void OpenRelicInspect(Control item)
