@@ -39,6 +39,9 @@ internal sealed class PortraitGameOverLayout
     /// <summary>The summary's window and how far it is scrolled, for the proof runs and the harness.</summary>
     internal const string SummaryScrollMeta = "phone_summary_scroll";
     internal const string SummaryMaxScrollMeta = "phone_summary_max_scroll";
+    /// <summary>The clip actually applied to the canvas item, in canvas units (what is drawn inside, not the
+    /// container's own Control rect, which the engine may have grown).</summary>
+    internal const string SummaryClipMeta = "phone_summary_clip_rect";
     private const string ArtName = "PhoneGameOverArt";
 
     private const string CombatRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom";
@@ -179,12 +182,14 @@ internal sealed class PortraitGameOverLayout
         public bool BackstopSeen;
         public bool SummaryTinted;
         public float SummaryScale = 1f;
-        public float SummaryView, SummaryContent, SummaryMax, SummaryScroll;
+        public float SummaryView, SummaryViewWidth, SummaryContent, SummaryColumnWidth, SummaryMax, SummaryScroll;
         public bool RefitBusy;
         public readonly List<ulong> RefitNodes = new(3);
         public bool CenterClip;
-        public Control.MouseFilterEnum CenterFilter;
+        public Action? CenterDraw;
         public Action? CenterSort;
+        public Rect2 SummaryLocal;
+        public Control.MouseFilterEnum CenterFilter;
         public int Frames;
         public ulong Shake, Banner, Quote, Victory, Backstop, SummaryBackstop, Center, Summary, Creatures, FightUi;
         public Color BackstopModulate = Colors.White;
@@ -247,6 +252,7 @@ internal sealed class PortraitGameOverLayout
     private readonly Dictionary<ulong, TextServer.AutowrapMode> _wrapModes = new();
     private readonly HashSet<ulong> _logged = new();
     private readonly HashSet<ulong> _padded = new();
+    private readonly Dictionary<ulong, Control.MouseFilterEnum> _rowFilters = new();
     private readonly HashSet<ulong> _padHolders = new();
     private Window? _dragWindow;
     private bool _dragDown, _dragMoving;
@@ -567,6 +573,19 @@ internal sealed class PortraitGameOverLayout
         summary.AddThemeConstantOverride("margin_left", (int)SummaryMargin);
         summary.AddThemeConstantOverride("margin_right", (int)SummaryMargin);
 
+        // Nothing is moved: the window's clip is given to the CenterContainer's own canvas item. Godot raises a Control's
+        // size to its combined minimum size (Control::set_size and Control::_size_changed), so the container grows with the
+        // column and its own clip rect would grow with it. Control's NOTIFICATION_DRAW writes that rect and the clip, and
+        // the draw signal is emitted after it (CanvasItem::_notification_draw: notification(NOTIFICATION_DRAW) then
+        // emit_signal(draw)), so the handler below writes the window rect last, every draw. The renderer clips a clipped
+        // item's children to that rect (RendererCanvasCull::_cull_canvas_item: final_clip_rect = rect of the item).
+        if (state.CenterDraw == null)
+        {
+            Action drawn = () => ClipSummaryWindow(state);
+            state.CenterDraw = drawn;
+            center.Draw += drawn;
+        }
+
         state.SummaryScale = MathF.Min(SummaryMaxScale,
             MathF.Max(0.2f, (state.Canvas.X - 2f * SummarySide) / SummaryContentWidth));
         center.Scale = new Vector2(state.SummaryScale, state.SummaryScale);
@@ -587,8 +606,26 @@ internal sealed class PortraitGameOverLayout
         if (center is Container box) box.SortChildren += sort;
         state.Built = true;
         RefitSummary(state);
+        center.QueueRedraw();
         if (screen.GetWindow() is { } window) AttachSummaryDrag(window);
         GD.Print($"Portrait game over: the run summary scrolls in place at {state.SummaryScale:F3} of the game's size.");
+    }
+
+    /// <summary>
+    /// The window's clip, written after the engine has written the container's own (and grown) rect for this draw: the
+    /// canvas item is clipped to the window in its local units, so the rows only draw inside it whatever the container's
+    /// size. Runs once per draw of the container; only a change of the window needs a redraw to take effect.
+    /// </summary>
+    private static void ClipSummaryWindow(State state)
+    {
+        if (Live(state.Center) is not Control center) return;
+        if (state.SummaryLocal.Size.X < 1f || state.SummaryLocal.Size.Y < 1f) return;
+        RenderingServer.CanvasItemSetCustomRect(center.GetCanvasItem(), true, state.SummaryLocal);
+        RenderingServer.CanvasItemSetClip(center.GetCanvasItem(), true);
+        // What was applied, in canvas units, so the proof runs and the harness can check the drawing rather than the
+        // container's Control rect (which the engine may have grown past the window).
+        Vector2 scale = center.GetGlobalTransformWithCanvas().Scale;
+        center.SetMeta(SummaryClipMeta, new Rect2(center.GetGlobalRect().Position, state.SummaryLocal.Size * scale));
     }
 
     /// <summary>
@@ -605,11 +642,14 @@ internal sealed class PortraitGameOverLayout
         try
         {
             if (state.SummaryView <= 0f) state.SummaryView = center.Size.Y;
-            state.SummaryContent = MathF.Max(1f, MathF.Max(summary.GetCombinedMinimumSize().Y, summary.Size.Y));
+            Vector2 minimum = summary.GetCombinedMinimumSize();
+            state.SummaryContent = MathF.Max(1f, MathF.Max(minimum.Y, summary.Size.Y));
+            state.SummaryColumnWidth = MathF.Max(1f, minimum.X);
             state.SummaryMax = MathF.Max(0f, state.SummaryContent - state.SummaryView);
             state.SummaryScroll = Math.Clamp(state.SummaryScroll, 0f, state.SummaryMax);
             ApplySummaryScroll(state);
             PadSummaryChips(center);
+            IgnoreSummaryRows(center);
         }
         finally
         {
@@ -618,15 +658,19 @@ internal sealed class PortraitGameOverLayout
     }
 
     /// <summary>
-    /// Where the column sits in its window: centred when it fits, and moved up by the scroll when it does not. Also recorded
-    /// on the window in canvas units for the proof runs (the harness reads the two metas).
+    /// The column keeps its own size and is placed inside the clip: centred when it fits, top-aligned and moved up by the
+    /// scroll when it does not. The window's two metas are written here too, in canvas units, for the proof runs.
     /// </summary>
     private static void ApplySummaryScroll(State state)
     {
         if (Live(state.Summary) is not Control summary) return;
         if (Live(state.Center) is not Control center) return;
+        var size = new Vector2(state.SummaryColumnWidth, state.SummaryContent);
+        if (!summary.Size.IsEqualApprox(size)) summary.Size = size;
         float centred = MathF.Max(0f, (state.SummaryView - state.SummaryContent) * 0.5f);
-        var at = new Vector2(summary.Position.X, centred - state.SummaryScroll);
+        var at = new Vector2(
+            MathF.Max(0f, (state.SummaryViewWidth - size.X) * 0.5f),
+            centred - state.SummaryScroll);
         if (!summary.Position.IsEqualApprox(at)) summary.Position = at;
         center.SetMeta(SummaryScrollMeta, (int)MathF.Round(state.SummaryScroll * state.SummaryScale));
         center.SetMeta(SummaryMaxScrollMeta, (int)MathF.Round(state.SummaryMax * state.SummaryScale));
@@ -799,6 +843,26 @@ internal sealed class PortraitGameOverLayout
         }
     }
 
+    /// <summary>
+    /// The score rows are read-only labels, but a Control still takes the pointer: a row drawn (or clipped) outside the
+    /// window would swallow a tap meant for what is under it. Each row is made inert as it appears, and put back in
+    /// landscape.
+    /// </summary>
+    private void IgnoreSummaryRows(Control center)
+    {
+        if (center.GetNodeOrNull<Control>("%ScoreLineContainer") is not { } rows) return;
+        foreach (Node child in rows.GetChildren())
+        {
+            if (child is not Control row || !GodotObject.IsInstanceValid(row)) continue;
+            ulong id = row.GetInstanceId();
+            if (!_rowFilters.ContainsKey(id))
+            {
+                _rowFilters[id] = row.MouseFilter;
+                row.MouseFilter = Control.MouseFilterEnum.Ignore;
+            }
+        }
+    }
+
     /// <summary>Whether a control in the summary is one of the game's buttons, tickboxes, sliders or dropdowns.</summary>
     private static bool IsChip(Control control) =>
         control is NClickableControl or BaseButton or Slider or OptionButton || IsTypeNamed(control.GetType(), "NTickbox");
@@ -844,12 +908,19 @@ internal sealed class PortraitGameOverLayout
         // The screen's own window height, not the container's: a container may be taller than the window it is told to be
         // once its column has grown past it, and the clip stays where it was placed.
         state.SummaryView = size.Y;
+        state.SummaryViewWidth = size.X;
+        // The clip rect the draw handler writes, in the container's own units (the window, at its own origin).
+        var local = new Rect2(Vector2.Zero, size);
+        if (!state.SummaryLocal.IsEqualApprox(local))
+        {
+            state.SummaryLocal = local;
+            if (Live(state.Center) is Control window) window.QueueRedraw();
+        }
         if (!center.Position.IsEqualApprox(at) || !center.Size.IsEqualApprox(size))
         {
             center.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
             center.Position = at;
             center.Size = size;
-            (center as Container)?.QueueSort();
             if (_logged.Add(center.GetInstanceId()))
                 GD.Print($"Portrait game over: the summary window is {width:F0}x{height:F0} at {at.X:F0},{at.Y:F0}.");
         }
@@ -1044,14 +1115,22 @@ internal sealed class PortraitGameOverLayout
             if (GodotObject.InstanceFromId(id) is Node2D actor && GodotObject.IsInstanceValid(actor))
                 actor.GlobalPosition = new Vector2(startX, actor.GlobalPosition.Y);
 
-        // The window goes back to the game's own: the column re-centres, the clip and the filter are the game's again.
+        // The window goes back to the game's own: the clip handler and the sort hook are dropped (the engine's own draw
+        // then gives the container its full rect again), and its clip and filter are the game's once more.
+        if (state.CenterDraw is { } drawn && Live(state.Center) is Control drawnOn) drawnOn.Draw -= drawn;
         if (state.CenterSort is { } sort && Live(state.Center) is Container sorted) sorted.SortChildren -= sort;
         if (Live(state.Center) is Control center2)
         {
             center2.ClipContents = state.CenterClip;
             center2.MouseFilter = state.CenterFilter;
+            center2.RemoveMeta(SummaryClipMeta);
+            center2.QueueRedraw();
             if (center2 is Container again) again.QueueSort();
         }
+        foreach ((ulong id, Control.MouseFilterEnum filter) in _rowFilters)
+            if (GodotObject.InstanceFromId(id) is Control row && GodotObject.IsInstanceValid(row))
+                row.MouseFilter = filter;
+        _rowFilters.Clear();
         if (state.ArtAdded && Live(state.Screen) is Control owner)
             foreach (Node child in owner.GetChildren())
                 if (child.Name == ArtName) child.QueueFree();
