@@ -63,11 +63,12 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>One text control's own wrapping and sizing, before portrait took it in hand.</summary>
-    private readonly struct GridTextMode(TextServer.AutowrapMode wrap, bool fit, Control.SizeFlags flags)
+    private readonly struct GridTextMode(TextServer.AutowrapMode wrap, bool fit, Control.SizeFlags flagsH, Control.SizeFlags flagsV)
     {
         public readonly TextServer.AutowrapMode Wrap = wrap;
         public readonly bool Fit = fit;
-        public readonly Control.SizeFlags Flags = flags;
+        public readonly Control.SizeFlags FlagsH = flagsH;
+        public readonly Control.SizeFlags FlagsV = flagsV;
     }
 
     private readonly Dictionary<ulong, GridState> _gridStates = new();
@@ -192,7 +193,8 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is not RichTextLabel label || !GodotObject.IsInstanceValid(label)) continue;
             label.AutowrapMode = mode.Wrap;
             label.FitContent = mode.Fit;
-            label.SizeFlagsHorizontal = mode.Flags;
+            label.SizeFlagsHorizontal = mode.FlagsH;
+            label.SizeFlagsVertical = mode.FlagsV;
         }
         _gridTextModes.Clear();
     }
@@ -515,15 +517,17 @@ internal sealed partial class PortraitBetweenLayout
         float width = PortraitGridMath.InfoTextWidth(canvas.X);
         float left = PortraitGridMath.InfoTextLeft(canvas.X);
         float top = canvas.Y - PortraitGridMath.InfoTextTop;
-        // The game draws the line on one unwrapped row: the label hugs its text (FitContent) and shrinks to its centre, so it
-        // runs past both edges of any box. Portrait gives it the box's width, wraps it, and keeps it at 11 points.
+        // The game draws the line on one unwrapped row: the label hugs its text and shrinks to its centre, so it runs past
+        // both edges of any box. Portrait gives it the box's whole width and height: the width bounds the wrap, the forced
+        // fill keeps a real height even though fit_content's minimum width is the text's own.
         if (line.FindChild("BottomLabel", recursive: true, owned: false) is RichTextLabel label)
         {
             if (!_gridTextModes.ContainsKey(label.GetInstanceId()))
-                _gridTextModes[label.GetInstanceId()] = new GridTextMode(label.AutowrapMode, label.FitContent, label.SizeFlagsHorizontal);
+                _gridTextModes[label.GetInstanceId()] = new GridTextMode(label.AutowrapMode, label.FitContent,
+                    label.SizeFlagsHorizontal, label.SizeFlagsVertical);
             if (label.AutowrapMode != TextServer.AutowrapMode.WordSmart) label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-            if (label.FitContent) label.FitContent = false;
             if (label.SizeFlagsHorizontal != Control.SizeFlags.Fill) label.SizeFlagsHorizontal = Control.SizeFlags.Fill;
+            if (label.SizeFlagsVertical != Control.SizeFlags.Fill) label.SizeFlagsVertical = Control.SizeFlags.Fill;
             SetRichFontSize(label, PortraitGridMath.InfoTextFontSize);
         }
         if (Math.Abs(line.OffsetLeft - left) < 0.25f && Math.Abs(line.OffsetRight - (left + width)) < 0.25f &&
