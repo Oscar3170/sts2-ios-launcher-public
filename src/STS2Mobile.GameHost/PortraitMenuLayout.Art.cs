@@ -67,15 +67,22 @@ internal sealed partial class PortraitMenuLayout
         if (art.GetNodeOrNull<TextureRect>("TextureRect") is { Texture: not null } texture)
         {
             // Silent, Necrobinder and Fool already have a separate native backdrop: cover it, then frame the Spine as the
-            // figure the way the reference does (it holds only the character for these scenes).
-            Rect2 backdrop = texture.GetRect();
-            if (backdrop.Size.X < 1f || backdrop.Size.Y < 1f) return;
-            float coverScale = Mathf.Max(viewport.X / backdrop.Size.X, viewport.Y / backdrop.Size.Y) * overscan;
+            // figure the way the reference does (it holds only the character for these scenes). The stage is the texture
+            // rect's own size, never its live position: a full-rect TextureRect changes size when its position is written,
+            // and feeding that back made the frame diverge.
+            Vector2 stage = texture.Size;
+            if (!float.IsFinite(stage.X) || !float.IsFinite(stage.Y) || stage.X < 1f || stage.Y < 1f ||
+                stage.X > 20000f || stage.Y > 20000f) stage = ArtSize;
+            float coverScale = Mathf.Max(viewport.X / stage.X, viewport.Y / stage.Y) * overscan;
+            if (!float.IsFinite(coverScale) || coverScale <= 0f) return;
             texture.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
             if (texture.PivotOffset != Vector2.Zero) texture.PivotOffset = Vector2.Zero;
+            if (texture.Size.DistanceSquaredTo(stage) > 0.25f) texture.Size = stage;
             texture.Scale = new Vector2(coverScale, coverScale);
-            texture.Position = viewport * 0.5f - backdrop.GetCenter() * coverScale;
-            art.SetMeta(ArtFrameMeta, toCanvas * new Rect2(texture.Position, backdrop.Size * coverScale));
+            texture.Position = viewport * 0.5f - stage * 0.5f * coverScale;
+            Vector2 stageDrawn = stage * coverScale;
+            if (float.IsFinite(stageDrawn.X) && float.IsFinite(stageDrawn.Y))
+                art.SetMeta(ArtFrameMeta, toCanvas * new Rect2(texture.Position, stageDrawn));
 
             if (spine != null && ReadBounds(spine) is { } figure && figure.Size.X > 1f && figure.Size.Y > 1f)
             {
@@ -88,9 +95,14 @@ internal sealed partial class PortraitMenuLayout
                     _ => 0.49f,
                 };
                 Vector2 target = viewport * new Vector2(focus, 0.39f);
-                spine.Scale = Vector2.One * figureScale;
-                spine.Position = target - figure.GetCenter() * figureScale;
-                art.SetMeta(FigureFrameMeta, toCanvas * new Rect2(target - figure.Size * figureScale * 0.5f, figure.Size * figureScale));
+                if (float.IsFinite(figureScale) && figureScale > 0f)
+                {
+                    spine.Scale = Vector2.One * figureScale;
+                    spine.Position = target - figure.GetCenter() * figureScale;
+                    Vector2 drawn = figure.Size * figureScale;
+                    if (float.IsFinite(drawn.X) && float.IsFinite(drawn.Y))
+                        art.SetMeta(FigureFrameMeta, toCanvas * new Rect2(target - drawn * 0.5f, drawn));
+                }
             }
             else
             {
@@ -104,6 +116,7 @@ internal sealed partial class PortraitMenuLayout
             if (!art.HasMeta(CoverMeta)) art.SetMeta(CoverMeta, bounds);
             Rect2 cover = art.GetMeta(CoverMeta).AsRect2();
             float coverScale = Mathf.Max(viewport.X / cover.Size.X, viewport.Y / cover.Size.Y) * overscan;
+            if (!float.IsFinite(coverScale) || coverScale <= 0f) return;
             float bias = name switch
             {
                 "IRONCLAD_bg" or "REGENT_bg" => -0.07f,

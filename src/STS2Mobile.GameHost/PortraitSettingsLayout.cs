@@ -456,83 +456,70 @@ internal sealed class PortraitSettingsLayout
 
     private Vector2 ToCanvas(Vector2 point) => _tree == null ? point : _tree.Root.GetFinalTransform().AffineInverse() * point;
 
-    /// <summary>
-    /// The settings screen shown now, or null while the feedback screen it opens holds the view. Nothing else is tested: a
-    /// hover tip under the pointer is not the screen's child, and it is up over every row, so a hovered control says nothing
-    /// about which screen the finger is on (that test kept the language list's drag from ever starting).
-    /// </summary>
-    private NSettingsScreen? VisibleScreen()
+    /// <summary>Whether the feedback screen settings opens holds the view; while it does, a press is not the settings'.</summary>
+    private bool FeedbackHolds()
     {
-        // Settings hands the view to the feedback screen; while that is up, its press belongs to it.
         foreach (ulong id in _feedback)
             if (GodotObject.InstanceFromId(id) is Control feedback && GodotObject.IsInstanceValid(feedback) &&
                 feedback.IsVisibleInTree())
-                return null;
-        foreach (ulong id in _screens.Keys)
-            if (GodotObject.InstanceFromId(id) is NSettingsScreen screen && GodotObject.IsInstanceValid(screen) &&
-                screen.IsVisibleInTree())
-                return screen;
-        return null;
+                return true;
+        return false;
     }
 
+    /// <summary>
+    /// What the press lands on: an open dropdown's list, else a settings screen's rows area. The screen's own
+    /// <c>IsVisibleInTree</c> says nothing here: with the language list open the test host reports the screen as not visible
+    /// while its dropdown (drawn over the rows) plainly is, which kept the list's drag from ever starting. The hit test is
+    /// the geometry of the list and the rows area instead.
+    /// </summary>
     private void Begin(Vector2 point)
     {
         End();
         if (!_ready) return;
-        NSettingsScreen? screen = VisibleScreen();
-        if (screen == null) { Note("no settings screen is visible", point); return; }
-        if (!_screens.TryGetValue(screen.GetInstanceId(), out ScreenState? state)) { Note("screen not registered", point); return; }
-        // An open dropdown's list is drawn over the rows and scrolls itself.
-        foreach (ulong id in state.Dropdowns)
+        if (FeedbackHolds()) { Note("the feedback screen holds the view", point); return; }
+        // An open dropdown's list is drawn over the rows and scrolls itself; its items are what the finger went down on.
+        foreach (ulong id in _dropdowns.Keys.ToList())
         {
-            if (!_dropdowns.TryGetValue(id, out DropdownState? drop)) continue;
-            if (Resolve(id, drop) is not { } list) continue;
-            if (!list.IsVisibleInTree()) continue;
+            if (!_dropdowns.TryGetValue(id, out DropdownState? drop) || Resolve(id, drop) is not { } list ||
+                !list.IsVisibleInTree()) continue;
             Rect2 listRect = list.GetGlobalRect();
-            if (!listRect.HasPoint(point))
-            {
-                if (listRect.Intersects(new Rect2(point, Vector2.One)))
-                    Note($"list {listRect} does not hold {point}", point);
-                continue;
-            }
-            if (_listDrag?.GetValue(list) is not Vector2 listDrag) { Note("list has no drag target", point); continue; }
+            if (!listRect.HasPoint(point)) continue;
+            if (_listDrag?.GetValue(list) is not Vector2 listDrag) { Note("list has no drag target", point); return; }
             // A list too short to scroll still owns the press: a swipe on it is not a language change.
             float listLimit = _listLimit?.GetValue(list) is float room ? Math.Min(room, 0f) : 0f;
-            Start(DragKind.List, list, screen, point, listDrag.Y, listLimit);
+            Start(DragKind.List, list, list, point, listDrag.Y, listLimit);
             return;
         }
-        if (state.Clip == 0 || GodotObject.InstanceFromId(state.Clip) is not Control clip ||
-            !GodotObject.IsInstanceValid(clip))
+        foreach ((ulong id, ScreenState state) in _screens)
         {
-            Note("no rows area", point);
+            if (state.Clip == 0 || GodotObject.InstanceFromId(state.Clip) is not Control clip ||
+                !GodotObject.IsInstanceValid(clip) || !clip.IsVisibleInTree() || !clip.GetGlobalRect().HasPoint(point)) continue;
+            if (state.Scrollbar != 0 && GodotObject.InstanceFromId(state.Scrollbar) is Control bar &&
+                GodotObject.IsInstanceValid(bar) && bar.GetGlobalRect().HasPoint(point)) { Note("on the scrollbar", point); return; }
+            foreach (ulong sliderId in state.Sliders)
+                if (GodotObject.InstanceFromId(sliderId) is Control slider && GodotObject.IsInstanceValid(slider) &&
+                    slider.IsVisibleInTree() && slider.GetGlobalRect().HasPoint(point)) { Note("on a slider", point); return; }
+            if (state.Scroll == 0 || GodotObject.InstanceFromId(state.Scroll) is not Control scroll ||
+                !GodotObject.IsInstanceValid(scroll)) { Note("no scroll view", point); return; }
+            if (_scrollLimit?.GetValue(scroll) is not float limit || limit > -0.5f) { Note("the rows fit", point); return; }
+            if (_scrollDragY?.GetValue(scroll) is not float initial) { Note("no scroll target", point); return; }
+            Start(DragKind.Scroll, scroll, clip, point, initial, limit);
             return;
         }
-        if (!clip.GetGlobalRect().HasPoint(point)) { Note($"outside the rows area {clip.GetGlobalRect()}", point); return; }
-        if (state.Scrollbar != 0 && GodotObject.InstanceFromId(state.Scrollbar) is Control bar &&
-            GodotObject.IsInstanceValid(bar) && bar.GetGlobalRect().HasPoint(point)) { Note("on the scrollbar", point); return; }
-        foreach (ulong id in state.Sliders)
-        {
-            if (GodotObject.InstanceFromId(id) is Control slider && GodotObject.IsInstanceValid(slider) &&
-                slider.IsVisibleInTree() && slider.GetGlobalRect().HasPoint(point)) { Note("on a slider", point); return; }
-        }
-        if (state.Scroll == 0 || GodotObject.InstanceFromId(state.Scroll) is not Control scroll ||
-            !GodotObject.IsInstanceValid(scroll)) { Note("no scroll view", point); return; }
-        if (_scrollLimit?.GetValue(scroll) is not float limit || limit > -0.5f) { Note("the rows fit", point); return; }
-        if (_scrollDragY?.GetValue(scroll) is not float initial) { Note("no scroll target", point); return; }
-        Start(DragKind.Scroll, scroll, screen, point, initial, limit);
+        Note("no open list and no rows area at the press", point);
     }
 
     /// <summary>Why a press started no swipe; printed once per press while settings is open (a handful per run).</summary>
     private static void Note(string why, Vector2 point) =>
         GD.Print($"Portrait settings: press at ({point.X:F0},{point.Y:F0}) starts no swipe: {why}.");
 
-    private void Start(DragKind kind, Control target, Control screen, Vector2 point, float initial, float limit)
+    private void Start(DragKind kind, Control target, Control surface, Vector2 point, float initial, float limit)
     {
         _down = true;
         _dragging = false;
         _kind = kind;
         _target = target.GetInstanceId();
-        _surface = screen.GetInstanceId();
+        _surface = surface.GetInstanceId();
         _startY = point.Y;
         _initial = initial;
         _limit = limit;

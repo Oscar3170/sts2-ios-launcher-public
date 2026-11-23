@@ -33,7 +33,7 @@ internal sealed partial class PortraitMenuLayout
     private const float InfoMaxScale = 2.35f;
     private const float InfoSideRoom = 44f;
     private const float InfoTopFraction = 0.445f;
-    private const float InfoAscensionGap = 24f;
+    private const float InfoAscensionGap = 64f;
 
     private void LayoutCharacterSelect(Control screen, ScreenState state)
     {
@@ -112,26 +112,25 @@ internal sealed partial class PortraitMenuLayout
         PositionRow(0, columns, 0f);
         if (columns < buttons.Count) PositionRow(columns, buttons.Count - columns, cell.Y + GridGapY);
 
-        if (state.FocusCount != buttons.Count)
+        // Set the focus grid every frame: the game writes its own one-row neighbours when the screen opens or a character is
+        // picked, and those writes land after ours on some frames.
+        for (int i = 0; i < buttons.Count; i++)
         {
-            for (int i = 0; i < buttons.Count; i++)
-            {
-                Control button = buttons[i];
-                SaveFocus(button);
-                int row = i < columns ? 0 : 1;
-                int rowStart = row == 0 ? 0 : columns;
-                int rowCount = row == 0 ? columns : buttons.Count - columns;
-                int inRow = i - rowStart;
-                button.FocusNeighborLeft = buttons[rowStart + (inRow + rowCount - 1) % rowCount].GetPath();
-                button.FocusNeighborRight = buttons[rowStart + (inRow + 1) % rowCount].GetPath();
-                bool upper = row == 0;
-                Control other = (upper ? buttons.Skip(columns) : buttons.Take(columns))
-                    .MinBy(candidate => MathF.Abs(candidate.Position.X - button.Position.X)) ?? button;
-                button.FocusNeighborTop = (upper ? button : other).GetPath();
-                button.FocusNeighborBottom = (upper ? other : button).GetPath();
-            }
-            state.FocusCount = buttons.Count;
+            Control button = buttons[i];
+            SaveFocus(button);
+            int row = i < columns ? 0 : 1;
+            int rowStart = row == 0 ? 0 : columns;
+            int rowCount = row == 0 ? columns : buttons.Count - columns;
+            int inRow = i - rowStart;
+            button.FocusNeighborLeft = buttons[rowStart + (inRow + rowCount - 1) % rowCount].GetPath();
+            button.FocusNeighborRight = buttons[rowStart + (inRow + 1) % rowCount].GetPath();
+            bool upper = row == 0;
+            Control other = (upper ? buttons.Skip(columns) : buttons.Take(columns))
+                .MinBy(candidate => MathF.Abs(candidate.Position.X - button.Position.X)) ?? button;
+            button.FocusNeighborTop = (upper ? button : other).GetPath();
+            button.FocusNeighborBottom = (upper ? other : button).GetPath();
         }
+        state.FocusCount = buttons.Count;
         return top;
     }
 
@@ -160,6 +159,11 @@ internal sealed partial class PortraitMenuLayout
             if (number.OffsetTop != 11f) number.OffsetTop = 11f;
             if (number.OffsetBottom != 11f) number.OffsetBottom = 11f;
         }
+        // The info panel is the screen's later sibling and swallows taps on anything of its box: keep the ascension row (and
+        // its arrows) last among the screen's children. Reordering within the parent does not exit the tree.
+        if (ascension.GetParent() is Control parent && !PhoneHitArea.IsContainer(parent) &&
+            ascension.GetIndex() != parent.GetChildCount() - 1)
+            parent.MoveChild(ascension, parent.GetChildCount() - 1);
         return top;
     }
 
@@ -209,6 +213,8 @@ internal sealed partial class PortraitMenuLayout
         if (screen.GetNodeOrNull<Control>("ConfirmButton") is not { } confirm) return;
         if (!state.ConfirmScaled)
         {
+            // The screen can be laid out before the game has given the button its size; scaling a 0x0 box would lock it in.
+            if (confirm.Size.X < 1f || confirm.Size.Y < 1f) return;
             state.ConfirmScaled = true;
             var rectangles = new List<(Control Node, Rect2 Rect, Vector2 Pivot)>();
             Collect(confirm, rectangles);

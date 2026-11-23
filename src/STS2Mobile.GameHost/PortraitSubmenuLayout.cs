@@ -284,13 +284,19 @@ internal static partial class PortraitSubmenuLayout
             foreach (Node child in node.GetChildren())
             {
                 if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
-                if (matches(control.GetType().Name) && control.GetParent() is Control parent &&
-                    parents.Add(parent.GetInstanceId()))
+                if (matches(control.GetType().Name))
                 {
-                    capture(parent);
-                    foreach (string name in new[] { "separation", "h_separation", "v_separation" })
-                        if (!parent.HasThemeConstantOverride(name) || parent.GetThemeConstant(name) != separation)
-                            parent.AddThemeConstantOverride(name, separation);
+                    // The direct parent may be a margin wrapper that ignores separation; the row stack is an ancestor.
+                    int depth = 0;
+                    for (Node? ancestor = control.GetParent(); ancestor != null && ancestor != root && depth < 3;
+                         ancestor = ancestor.GetParent(), depth++)
+                    {
+                        if (ancestor is not Control parent || !parents.Add(parent.GetInstanceId())) continue;
+                        capture(parent);
+                        foreach (string name in new[] { "separation", "v_separation" })
+                            if (!parent.HasThemeConstantOverride(name) || parent.GetThemeConstant(name) != separation)
+                                parent.AddThemeConstantOverride(name, separation);
+                    }
                 }
                 Walk(control);
             }

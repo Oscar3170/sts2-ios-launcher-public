@@ -73,7 +73,7 @@ internal static partial class PortraitSubmenuLayout
         GrowListRows(screen, type => type == "NStatEntry", 100f, capture);
         // Their rows are laid out by the game's own container; spacing them also lets the touch pads reach 127 where the
         // container keeps a row shorter than its minimum.
-        SpaceRows(screen, type => type == "NStatEntry", 40, capture);
+        SpaceRows(screen, type => type == "NStatEntry", 56, capture);
 
         if (screen.GetNodeOrNull<GridContainer>(StatsColumnPath + "/CharacterStats/CharacterStatsContainer") is not { } characters) return;
         SetKept(characters, "columns", 1);

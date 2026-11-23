@@ -45,37 +45,20 @@ internal static partial class PortraitSubmenuLayout
         if (screen.GetNodeOrNull<Control>("Sidebar") is { } sidebar)
         {
             float scrollHeight = h / k - (CornerButtonsTop + Gap) / k;
-            // The sidebar's own sort would undo a moved child, so its content can only be scrolled in place when the sidebar
-            // is a plain control. It is one in the shipped scene; otherwise the filters keep their desktop sizes and the touch
-            // pads carry them.
-            bool inPlace = !sidebar.IsClass("Container");
-            if (!inPlace && sidebar.GetMeta("portrait_scroll_fallback", false).AsBool() == false)
-            {
-                sidebar.SetMeta("portrait_scroll_fallback", true);
-                GD.Print("Portrait card library: sidebar lays its children out; filters keep their desktop sizes and use touch pads.");
-            }
-            Place(sidebar, 0f, 0f, CardLibrarySidebarWidth, inPlace ? Math.Max(200f, scrollHeight) : h / k, capture);
+            // Nothing leaves the tree: the sidebar clips and the filter column moves under the finger (a container clip only
+            // lays it out again when it sorts, and the offset is re-applied every frame).
+            Place(sidebar, 0f, 0f, CardLibrarySidebarWidth, Math.Max(200f, scrollHeight), capture);
             if (sidebar.PivotOffset != Vector2.Zero) sidebar.PivotOffset = Vector2.Zero;
             var scale = new Vector2(k, k);
             if (sidebar.Scale != scale) sidebar.Scale = scale;
             if (sidebar.GetNodeOrNull<Control>("MarginContainer") is { } margins)
             {
                 capture(margins);
-                if (inPlace)
-                {
-                    // Nothing leaves the tree: the sidebar clips and the filter column moves under the finger.
-                    SetKept(sidebar, "clip_contents", true);
-                    SetConstant(margins, "margin_bottom", (int)Gap);
-                    SetConstant(margins.GetNodeOrNull<Control>("TopVBox"), "separation", CardLibraryModuleGap);
-                    GrowCardLibraryFilters(margins, 256f, FingerSize, capture);
-                    PortraitInPlaceScroll.Shared.Set(sidebar, margins, screen);
-                }
-                else
-                {
-                    // The back button stands 354 to 244 units above the screen's lower edge, over the sidebar's lower part.
-                    SetConstant(margins, "margin_bottom", (int)MathF.Ceiling((CornerButtonsTop + Gap) / k));
-                    SetConstant(margins.GetNodeOrNull<Control>("TopVBox"), "separation", CardLibraryModuleGap);
-                }
+                SetKept(sidebar, "clip_contents", true);
+                SetConstant(margins, "margin_bottom", (int)Gap);
+                SetConstant(margins.GetNodeOrNull<Control>("TopVBox"), "separation", CardLibraryModuleGap);
+                GrowCardLibraryFilters(margins, 256f, FingerSize, capture);
+                PortraitInPlaceScroll.Shared.Set(sidebar, margins, screen);
             }
         }
 

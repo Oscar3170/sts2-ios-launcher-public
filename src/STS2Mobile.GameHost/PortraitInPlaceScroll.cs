@@ -62,7 +62,9 @@ internal sealed class PortraitInPlaceScroll
     /// </summary>
     public void Set(Control clip, Control content, Control layout)
     {
-        if (!Valid(clip) || !Valid(content) || content.GetParent() != clip || clip.IsClass("Container")) return;
+        // A container clip lays its child out, but only when it sorts; the content offset written here each frame survives
+        // until the next sort and is then restored, so no initialized subtree has to leave the tree.
+        if (!Valid(clip) || !Valid(content) || content.GetParent() != clip) return;
         Prune();
         Region? region = _regions.Find(entry => entry.Clip == clip.GetInstanceId());
         if (region == null || region.Content != content.GetInstanceId())

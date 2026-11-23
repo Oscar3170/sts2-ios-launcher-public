@@ -182,10 +182,9 @@ internal static partial class PortraitSubmenuLayout
         PortraitInPlaceScroll.Shared.Set(panel, content, screen);
     }
 
-    /// <summary>The child of the panel that holds the move buttons, when the panel is a plain control that can be scrolled in place.</summary>
+    /// <summary>The child of the panel that holds the move buttons, when it is a direct child that can be moved in place.</summary>
     private static Control? MoveableContent(Control panel, Control button)
     {
-        if (panel.IsClass("Container")) return null;
         for (Node? node = button; node != null && node != panel; node = node.GetParent())
             if (node.GetParent() == panel && node is Control content) return content;
         return null;
