@@ -188,7 +188,9 @@ internal sealed class PortraitGameOverLayout
         public bool CenterClip;
         public Action? CenterDraw;
         public Action? CenterSort;
-        public Rect2 SummaryLocal;
+        public Rect2 SummaryWindow;
+        public bool BackstopFilterSet;
+        public Control.MouseFilterEnum BackstopFilter;
         public Control.MouseFilterEnum CenterFilter;
         public int Frames;
         public ulong Shake, Banner, Quote, Victory, Backstop, SummaryBackstop, Center, Summary, Creatures, FightUi;
@@ -585,6 +587,15 @@ internal sealed class PortraitGameOverLayout
             state.CenterDraw = drawn;
             center.Draw += drawn;
         }
+        // The summary's tint is a full-screen ColorRect with MouseFilter=Stop; the game never needs it to take a press (its
+        // Ui above holds the buttons), but it wins the hit test over Ui/MainMenuButton here, so it is made inert while the
+        // screen is in portrait (restored in landscape).
+        if (!state.BackstopFilterSet && Live(state.SummaryBackstop) is ColorRect tint)
+        {
+            state.BackstopFilterSet = true;
+            state.BackstopFilter = tint.MouseFilter;
+            tint.MouseFilter = Control.MouseFilterEnum.Ignore;
+        }
 
         state.SummaryScale = MathF.Min(SummaryMaxScale,
             MathF.Max(0.2f, (state.Canvas.X - 2f * SummarySide) / SummaryContentWidth));
@@ -619,13 +630,14 @@ internal sealed class PortraitGameOverLayout
     private static void ClipSummaryWindow(State state)
     {
         if (Live(state.Center) is not Control center) return;
-        if (state.SummaryLocal.Size.X < 1f || state.SummaryLocal.Size.Y < 1f) return;
-        RenderingServer.CanvasItemSetCustomRect(center.GetCanvasItem(), true, state.SummaryLocal);
+        if (state.SummaryWindow.Size.X < 1f || state.SummaryWindow.Size.Y < 1f) return;
+        // The custom rect is in the item's own space (RendererCanvasCull transforms it by the item's final transform), so
+        // the canvas window is mapped back through this item's real canvas transform instead of being assumed.
+        Transform2D toLocal = center.GetGlobalTransformWithCanvas().AffineInverse();
+        var local = new Rect2(toLocal * state.SummaryWindow.Position, toLocal.BasisXform(state.SummaryWindow.Size));
+        RenderingServer.CanvasItemSetCustomRect(center.GetCanvasItem(), true, local);
         RenderingServer.CanvasItemSetClip(center.GetCanvasItem(), true);
-        // What was applied, in canvas units, so the proof runs and the harness can check the drawing rather than the
-        // container's Control rect (which the engine may have grown past the window).
-        Vector2 scale = center.GetGlobalTransformWithCanvas().Scale;
-        center.SetMeta(SummaryClipMeta, new Rect2(center.GetGlobalRect().Position, state.SummaryLocal.Size * scale));
+        center.SetMeta(SummaryClipMeta, state.SummaryWindow);
     }
 
     /// <summary>
@@ -909,11 +921,11 @@ internal sealed class PortraitGameOverLayout
         // once its column has grown past it, and the clip stays where it was placed.
         state.SummaryView = size.Y;
         state.SummaryViewWidth = size.X;
-        // The clip rect the draw handler writes, in the container's own units (the window, at its own origin).
-        var local = new Rect2(Vector2.Zero, size);
-        if (!state.SummaryLocal.IsEqualApprox(local))
+        // The window in canvas units; the container's own units for the clip are derived from its real transform.
+        var canvasWindow = new Rect2(at, new Vector2(width, height));
+        if (!state.SummaryWindow.IsEqualApprox(canvasWindow))
         {
-            state.SummaryLocal = local;
+            state.SummaryWindow = canvasWindow;
             if (Live(state.Center) is Control window) window.QueueRedraw();
         }
         if (!center.Position.IsEqualApprox(at) || !center.Size.IsEqualApprox(size))
@@ -1173,7 +1185,11 @@ internal sealed class PortraitGameOverLayout
             Reflection.Value.BannerShow?.SetValue(banner, state.BannerShow);
             Reflection.Value.BannerHide?.SetValue(banner, state.BannerHide);
         }
-        if (Live(state.SummaryBackstop) is ColorRect tint && state.SummaryTinted) tint.Color = state.SummaryBackstopColor;
+        if (Live(state.SummaryBackstop) is ColorRect tint2)
+        {
+            if (state.SummaryTinted) tint2.Color = state.SummaryBackstopColor;
+            if (state.BackstopFilterSet) tint2.MouseFilter = state.BackstopFilter;
+        }
         if (Live(state.FightUi) is CanvasItem ui && state.FightFaded)
             ui.Modulate = new Color(ui.Modulate, state.FightUiAlpha);
 
