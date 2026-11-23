@@ -16,10 +16,6 @@ internal sealed class PortraitNavigationPads
 {
     private const string BackTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NBackButton";
     private const string ArrowTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NGoldArrowButton";
-    /// <summary>The pad a screen's own layout already put on the control (PortraitTargetPads), which knows its neighbours.</summary>
-    private const string ScreenPadMeta = "phone_target_pad";
-    /// <summary>The control a screen's planner owns, even where it deliberately keeps its own target under the minimum.</summary>
-    private const string PlannedControlMeta = "phone_target_planned";
     private const string ShowPosField = "_showPos";
     private const string HidePosField = "_hidePos";
     private const string EnabledField = "_isEnabled";
@@ -80,34 +76,14 @@ internal sealed class PortraitNavigationPads
                 continue;
             }
             if (!control.IsVisibleInTree() || control.Size.X < 1f || control.Size.Y < 1f) continue;
-            bool back = IsBack(control);
-            if (back) PlaceBack(control);
-            // A screen layout that owns this control decides its pad: it knows the neighbours and may cap it short on purpose.
-            // Back is the exception: every back button must be a full target, so it is measured from its own art and padded
-            // even where a planner claimed it (the gate found card-library and relic-collection Backs padded by nobody).
-            if (!back && (control.HasMeta(PlannedControlMeta) ||
-                          (PhoneHitArea.Of(control) is { } screenPad && screenPad.HasMeta(ScreenPadMeta))))
-            {
-                // Ours and added before the planner took the control: shrink its offsets back to the art's own box, but never
-                // hide the shared area — the planner owns its visibility and would not re-show it for several frames.
-                if (PhoneHitArea.Of(control) is { } stale && !stale.HasMeta(ScreenPadMeta))
-                {
-                    stale.OffsetLeft = 0f;
-                    stale.OffsetTop = 0f;
-                    stale.OffsetRight = 0f;
-                    stale.OffsetBottom = 0f;
-                }
-                // Forget our own pad on this control: if the planner releases it, the next pass computes it again.
-                _paddedAt.Remove(id);
-                continue;
-            }
+            if (IsBack(control)) PlaceBack(control);
             Vector2 scale = control.GetGlobalTransformWithCanvas().Scale.Abs();
             if (scale.X < 0.01f || scale.Y < 0.01f) continue;
             float padX = Mathf.Max(0f, (PortraitBands.MinTarget - control.Size.X * scale.X) * 0.5f) / scale.X;
             float padY = Mathf.Max(0f, (PortraitBands.MinTarget - control.Size.Y * scale.Y) * 0.5f) / scale.Y;
             Control? area = PhoneHitArea.Of(control);
             // Write only when something actually differs: a pad rebuilt every frame between press and release is a tap that
-            // can be lost. A hidden area (a screen planner re-planning) still gets shown again here.
+            // can be lost. An area hidden by a screen change is shown again here.
             bool stable = area != null
                 && Math.Abs(area.OffsetLeft + padX) < 0.5f && Math.Abs(area.OffsetRight - padX) < 0.5f
                 && Math.Abs(area.OffsetTop + padY) < 0.5f && Math.Abs(area.OffsetBottom - padY) < 0.5f;

@@ -131,12 +131,13 @@ internal static class PortraitTargetPads
                 PhoneHitArea.Grow(control, l, t, r, b);
                 area = PhoneHitArea.Of(control);
             }
-            else if (MathF.Abs(area.OffsetLeft - l) > 0.5f || MathF.Abs(area.OffsetTop - t) > 0.5f ||
+            // PhoneHitArea.Grow stores the left and top reach as negative offsets.
+            else if (MathF.Abs(area.OffsetLeft + l) > 0.5f || MathF.Abs(area.OffsetTop + t) > 0.5f ||
                      MathF.Abs(area.OffsetRight - r) > 0.5f || MathF.Abs(area.OffsetBottom - b) > 0.5f)
             {
                 // Same visible pad, new rectangle: move its offsets only.
-                area.OffsetLeft = l;
-                area.OffsetTop = t;
+                area.OffsetLeft = -l;
+                area.OffsetTop = -t;
                 area.OffsetRight = r;
                 area.OffsetBottom = b;
             }
@@ -155,7 +156,7 @@ internal static class PortraitTargetPads
                 continue;
             }
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control) &&
-                control.GetType().Name != BackTypeName)
+                control.GetType().FullName != BackTypeName)
                 RemovePad(control);
         }
         plan.Applied.Clear();
@@ -218,7 +219,7 @@ internal static class PortraitTargetPads
             if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
             // The navigation pad pass owns every Back button's target: collecting it here would make this planner the writer
             // of the shared PhoneHitArea and could hide it between a press and its release.
-            if (control.GetType().Name is BackTypeName or GoldArrowTypeName)
+            if (control.GetType().FullName is BackTypeName or GoldArrowTypeName)
             {
                 // Navigation pads own Back and gold-arrow targets; this planner must not write their shared areas.
                 Collect(child, plan, canvas);
