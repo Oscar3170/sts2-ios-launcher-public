@@ -829,10 +829,19 @@ internal sealed partial class PortraitBetweenLayout
     private void KeepEventRows(EventState state)
     {
         if (state.Rows.Count == 0) return;
+        int gap = state.Tight ? PortraitEventMath.GapTight
+            : state.Compact ? PortraitEventMath.GapCompact : PortraitEventMath.GapTall;
+        float y = 0f;
         for (int i = 0; i < state.Rows.Count; i++)
         {
             EventRow entry = state.Rows[i];
             if (ResolveEventNode(entry.Id) is not Control row) continue;
+            // The native AnimateIn tween writes the whole position vector from the place the button had before the page
+            // pass grew it. Keep the measured stack's Y here (X is left to the tween) so a taller row never overlaps the
+            // next once its 154/132 u spacing has outlived the tween.
+            float height = MathF.Max(row.Size.Y, row.CustomMinimumSize.Y);
+            if (MathF.Abs(row.Position.Y - y) > 0.5f) row.Position = new Vector2(row.Position.X, y);
+            y += height + gap;
             if (row.Size.IsEqualApprox(entry.Size)) continue;
             var pivot = row.Size * 0.5f;
             if (!row.PivotOffset.IsEqualApprox(pivot)) row.PivotOffset = pivot;

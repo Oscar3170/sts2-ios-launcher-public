@@ -685,11 +685,36 @@ internal sealed class PortraitGameOverLayout
             {
                 if (child is not Control block || !GodotObject.IsInstanceValid(block)) continue;
                 if (!block.Visible || block.Modulate.A < 0.05f || block.Size.Y < 1f) continue;
+                // A block that draws nothing (an empty badge row, the score bar before its unlock, an empty discovery
+                // section) must not lengthen the range: its structure still has a height.
+                if (!DrawsSomething(block)) continue;
                 bottom = MathF.Max(bottom, block.Position.Y + block.Size.Y);
             }
             if (bottom > 1f) return bottom;
         }
         return MathF.Max(1f, fallback);
+    }
+
+    /// <summary>Whether anything inside this block is drawn (a label with text, a texture, a button, a chip).</summary>
+    private static bool DrawsSomething(Control block)
+    {
+        foreach (Node child in block.GetChildren())
+        {
+            if (child is not Control part || !GodotObject.IsInstanceValid(part)) continue;
+            if (!part.Visible || part.Size.Y < 2f) continue;
+            switch (part)
+            {
+                case Label label when label.Text.Trim().Length > 0: return true;
+                case RichTextLabel rich when rich.GetParsedText().Trim().Length > 0: return true;
+                case TextureRect { Texture: not null }: return true;
+                case BaseButton or NClickableControl: return true;
+                case Container: if (DrawsSomething(part)) return true; break;
+                default:
+                    if (part.GetChildCount() > 0 && DrawsSomething(part)) return true;
+                    break;
+            }
+        }
+        return false;
     }
 
     /// <summary>
@@ -735,6 +760,7 @@ internal sealed class PortraitGameOverLayout
             switch (input)
             {
                 case InputEventScreenTouch touch when touch.Index == 0:
+                    if (touch.Pressed) ProbeSummaryPress(state, point, "touch");
                     if (touch.Pressed) BeginSummaryDrag(state, point);
                     else EndSummaryDrag(state, release: false);
                     return;
@@ -742,6 +768,7 @@ internal sealed class PortraitGameOverLayout
                     MoveSummaryDrag(state, point);
                     return;
                 case InputEventMouseButton button when button.ButtonIndex == MouseButton.Left:
+                    if (button.Pressed) ProbeSummaryPress(state, point, "mouse");
                     if (button.Pressed) BeginSummaryDrag(state, point);
                     else EndSummaryDrag(state, release: false);
                     return;
@@ -1071,6 +1098,19 @@ internal sealed class PortraitGameOverLayout
         RenderingServer.CanvasItemSetCustomRect(center.GetCanvasItem(), true, local);
         RenderingServer.CanvasItemSetClip(center.GetCanvasItem(), true);
         center.SetMeta(SummaryClipMeta, state.SummaryWindow);
+    }
+
+    /// <summary>
+    /// One line per press so a drag that does not start can be told apart from one that starts and never moves: where the
+    /// press was, whether it fell in the placed window, what the range was, whether our handler is attached, and what the
+    /// viewport's own hit test says is under the finger (for the proof runs).
+    /// </summary>
+    private void ProbeSummaryPress(State state, Vector2 point, string kind)
+    {
+        Control? hovered = _dragWindow?.GuiGetHoveredControl();
+        GD.Print($"Portrait game over: summary press ({kind}) {point} window={state.SummaryWindow} " +
+                 $"inside={state.SummaryWindow.HasPoint(point)} max={state.SummaryMax:F0} scroll={state.SummaryScroll:F0} " +
+                 $"built={state.Built} attached={_dragWindow != null} hovered={(hovered == null ? "none" : $"{hovered.GetType().Name}:{hovered.Name}")}");
     }
 
     /// <summary>One body: read its own bounds and ease it in from the nearest edge by the least that clears it.</summary>

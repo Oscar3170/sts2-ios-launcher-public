@@ -27,6 +27,7 @@ internal sealed partial class PortraitMenuLayout
             ShiftTopControl(screen, state, name, safe.Position.Y);
         ScaleHeaderLabel(screen, state, "%UnderConstruction", safe, minPoints: 11f, right: false);
         ScaleHeaderLabel(screen, state, "%DreadInfoButton", safe, minPoints: 0f, right: true);
+        GrowHeaderTarget(screen, "%DreadInfoButton");
 
         // A finger's target is 127 canvas units, 197.5 of this screen's units; the tickbox and the win streak above it are
         // short wide blocks, so they are stacked with the room between them that the pad needs to reach that size.

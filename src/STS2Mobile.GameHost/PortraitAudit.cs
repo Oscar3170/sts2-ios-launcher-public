@@ -67,7 +67,8 @@ internal static class PortraitAudit
         var outside = new System.Collections.Generic.List<string>();
         foreach (Node node in Descendants(root))
         {
-            if (node is not Control control || !IsContent(control) || !control.IsVisibleInTree()) continue;
+            // Only interactive content: decorative labels (credits roll, scroll-list rows) are informational in Describe.
+            if (node is not Control control || !IsTouchTarget(control) || !control.IsVisibleInTree()) continue;
             if (EffectiveAlpha(control) < 0.05f) continue;
             if (!DrawnRect(control, out Rect2 rect) || rect.Size.X < 2f || rect.Size.Y < 2f) continue;
             if (rect.Intersects(canvas) || IsParked(control, canvas) || IsScrollableContent(control, canvas)) continue;
@@ -105,12 +106,14 @@ internal static class PortraitAudit
     private static bool IsParked(Control control, Rect2 canvas)
     {
         if (control.MouseFilter == Control.MouseFilterEnum.Ignore) return false;
-        object? enabled = control.GetType()
-            .GetField("_isEnabled", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
-                                    System.Reflection.BindingFlags.NonPublic)
-            ?.GetValue(control);
-        if (enabled is not false) return false;
-        return !DrawnRect(control, out Rect2 rect) || !rect.Intersects(canvas);
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic;
+        Type type = control.GetType();
+        object? enabled = type.GetField("_isEnabled", flags)?.GetValue(control);
+        if (!DrawnRect(control, out Rect2 rect) || rect.Intersects(canvas)) return false;
+        if (enabled is false) return true;
+        // A corner button the game has slid to its hide position (e.g. the credits Back before it is shown) is parked too.
+        return type.GetField("_hidePos", flags)?.GetValue(control) is Vector2 hide && control.GlobalPosition.DistanceTo(hide) < 2f;
     }
 
     private static readonly HashSet<string> CardGlowParts = new(StringComparer.Ordinal)

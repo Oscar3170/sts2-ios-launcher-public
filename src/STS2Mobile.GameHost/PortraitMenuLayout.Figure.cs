@@ -109,7 +109,7 @@ internal sealed partial class PortraitMenuLayout
         art.Position = viewport * 0.5f - cover.GetCenter() * artScale;
         float figureScale = Mathf.Min(viewport.X * 1.40f / figureBounds.Size.X, viewport.Y * 0.63f / figureBounds.Size.Y);
         if (!float.IsFinite(figureScale) || figureScale <= 0f) return false;
-        Vector2 target = viewport * new Vector2(FigureFocus(name), 0.39f);
+        Vector2 target = FigureTarget(art, viewport, toCanvas, FigureFocus(name));
         figure.Scale = new Vector2(figureScale / artScale, figureScale / artScale);
         figure.Position = (target - art.Position - figureBounds.GetCenter() * figureScale) / artScale;
         Vector2 drawn = figureBounds.Size * figureScale;

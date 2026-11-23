@@ -49,11 +49,23 @@ internal sealed partial class PortraitMenuLayout
         // matching visual size. Both are placed inside the safe band's top edge, clear of the centred title.
         ScaleHeaderLabel(screen, state, "%UnderConstruction", safe, minPoints: 11f, right: false);
         ScaleHeaderLabel(screen, state, "%BlitzInfoButton", safe, minPoints: 0f, right: true);
+        GrowHeaderTarget(screen, "%BlitzInfoButton");
 
         float ascensionTop = PrepareAscension(screen, state, safe, gridTop);
         PrepareInfo(screen, state, state.TypeName == BlitzTypeName, safe, ascensionTop);
         // Last, so the ascension panel (moved last for its arrows) cannot cover the back's input.
         EnsureBackOnTop(screen, state);
+    }
+
+    /// <summary>The icon-only header buttons are drawn smaller than a finger: pad them to 127 canvas units in place.</summary>
+    private static void GrowHeaderTarget(Control screen, string name)
+    {
+        if (screen.GetNodeOrNull<Control>(name) is not { } button) return;
+        Vector2 scale = button.GetGlobalTransformWithCanvas().Scale.Abs();
+        if (scale.X < 0.01f || scale.Y < 0.01f) return;
+        float padX = Mathf.Max(0f, (PortraitBands.MinTarget - button.Size.X * scale.X) * 0.5f) / scale.X;
+        float padY = Mathf.Max(0f, (PortraitBands.MinTarget - button.Size.Y * scale.Y) * 0.5f) / scale.Y;
+        if (padX > 0f || padY > 0f) PhoneHitArea.Grow(button, padX, padY, padX, padY);
     }
 
     private static Control? Roster(Control screen, ScreenState state) =>

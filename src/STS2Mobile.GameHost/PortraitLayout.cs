@@ -64,6 +64,7 @@ internal sealed class PortraitLayout
     private readonly HashSet<ulong> _wiredTopBars = new();
     private readonly HashSet<ulong> _wiredInventories = new();
     private readonly HashSet<ulong> _wiredPotionHolders = new();
+    private readonly HashSet<ulong> _wiredBossIcons = new();
     // Labels whose font portrait enlarges (top bar numbers, the deck count), with the game's own font size to put back in
     // landscape.
     private readonly Dictionary<ulong, (bool HadOverride, int Size)> _fontSizes = new();
@@ -1056,14 +1057,20 @@ internal sealed class PortraitLayout
         if (topBar.GetNodeOrNull<Control>("%BossIcon/Icon") is { } bossTexture)
         {
             // The second boss icon is added when an act with two bosses starts, and hidden again at the first of them.
+            // The Share screenshot temporarily reparents nodes, so an icon can enter the tree twice; wire each one once.
             foreach (CanvasItem existing in bossTexture.GetChildren().OfType<CanvasItem>())
-                existing.VisibilityChanged += QueueApply;
+                WireBossIconItem(existing);
             bossTexture.ChildEnteredTree += child =>
             {
-                if (child is CanvasItem item) item.VisibilityChanged += QueueApply;
+                if (child is CanvasItem item) WireBossIconItem(item);
                 QueueApply();
             };
         }
+    }
+
+    private void WireBossIconItem(CanvasItem item)
+    {
+        if (_wiredBossIcons.Add(item.GetInstanceId())) item.VisibilityChanged += QueueApply;
     }
 
     /// <summary>How far a shown second boss icon reaches past the right edge of the first one, zero when there is none.</summary>

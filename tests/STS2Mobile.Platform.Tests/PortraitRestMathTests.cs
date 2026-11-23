@@ -207,6 +207,21 @@ public class PortraitRestMathTests
     }
 
     [Fact]
+    public void AShortBufferStillGetsTheTopRowOfTheGrid()
+    {
+        // The container and the question are placed from the first box; a one-slot buffer must not turn that into the pinned
+        // bottom row (that placed the whole grid one row too low and the copy under it).
+        Span<RestOptionsRow> one = stackalloc RestOptionsRow[1];
+        int filled = PortraitRestMath.OptionsGrid(4, 1080f, 1920f, one);
+        Span<RestOptionsRow> two = stackalloc RestOptionsRow[2];
+        PortraitRestMath.OptionsGrid(4, 1080f, 1920f, two);
+        Assert.Equal(1, filled);
+        Assert.Equal(two[0].Y, one[0].Y, 3);
+        Assert.Equal(1920f - PortraitRestMath.OptionsBottomInset, two[1].Y, 3);
+        Assert.True(one[0].Y < two[1].Y - 1f, "the first box is the top row");
+    }
+
+    [Fact]
     public void TheCopyBandStaysBetweenTheLabelsAndTheFooterLaneAtEveryCountAndShape()
     {
         Span<RestOptionsRow> rows = stackalloc RestOptionsRow[2];

@@ -82,7 +82,9 @@ internal sealed class PortraitSettingsLayout
     // panel is 736 x 610 (inside the canvas), the emoji buttons 160 units and the dropdown's list rows 88, and its 22-24
     // unit text reads at 15-17 points. Its decorations (sun, cupcake, flower) reach 530 units from an edge, which twice over
     // stays inside 1080.
-    private const float FeedbackDesignWidth = 540f;
+    // 720 rather than 540: the seven 80 unit emoji buttons (with their gaps) are wider than 540, and only fit when the
+    // virtual canvas is as wide as that row.
+    private const float FeedbackDesignWidth = 720f;
     private const float FeedbackBottomMargin = 40f;
 
     /// <summary>One settings screen: the rows area, its scroll, and the dropdowns and sliders in its panels.</summary>
@@ -777,6 +779,11 @@ internal sealed class PortraitSettingsLayout
             {
                 if (child is not Control item || !_itemType!.IsInstanceOfType(item)) continue;
                 GrowHeight(item, row);
+                // The list sizes itself from its rows' Size (NDropdownContainer.RefreshLayout sums Size.Y), and a container
+                // only applies its children's new minimums on its next sort. Write the grown height now, or the list is
+                // sized for the native one-row height while the rows are already 44 points tall: the first row is clipped
+                // and a longer list cannot be scrolled to its last entry.
+                if (item.Size.Y + 0.5f < row) item.Size = new Vector2(item.Size.X, row);
             }
         }
         Rect2 buttonRect = dropdown.GetGlobalRect();

@@ -12,9 +12,10 @@ namespace STS2Mobile.GameHost;
 /// button keeps its size, hover and slide animation, and an invisible <see cref="PhoneHitArea"/> pad reaches out around it
 /// (in the control's own units, so a screen drawn at a scale still gets a full-size target). Applied from the node-added pass
 /// and kept on the visible buttons by the per-frame pass; removed again in landscape.
-/// <para>It is also the single writer of every Back's <c>_showPos</c>/<c>_hidePos</c>: a shown Back sits on the screen's
-/// footer line, and a disabled one is parked wholly outside the canvas, so no sliver of its enlarged art is left at the left
-/// edge (the native hide offset only clears the game's own unscaled button).</para>
+/// <para>It is also the single writer of every Back's <c>_showPos</c>/<c>_hidePos</c>: a shown Back puts its rect's top on the
+/// screen's footer line, and a disabled one is parked wholly outside the canvas, so no sliver of its enlarged art is left at the
+/// left edge (the native hide offset only clears the game's own unscaled button). A Back is never pivoted and its places are
+/// written in its parent's coordinates, the space the game's own <c>Position = _showPos</c> assumes.</para>
 /// </summary>
 internal sealed class PortraitNavigationPads
 {
@@ -97,8 +98,8 @@ internal sealed class PortraitNavigationPads
             else if (_hoveredBacks.Contains(id)) factor = 1.05f;
             var target = new Vector2(scale * factor, scale * factor);
             if (!control.Scale.IsEqualApprox(target)) control.Scale = target;
-            var pivot = new Vector2(0f, control.Size.Y);
-            if (!control.PivotOffset.IsEqualApprox(pivot)) control.PivotOffset = pivot;
+            // The art scales about the rect's top-left, the corner the hit test uses; a pivot would draw it away from that rect.
+            if (control.PivotOffset != Vector2.Zero) control.PivotOffset = Vector2.Zero;
         }
     }
 
@@ -205,19 +206,21 @@ internal sealed class PortraitNavigationPads
 
     /// <summary>
     /// Places every Back in canvas space. A shown Back sits in the screen's footer: a comparison panel's Cancel and a Back on
-    /// the enchant screen (whose legend plate ends 260 units above the canvas bottom) join the comparison buttons' line, and
-    /// any other screen keeps the game's own footer gap. A hidden Back is parked wholly outside the canvas: the native slide
-    /// is kept, but its -180 local units cannot clear a portrait Back drawn from x = 0, so the parking spot comes from the
-    /// drawn art itself, with room for the hover growth.
-    /// <para>The cached show and hide positions are written in canvas coordinates (the origin the native slide moves), so a
-    /// screen scaled on a virtual canvas lands at the same place. A slide already running is retargeted once; afterwards the
-    /// settled position is corrected whenever the game moves it back.</para>
+    /// the enchant screen (whose legend plate ends 260 units above the canvas bottom) put their top on the comparison buttons'
+    /// line, the upgrade screen's Close above its View Upgrades box, and any other screen keeps the game's own footer gap under
+    /// its bottom. A hidden Back is parked wholly outside the canvas: the native slide is kept, but its -180 local units cannot
+    /// clear a portrait Back drawn from x = 0.
+    /// <para>Everything is written to <c>Position</c>, the rect's top-left: that is the corner the game's own <c>_showPos</c>
+    /// means (<c>OnWindowChange</c> assigns it straight to <c>Position</c>) and the corner Godot's hit test, <c>GetGlobalRect</c>
+    /// and the harness all read, so the art, the tap target and the measured rect cannot drift apart. The button is never pivoted:
+    /// a bottom pivot renders the art one height away from the rect that receives the taps.</para>
     /// </summary>
     private void PlaceBack(Control control)
     {
         Fields fields = FieldsFor(control.GetType());
         if (fields.ShowPos is null) return;
-        Vector2 parentScale = control.GetParent() is Control parent ? parent.GetGlobalTransform().Scale.Abs() : Vector2.One;
+        Control? parent = control.GetParent() as Control;
+        Vector2 parentScale = parent is not null ? parent.GetGlobalTransform().Scale.Abs() : Vector2.One;
         if (parentScale.X < 0.01f || parentScale.Y < 0.01f) return;
         Rect2 canvas = control.GetViewport().GetVisibleRect();
         // The reference Back is 230 units across, whatever the screen's own scale. The button's own Scale is ours (the game's
@@ -225,55 +228,49 @@ internal sealed class PortraitNavigationPads
         float scale = DrawnWidth / (control.Size.X * parentScale.X);
         ulong id = control.GetInstanceId();
         _backScales[id] = scale;
-        // Capture the game's own slide places and its own pivot/scale before anything below writes over them: leaving
-        // portrait has to put the game's button back, not this pass's portrait one.
+        // Capture the game's own places, pivot and scale before anything below writes over them: leaving portrait has to put
+        // the game's button back, not this pass's portrait one.
         if (!_originalPositions.ContainsKey(id))
         {
             var currentShow = (Vector2)fields.ShowPos.GetValue(control)!;
             var currentHide = fields.HidePos is null ? currentShow : (Vector2)fields.HidePos.GetValue(control)!;
             _originalPositions[id] = (currentShow, currentHide, control.PivotOffset, control.Scale);
         }
-        // Set the portrait pivot and scale now, so the drawn measurement below already sees this frame's shape.
-        control.PivotOffset = new Vector2(0f, control.Size.Y);
+        if (control.PivotOffset != Vector2.Zero) control.PivotOffset = Vector2.Zero;
         if (!control.Scale.IsEqualApprox(new Vector2(scale, scale))) control.Scale = new Vector2(scale, scale);
-        // The button's own box, and everything it draws, pivot and scale included. The pivot is its left/bottom corner, so
-        // the origin is the box's drawn bottom-left: the line is measured from the box (its decoration may reach past it, and
-        // an invisible outline or glow must never move the button), while the parking spot uses the whole drawn art.
+        // The box the button occupies on the canvas: its own size through our scale and the parent's.
+        float height = control.Size.Y * scale * parentScale.Y;
+        // Park clear of everything the button can draw, not just its box: the native art plane is wider than the box and the
+        // hover/focus outline lights up around it. `reach` is the art's right edge measured from the box's left edge.
         Rect2 box = CanvasRect(control);
-        Rect2 drawn = DrawnRect(control);
-        Vector2 origin = control.GlobalPosition;
-        float height = origin.Y - box.Position.Y;
-        if (height < 1f || height > canvas.Size.Y) height = control.Size.Y * parentScale.Y * scale;
-        float artHeight = Math.Max(height, origin.Y - drawn.Position.Y);
-        float reach = Math.Max(DrawnWidth, drawn.End.X - origin.X);
+        float reach = Math.Max(DrawnWidth, DrawnUnion(control).End.X - box.Position.X);
         Vector2 offset = fields.PosOffset?.GetValue(control) is Vector2 value ? value : new Vector2(40f, 354f);
-        float bottom;
+        float top;
         if (IsUpgradeClose(control))
         {
             // The reference lifts the upgrade screen's Close above its View Upgrades box (PortraitPreviewMath.CloseTop, 470
             // reference units). The button's scene offsets are in its scaled parent's units and landed it level with the box.
-            bottom = PortraitPreviewMath.CloseTop(canvas.End.Y) + height;
+            top = PortraitPreviewMath.CloseTop(canvas.End.Y);
         }
         else if (IsPanelBack(control) || HasFooterLegend(control))
         {
-            // The comparison buttons' line (PortraitPreviewMath.ButtonTop): its Cancel and Confirm draw their tops on it, and
-            // it is the first line under the legend plate, whose bottom is always 260 canvas units above the canvas's bottom.
-            bottom = PortraitPreviewMath.ButtonTop(canvas.End.Y) + height;
+            // The comparison buttons' line (PortraitPreviewMath.ButtonTop): its Cancel and Confirm put their tops on it, and it
+            // is the first line under the legend plate, whose bottom is always 260 canvas units above the canvas's bottom.
+            top = PortraitPreviewMath.ButtonTop(canvas.End.Y);
         }
         else
         {
             // The game's own footer gap below the screen's bottom edge (the button's own bottom before the screen edge),
-            // mapped through the parent's scale.
+            // mapped through the parent's scale; the enlarged art then grows up from that gap.
             float gap = Math.Max(0f, offset.Y - control.Size.Y) * parentScale.Y;
-            bottom = canvas.End.Y - gap;
+            top = canvas.End.Y - gap - height;
         }
-        float lowest = canvas.Position.Y + artHeight + FooterBottomMargin;
-        float highest = Math.Max(lowest, canvas.End.Y - FooterBottomMargin);
-        bottom = Math.Min(Math.Max(bottom, lowest), highest);
-        var show = new Vector2(canvas.Position.X, bottom);
+        float highest = Math.Max(canvas.Position.Y + FooterBottomMargin, canvas.End.Y - height - FooterBottomMargin);
+        top = Math.Min(Math.Max(top, canvas.Position.Y + FooterBottomMargin), highest);
+        var show = LocalPoint(control, new Vector2(canvas.Position.X, top));
         // The native slide moves one button width left (NBackButton._hideOffset is -180 local units); keep its direction and
-        // timing, but clear the whole drawn art, plus the hover growth about the left/bottom pivot.
-        var hide = new Vector2(show.X - reach * HoverHeadroom - HideMargin, show.Y);
+        // timing, but clear everything the button can draw, plus the hover growth about the top-left it scales from.
+        var hide = LocalPoint(control, new Vector2(canvas.Position.X - reach * HoverHeadroom - HideMargin, top));
         bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed)
             || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
         bool enabled = fields.Enabled?.GetValue(control) is true;
@@ -314,12 +311,19 @@ internal sealed class PortraitNavigationPads
         control.Scale = original.Scale;
     }
 
+    /// <summary>A canvas point in the Back's parent's own coordinates, where <c>Position</c> is written.</summary>
+    private static Vector2 LocalPoint(Control control, Vector2 canvas)
+    {
+        if (control.GetParent() is not Control parent || !parent.IsInsideTree()) return canvas;
+        return parent.GetGlobalTransform().AffineInverse() * canvas;
+    }
+
     /// <summary>
-    /// Everything the button draws, in canvas units: its own box and every visible child's (the art and the outline), through
-    /// their live canvas transforms, so the portrait scale and the left/bottom pivot are measured. The game's own
-    /// <c>GetGlobalRect()</c> reports the pivot point as the position and the unscaled size, which is not the drawn art.
+    /// Everything the button can draw in canvas units: its box and every visible child through their live canvas transforms,
+    /// whatever their modulate. A hidden Back is parked beyond all of it (the native art plane is wider than the box and the
+    /// outline lights up when focused), so no sliver is ever left at the canvas edge.
     /// </summary>
-    private static Rect2 DrawnRect(Control control)
+    private static Rect2 DrawnUnion(Control control)
     {
         Rect2 union = CanvasRect(control);
         var pending = new Stack<Node>();

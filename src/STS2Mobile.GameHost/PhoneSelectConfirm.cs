@@ -78,6 +78,13 @@ internal sealed class PhoneSelectConfirm
         /// <summary>Whether <see cref="Model"/> may change under a selected item (a restock, a reroll).</summary>
         internal virtual bool ModelCanChange => true;
 
+        /// <summary>
+        /// Whether the item's native tip belongs to its hover state, so the game clears it when the pointer or focus leaves.
+        /// Such a tip is put back on the hover-exit signal while the item stays selected; a tip the game keeps up itself is
+        /// left alone.
+        /// </summary>
+        internal virtual bool TipFollowsHover => false;
+
         internal abstract int ItemCount(Control screen);
 
         internal abstract Control? ItemAt(Control screen, int index);
@@ -179,6 +186,11 @@ internal sealed class PhoneSelectConfirm
     private readonly RestAdapter _rest;
 
     private Selection? _selected;
+
+    // The selected item's hover-exit guard: the exact signal after which the game clears its native tip.
+    private Control? _tipGuardItem;
+    private Control? _tipGuardHitbox;
+    private Callable? _tipGuardExit;
 
     // The press being tracked: where it began, on what, and how far it has wandered since.
     private bool _pressed;
@@ -619,6 +631,67 @@ internal sealed class PhoneSelectConfirm
         _maxMove = 0f;
     }
 
+    /// <summary>
+    /// Keeps the selected item's native tip up when the game's hover state takes it down. A shop slot owns one tip
+    /// (<c>NHoverTipSet.CreateAndShow(this, …)</c>) and <c>NMerchantSlot.OnUnfocus</c> calls <c>ClearHoverTip</c> on the
+    /// hitbox's <c>MouseExited</c> and the slot's <c>FocusExited</c>; a selecting tap's release (the emulated mouse leaving the
+    /// slot while it settles) runs that path and removed a relic's or potion's description while the item was still selected.
+    /// The guard is connected after the game's own handler, so it re-creates the tip in the same signal emission — no frame
+    /// exists without it — and only while that same item is still the selection. Nothing runs per frame.
+    /// </summary>
+    private void HookSelectedTip(Control screen, Control item, SelectAdapter adapter)
+    {
+        UnhookSelectedTip();
+        try
+        {
+            Callable keep = Callable.From(() => RefreshSelectedTip(screen, item, adapter));
+            _tipGuardItem = item;
+            _tipGuardExit = keep;
+            if (!item.IsConnected(Control.SignalName.FocusExited, keep))
+                item.Connect(Control.SignalName.FocusExited, keep);
+            Control? hitbox = adapter.PressTarget(item);
+            if (hitbox != null && GodotObject.IsInstanceValid(hitbox) && !ReferenceEquals(hitbox, item))
+            {
+                _tipGuardHitbox = hitbox;
+                if (!hitbox.IsConnected(Control.SignalName.MouseExited, keep))
+                    hitbox.Connect(Control.SignalName.MouseExited, keep);
+            }
+        }
+        catch (Exception error)
+        {
+            // The tip is a courtesy: a selection without one still takes two taps.
+            GD.PrintErr("Phone select confirm: the selected item's tip could not be kept up: ", error.Message);
+        }
+    }
+
+    private void UnhookSelectedTip()
+    {
+        if (_tipGuardExit is not { } keep) return;
+        if (_tipGuardItem is { } item && GodotObject.IsInstanceValid(item) && item.IsConnected(Control.SignalName.FocusExited, keep))
+            item.Disconnect(Control.SignalName.FocusExited, keep);
+        if (_tipGuardHitbox is { } hitbox && GodotObject.IsInstanceValid(hitbox) && hitbox.IsConnected(Control.SignalName.MouseExited, keep))
+            hitbox.Disconnect(Control.SignalName.MouseExited, keep);
+        _tipGuardItem = null;
+        _tipGuardHitbox = null;
+        _tipGuardExit = null;
+    }
+
+    /// <summary>The game has just taken the hover tip down: put the selected item's tip back, in the same emission.</summary>
+    private void RefreshSelectedTip(Control screen, Control item, SelectAdapter adapter)
+    {
+        try
+        {
+            if (_failed || _selected is not { } chosen) return;
+            if (!ReferenceEquals(chosen.Item, item) || !ReferenceEquals(chosen.Screen, screen)) return;
+            if (!GodotObject.IsInstanceValid(item) || !item.IsInsideTree()) return;
+            adapter.ShowTip(screen, item);
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr($"Phone select confirm: the {adapter.Label}'s tip could not be shown again: ", error.Message);
+        }
+    }
+
     // ---- The selection ----------------------------------------------------------------------------------------------------
 
     private bool IsSelected(Control screen, Control item, SelectAdapter adapter) =>
@@ -644,6 +717,7 @@ internal sealed class PhoneSelectConfirm
             // The tip is a courtesy: a selection without one still takes two taps.
             GD.PrintErr($"Phone select confirm: the {adapter.Label}'s tip could not be shown: ", error.Message);
         }
+        if (adapter.TipFollowsHover) HookSelectedTip(screen, item, adapter);
         GD.Print($"Phone select confirm: {adapter.Label} {item.Name} selected; a second tap confirms it.");
     }
 
@@ -682,6 +756,7 @@ internal sealed class PhoneSelectConfirm
         Selection? selection = _selected;
         if (selection == null) return;
         _selected = null;
+        UnhookSelectedTip();
         if (counted)
         {
             _clears++;
@@ -782,6 +857,8 @@ internal sealed class PhoneSelectConfirm
     {
         internal override string Label => "shop item";
         internal override bool IsCard => false;
+        // The slot's tip is created by its own hover path and its OnUnfocus clears it; keep it while the item is selected.
+        internal override bool TipFollowsHover => true;
         internal override int ItemCount(Control screen) => 0;
         internal override Control? ItemAt(Control screen, int index) => null;
         internal override Control PressTarget(Control item) => item.GetNodeOrNull<Control>("%Hitbox") ?? item;

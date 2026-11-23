@@ -85,6 +85,7 @@ internal sealed partial class PortraitBetweenLayout
     private readonly HashSet<ulong> _maps = new();
     private readonly Dictionary<ulong, MapFrame> _mapFrames = new();
     private readonly Dictionary<ulong, PortraitControlSnapshot> _mapBgSnapshots = new();
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _mapDrawingsSnapshots = new();
     private readonly Dictionary<ulong, (ulong First, int Count)> _mapPointLayouts = new();
     private readonly HashSet<ulong> _scaledMapPoints = new();
     private readonly Dictionary<ulong, TextureRect.StretchModeEnum> _stretchModes = new();
@@ -133,6 +134,15 @@ internal sealed partial class PortraitBetweenLayout
             drawings.OffsetRight = snap.InitialOffsetRight + shiftX;
             drawings.OffsetTop = snap.InitialOffsetTop + PortraitBetweenMath.MapLayerOffsetY(canvasHeight);
             drawings.OffsetBottom = snap.InitialOffsetBottom + PortraitBetweenMath.MapLayerOffsetY(canvasHeight);
+            // The native drawing pipeline assumes its layer is drawn at scale 1: it stores line points in a half-size
+            // SubViewport and samples them through a TextureRect. The uniform graph scale on TheMap would otherwise scale
+            // the layer, so a stroke would land away from the finger. Counter-scale the layer (its local position, which
+            // the points container shares, is unchanged) to keep its displayed units at 1 while still scrolling with the
+            // graph. The mapping is only identity when the layer's global scale is 1.
+            float inverse = 1f / PortraitBetweenMath.MapGraphScale(canvasWidth);
+            drawings.PivotOffset = Vector2.Zero;
+            drawings.Scale = new Vector2(inverse, inverse);
+            _mapDrawingsSnapshots[drawings.GetInstanceId()] = snap;
         }
         if (map.GetNodeOrNull<Control>("%MapLegend") is { } legend)
         {
@@ -156,7 +166,7 @@ internal sealed partial class PortraitBetweenLayout
             Capture(tools, captureVisible: false);
             tools.PivotOffset = new Vector2(0f, tools.Size.Y);
             tools.Scale = new Vector2(DrawingToolsScale, DrawingToolsScale);
-            PlaceMapTools(tools, canvasHeight);
+            PlaceMapTools(map, tools, null, canvasHeight);
         }
         Vector2 canvas = new(canvasWidth, canvasHeight);
         float clipTop = PortraitBands.HeaderBottom(capHeight);
@@ -173,11 +183,37 @@ internal sealed partial class PortraitBetweenLayout
     /// Puts the untouched drawing bar's visible bottom <see cref="MapFooterBottomInset"/> above the canvas bottom, using the
     /// same canvas height the rest of the portrait layout reads (the native bar is positioned from the design height).
     /// </summary>
-    private static void PlaceMapTools(Control? tools, float canvasHeight)
+    private static void PlaceMapTools(Control map, Control? tools, MapFrame? frame, float canvasHeight)
     {
         if (tools is not { } bar || !GodotObject.IsInstanceValid(bar) || bar.Size.Y <= 0f) return;
         float y = canvasHeight - MapFooterBottomInset - bar.Size.Y;
+        // The Back ribbon's shown top is the floor for the bar: at 9:16 (no safe cap) the chart is taller and the two
+        // would otherwise overlap. Position.Y is the bar's unscaled origin, so its drawn bottom is Position.Y + Size.Y.
+        float backTop = MapBackTop(map, frame, canvasHeight);
+        if (backTop - MapToolGap - bar.Size.Y < y) y = backTop - MapToolGap - bar.Size.Y;
         if (!Mathf.IsEqualApprox(bar.Position.Y, y)) bar.Position = new Vector2(bar.Position.X, y);
+    }
+
+    /// <summary>The shown top of the Back ribbon in canvas units (the native show position, or the reserve fallback).</summary>
+    private static float MapBackTop(Control map, MapFrame? frame, float canvasHeight)
+    {
+        Control? back = frame?.Back;
+        if (back == null || !GodotObject.IsInstanceValid(back))
+        {
+            back = map.GetNodeOrNull<Control>("Back");
+            if (frame != null) frame.Back = back;
+        }
+        if (back is { } button && GodotObject.IsInstanceValid(button))
+        {
+            FieldInfo? show = frame?.BackShowField;
+            if (show == null)
+            {
+                show = button.GetType().GetField("_showPos", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (frame != null) frame.BackShowField = show;
+            }
+            if (show?.GetValue(button) is Vector2 shown) return shown.Y - map.GlobalPosition.Y;
+        }
+        return canvasHeight - MapBackReserve;
     }
 
     /// <summary>
@@ -267,29 +303,7 @@ internal sealed partial class PortraitBetweenLayout
             float top = bar.Position.Y - bar.Size.Y * (bar.Scale.Y - 1f);
             bottom = Math.Min(bottom, top - MapToolGap);
         }
-        Control? back = frame?.Back;
-        if (back == null || !GodotObject.IsInstanceValid(back))
-        {
-            back = map.GetNodeOrNull<Control>("Back");
-            if (frame != null) frame.Back = back;
-        }
-        if (back is { } button && GodotObject.IsInstanceValid(button))
-        {
-            FieldInfo? show = frame?.BackShowField;
-            if (show == null)
-            {
-                show = button.GetType().GetField("_showPos", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (frame != null) frame.BackShowField = show;
-            }
-            float top = show?.GetValue(button) is Vector2 shown
-                ? shown.Y - map.GlobalPosition.Y
-                : canvasHeight - MapBackReserve;
-            bottom = Math.Min(bottom, top - MapToolGap);
-        }
-        else
-        {
-            bottom = Math.Min(bottom, canvasHeight - MapBackReserve - MapToolGap);
-        }
+        bottom = Math.Min(bottom, MapBackTop(map, frame, canvasHeight) - MapToolGap);
         return bottom;
     }
 
@@ -494,12 +508,12 @@ internal sealed partial class PortraitBetweenLayout
         float cap = PortraitLayout.ComputeCapHeight(root);
         float clipTop = PortraitBands.HeaderBottom(cap);
         MapFrame? probe = _mapFrames.TryGetValue(map.GetInstanceId(), out MapFrame? current) ? current : null;
-        PlaceMapTools(probe?.Tools, canvas.Y);
+        PlaceMapTools(map, probe?.Tools, probe, canvas.Y);
         float clipBottom = MapClipBottom(map, probe, canvas.Y);
         MapFrame? frame = EnsureMapFrame(map, canvas, clipTop, clipBottom);
         if (frame != null && frame.Tools == null)
             frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
-        PlaceMapTools(frame?.Tools, canvas.Y);
+        PlaceMapTools(map, frame?.Tools, frame, canvas.Y);
         clipBottom = MapClipBottom(map, frame, canvas.Y);
         // The game's scroll limits (-600..1800) were made for a 1080-tall canvas; keep its target inside the portrait range.
         MapScrollRange range = MapScrollLimits(map, root, clipBottom, frame?.Map);
@@ -546,6 +560,9 @@ internal sealed partial class PortraitBetweenLayout
         if (frame != null) frame.Pill = pill;
         pill.Visible = true;
         pill.Position = new Vector2(canvas.X - pill.Size.X - 20f, bandTop - 40f);
+        // Both the pill and the open legend overlay the chart, whose clip and point hit pads are later siblings; keep them
+        // last in the map's child order so a press goes to the toggle, not to a node under it (9:16 has no cap, so the
+        // pill sits over the top rows there).
         Control? legend = frame?.Legend;
         if (legend == null || !GodotObject.IsInstanceValid(legend))
         {
@@ -558,7 +575,10 @@ internal sealed partial class PortraitBetweenLayout
             legend.Scale = new Vector2(MapLegendScale, MapLegendScale);
             legend.Position = new Vector2(canvas.X - legend.Size.X * MapLegendScale - MapLegendInset,
                 pill.Position.Y + pill.Size.Y + 13f);
+            if (_legendOpen && legend.GetIndex() != map.GetChildCount() - 1)
+                map.MoveChild(legend, map.GetChildCount() - 1);
         }
+        if (pill.GetIndex() != map.GetChildCount() - 1) map.MoveChild(pill, map.GetChildCount() - 1);
     }
 
     /// <summary>
@@ -641,7 +661,16 @@ internal sealed partial class PortraitBetweenLayout
             ResourceLoader.Load<Font>("res://themes/kreon_bold_glyph_space_one.tres") is { } kreon)
             label.AddThemeFontOverride("font", kreon);
         pill.AddChild(label);
-        pill.Pressed += () => _legendOpen = !_legendOpen;
+        // Toggle on the press: on a phone the release can be taken by a chart drag or a point under the finger, and the
+        // legend must still open. Accepting the press keeps it away from the chart below.
+        pill.GuiInput += input =>
+        {
+            if (input is InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true })
+            {
+                _legendOpen = !_legendOpen;
+                pill.AcceptEvent();
+            }
+        };
         map.AddChild(pill);
         return pill;
     }
@@ -670,6 +699,10 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control bg && GodotObject.IsInstanceValid(bg))
                 snap.Restore(bg);
         _mapBgSnapshots.Clear();
+        foreach ((ulong id, PortraitControlSnapshot snap) in _mapDrawingsSnapshots)
+            if (GodotObject.InstanceFromId(id) is Control drawings && GodotObject.IsInstanceValid(drawings))
+                snap.Restore(drawings);
+        _mapDrawingsSnapshots.Clear();
 
         foreach (ulong id in _maps)
         {
@@ -758,6 +791,7 @@ internal sealed partial class PortraitBetweenLayout
         _maps.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _mapFrames.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapFrames.Remove(id);
         foreach (ulong id in _mapBgSnapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapBgSnapshots.Remove(id);
+        foreach (ulong id in _mapDrawingsSnapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapDrawingsSnapshots.Remove(id);
         foreach (ulong id in _stretchModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _stretchModes.Remove(id);
         foreach (ulong id in _mapHintVisibility.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapHintVisibility.Remove(id);
         _scaledMapPoints.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));

@@ -274,7 +274,9 @@ internal sealed partial class PortraitBetweenLayout
     /// <summary>The first wrapped row's box: where the row container goes and at what scale.</summary>
     private static RestOptionsRow RestGridFirst(int count, Vector2 canvas, float lift)
     {
-        Span<RestOptionsRow> boxes = stackalloc RestOptionsRow[1];
+        // Two slots: the widest grid this screen takes. The first box is the top row, which is what the container's box and
+        // the question are placed from.
+        Span<RestOptionsRow> boxes = stackalloc RestOptionsRow[2];
         PortraitRestMath.OptionsGrid(count, canvas.X, canvas.Y, boxes, lift);
         return boxes[0];
     }

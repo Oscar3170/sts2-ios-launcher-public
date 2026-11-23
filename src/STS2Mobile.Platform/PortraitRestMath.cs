@@ -209,11 +209,13 @@ public static class PortraitRestMath
     {
         int rowCount = OptionsRowCount(count);
         if (rowCount <= 0 || rows.Length == 0) return 0;
-        rowCount = Math.Min(rowCount, rows.Length);
+        // The rows' places come from the whole grid, not from how many the caller can hold: a one-slot buffer still gets the
+        // top row's box (bottom row's top less one pitch), never the bottom row's.
+        int fill = Math.Min(rowCount, rows.Length);
         float scale = OptionsGridScale(count, canvasWidth);
         float pitch = (OptionsHeight + OptionsRowGap) * scale;
         float bottomRow = canvasHeight - OptionsBottomInset - lift;
-        for (int row = 0; row < rowCount; row++)
+        for (int row = 0; row < fill; row++)
         {
             int inRow = OptionsInRow(count, row);
             float natural = NaturalRowWidth(inRow);
@@ -221,7 +223,7 @@ public static class PortraitRestMath
             rows[row] = new RestOptionsRow(
                 width, OptionsHeight, scale, (canvasWidth - width * scale) * 0.5f, bottomRow - (rowCount - 1 - row) * pitch);
         }
-        return rowCount;
+        return fill;
     }
 
     // ---- the question and the copy -------------------------------------------------------------------------------------

@@ -166,6 +166,7 @@ public sealed partial class PhoneGraphics : Node
 
     private void OnWindowInput(InputEvent input)
     {
+        PhoneTouchHover.OnWindowInput(input);
         _selectConfirm.OnWindowInput(input);
         if (input is InputEventScreenTouch touch)
         {
