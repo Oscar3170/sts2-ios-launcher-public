@@ -97,32 +97,75 @@ internal sealed partial class PortraitMenuLayout
 
             Place(card.GetNodeOrNull<Control>("BgPanel"), 11f, 0f, 340f, ModeCardHeight);
             Place(card.GetNodeOrNull<Control>("Title"), 28f, 30f, 306f, 61f);
-            Place(card.GetNodeOrNull<Control>("SubmenuPortrait"), 42f, 108f, 252f, 192f);
+            // The mode art gives up height so the description has room for 11 point text: 184 x 140 keeps the
+            // native portrait aspect and the card does not grow.
+            Place(card.GetNodeOrNull<Control>("SubmenuPortrait"), 89f, 104f, 184f, 140f);
             if (card.GetNodeOrNull<RichTextLabel>("Description") is { } description)
             {
                 if (description.AutowrapMode != TextServer.AutowrapMode.WordSmart)
                     description.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-                Place(description, 43f, 331f, 276f, ModeCardHeight - 381f);
+                Place(description, 43f, 258f, 276f, ModeCardHeight - 266f);
             }
         }
     }
 
     /// <summary>
-    /// Gives one of the top-edge icon buttons a finger's box. It grows to the left from its right edge, so an icon anchored
-    /// at the screen's right side stays on the canvas.
+    /// Scales one of the top-edge header controls (icon and label together) until its smallest label reads the given points
+    /// (the gold badge), or by a fixed visual bump for an icon-only button; then places it inside the safe band's top edge.
+    /// The title is left alone and the control's right/left edge is kept clear of it.
     /// </summary>
-    private void GrowInfoTarget(Control screen, ScreenState state, string name)
+    private void ScaleHeaderLabel(Control screen, ScreenState state, string name, Rect2 safe, float minPoints, bool right)
     {
-        if (Node(screen, state, name) is not { } button || button.Size.X < 1f || button.Size.Y < 1f) return;
-        Vector2 scale = button.GetGlobalTransformWithCanvas().Scale.Abs();
-        float side = PortraitBands.MinTarget / Math.Max(0.01f, Math.Min(scale.X, scale.Y));
-        if (button.Size.X >= side && button.Size.Y >= side) return;
-        Capture(button);
-        var size = new Vector2(Math.Max(button.Size.X, side), Math.Max(button.Size.Y, side));
-        SetMinSize(button, size);
-        float right = button.Position.X + button.Size.X;
-        button.Size = size;
-        button.Position = new Vector2(right - size.X, button.Position.Y);
+        if (Node(screen, state, name) is not { } control || control.Size.X < 1f || control.Size.Y < 1f) return;
+        ulong id = control.GetInstanceId();
+        bool scaled = state.ScaledHeaders.Contains(id);
+        float factor = scaled ? 1f : LabelFactor(control, minPoints, 1.6f);
+        if (factor > 1.001f)
+        {
+            Capture(control);
+            control.PivotOffset = Vector2.Zero;
+            control.Scale *= factor;
+            state.ScaledHeaders.Add(id);
+        }
+        Transform2D xf = screen.GetGlobalTransformWithCanvas();
+        Vector2 safeTop = xf * new Vector2(0f, safe.Position.Y);
+        float safeRight = (xf * new Vector2(safe.Size.X, 0f)).X;
+        Rect2 rect = control.GetGlobalRect();
+        Vector2 target = right
+            ? new Vector2(safeRight - rect.Size.X - 8f, safeTop.Y + 8f)
+            : new Vector2(8f, safeTop.Y + 8f);
+        Vector2 delta = target - rect.Position;
+        if (delta.LengthSquared() > 0.5f) control.GlobalPosition += delta;
+    }
+
+    /// <summary>The factor that takes the control's smallest label to the wanted points (capped), or the fixed factor.</summary>
+    private static float LabelFactor(Control control, float minPoints, float fixedFactor)
+    {
+        if (minPoints <= 0f) return fixedFactor;
+        float smallest = float.MaxValue;
+        void Walk(Node node)
+        {
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control2) continue;
+                int font = control2 is RichTextLabel rich
+                    ? rich.GetThemeFontSize("normal_font_size")
+                    : control2 is Label label ? label.GetThemeFontSize("font_size") : 0;
+                if (font > 0)
+                {
+                    float points = font * Math.Abs(control2.GetGlobalTransformWithCanvas().Scale.Y) /
+                                   PortraitBands.UnitsPerPoint;
+                    if (points > 0.01f) smallest = Math.Min(smallest, points);
+                }
+                Walk(control2);
+            }
+        }
+        Walk(control);
+        // With no label (or one already large enough) keep the control as it is; the icon-only fixed factor is applied once
+        // by the caller and it no longer asks for a label factor.
+        return smallest == float.MaxValue || smallest >= minPoints
+            ? 1f
+            : Math.Min(3f, minPoints / smallest);
     }
 
     /// <summary>

@@ -45,7 +45,10 @@ internal sealed partial class PortraitMenuLayout
         // Blitz's title, its badge and its info button sit along the top edge, under the notch.
         foreach (string name in new[] { "BlitzPlaceholder", "%UnderConstruction", "%BlitzInfoButton" })
             ShiftTopControl(screen, state, name, safe.Position.Y);
-        GrowInfoTarget(screen, state, "%BlitzInfoButton");
+        // The badge's icon and label scale together until the label reads 11 points; the icon-only info button gets a
+        // matching visual size. Both are placed inside the safe band's top edge, clear of the centred title.
+        ScaleHeaderLabel(screen, state, "%UnderConstruction", safe, minPoints: 11f, right: false);
+        ScaleHeaderLabel(screen, state, "%BlitzInfoButton", safe, minPoints: 0f, right: true);
 
         float ascensionTop = PrepareAscension(screen, state, safe, gridTop);
         PrepareInfo(screen, state, state.TypeName == BlitzTypeName, safe, ascensionTop);

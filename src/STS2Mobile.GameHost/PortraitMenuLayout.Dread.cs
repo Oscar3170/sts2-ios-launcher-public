@@ -25,7 +25,8 @@ internal sealed partial class PortraitMenuLayout
         // band like Blitz's header.
         foreach (string name in new[] { "%UnderConstruction", "%DreadInfoButton" })
             ShiftTopControl(screen, state, name, safe.Position.Y);
-        GrowInfoTarget(screen, state, "%DreadInfoButton");
+        ScaleHeaderLabel(screen, state, "%UnderConstruction", safe, minPoints: 11f, right: false);
+        ScaleHeaderLabel(screen, state, "%DreadInfoButton", safe, minPoints: 0f, right: true);
 
         // A finger's target is 127 canvas units, 197.5 of this screen's units; the tickbox and the win streak above it are
         // short wide blocks, so they are stacked with the room between them that the pad needs to reach that size.

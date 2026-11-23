@@ -56,6 +56,7 @@ internal sealed partial class PortraitMenuLayout
         public Vector2 RosterCell;
         public bool FocusDirty = true;
         public readonly Dictionary<ulong, NodePath[]> FocusPaths = new();
+        public readonly HashSet<ulong> ScaledHeaders = new();
 
         /// <summary>Forgets what only holds while portrait is on; the snapshots put the desktop layout back.</summary>
         public void ResetPortrait()
@@ -77,6 +78,7 @@ internal sealed partial class PortraitMenuLayout
             RosterCell = Vector2.Zero;
             FocusDirty = true;
             FocusPaths.Clear();
+            ScaledHeaders.Clear();
         }
     }
 
