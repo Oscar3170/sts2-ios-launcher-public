@@ -162,11 +162,11 @@ internal sealed class PortraitNavigationPads
     public static bool IsBack(Control control) => control.GetType().FullName == BackTypeName;
 
     /// <summary>
-    /// Places every Back in canvas space: drawn left edge at the canvas's left, bottom at the game's native footer gap
-    /// below its parent screen (mapped through the parent's scale), never below 8 units from the canvas bottom. The cached
-    /// show and hide positions are written in canvas coordinates, which is what the native slide (global_position) uses, so a
-    /// screen scaled on a virtual canvas still lands at the same place. A slide already running is retargeted once; after that
-    /// the settled position is corrected whenever the game moves it back.
+    /// Places every Back in canvas space at the reference size: drawn left edge at the canvas's left, drawn bottom at the
+    /// game's native footer gap below the canvas (mapped through the parent's scale) and never below 8 units, with the pivot at
+    /// the button's left/bottom so the enlarged art grows upward. The cached show and hide positions are written in canvas
+    /// coordinates (the origin the native slide moves), so a screen scaled on a virtual canvas lands at the same place. A slide
+    /// already running is retargeted once; afterwards the settled position is corrected whenever the game moves it back.
     /// </summary>
     private void PlaceBack(Control control)
     {
@@ -186,7 +186,10 @@ internal sealed class PortraitNavigationPads
         // The native footer gap below the canvas bottom (the button's own bottom before the screen edge), mapped to the canvas.
         float gap = Math.Max(0f, offset.Y - control.Size.Y) * parentScale.Y;
         float bottom = Math.Min(canvas.End.Y - FooterBottomMargin, canvas.End.Y - gap);
-        var show = new Vector2(canvas.Position.X, bottom);
+        // The pivot is the button's left/bottom, and the pivot's place in the parent is the origin plus the pivot: the origin
+        // (global_position, what the native slide moves) is the unscaled top left, so the drawn bottom lands on the footer and
+        // the enlarged art grows upward from it.
+        var show = new Vector2(canvas.Position.X, bottom - control.Size.Y * parentScale.Y);
         // The slide is one scaled button width plus the native 80: -180 local units, in canvas space.
         var hide = show + new Vector2(HideOffsetX * scale * parentScale.X, 0f);
         ulong id = control.GetInstanceId();
