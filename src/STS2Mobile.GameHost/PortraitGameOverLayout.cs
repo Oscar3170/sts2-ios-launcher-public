@@ -717,6 +717,7 @@ internal sealed class PortraitGameOverLayout
         if (!summary.Position.IsEqualApprox(at)) summary.Position = at;
         center.SetMeta(SummaryScrollMeta, (int)MathF.Round(state.SummaryScroll * state.SummaryScale));
         center.SetMeta(SummaryMaxScrollMeta, (int)MathF.Round(state.SummaryMax * state.SummaryScale));
+        PinClip(state);
     }
 
     // ---- the summary's drag ----------------------------------------------------------------------------------------------
@@ -824,6 +825,7 @@ internal sealed class PortraitGameOverLayout
         _dragDown = false;
         _dragMoving = false;
         if (moved && Live(state.Screen) is Control screen) PhoneSwipeRelease.Shared.Release(screen);
+        if (moved) LogSummaryState(state);
     }
 
     private void AttachSummaryDrag(Window window)
@@ -963,6 +965,7 @@ internal sealed class PortraitGameOverLayout
         {
             state.SummaryWindow = canvasWindow;
             if (Live(state.Center) is Control window) window.QueueRedraw();
+            PinClip(state);
         }
         if (!center.Position.IsEqualApprox(at) || !center.Size.IsEqualApprox(size))
         {
@@ -1035,6 +1038,47 @@ internal sealed class PortraitGameOverLayout
         }
         if (state.BackstopSeen || state.ArtAdded) ThinSummaryBackstop(state);
         return summaryMoved;
+    }
+
+    /// <summary>
+    /// What the summary's window, its range and its rows are at the end of a drag (for the proof runs and for diagnosing a
+    /// range that does not match what is drawn).
+    /// </summary>
+    private static void LogSummaryState(State state)
+    {
+        if (Live(state.Center) is not Control center) return;
+        float lastBottom = 0f;
+        int rows = 0;
+        if (Live(state.Summary) is Control column &&
+            column.GetNodeOrNull<Control>("%ScoreLineContainer") is { } grid)
+        {
+            foreach (Node child in grid.GetChildren())
+            {
+                if (child is not Control row || !GodotObject.IsInstanceValid(row) || !row.IsVisibleInTree()) continue;
+                rows++;
+                lastBottom = MathF.Max(lastBottom, row.GetGlobalRect().End.Y);
+            }
+        }
+        GD.Print($"Portrait game over: summary offset={state.SummaryScroll * state.SummaryScale:F0} " +
+                 $"max={state.SummaryMax * state.SummaryScale:F0} content={state.SummaryContent:F0} view={state.SummaryView:F0} " +
+                 $"window={state.SummaryWindow} clipMeta={(center.HasMeta(SummaryClipMeta) ? center.GetMeta(SummaryClipMeta).AsRect2().ToString() : "none")} " +
+                 $"rows={rows} lastRowBottom={lastBottom:F0} centerRect={center.GetGlobalRect()}");
+    }
+
+    /// <summary>
+    /// Pins the clip from values the layout owns, so it does not depend on a canvas transform read inside a draw callback:
+    /// the pinned item is the CenterContainer, which never moves during a drag (the offset moves its child
+    /// %RunSummaryContainer), its local origin is the window's top-left, and the window's size over the layout's own scale
+    /// is the local window. Cheap enough for every drag frame (one struct, no allocation, no redraw).
+    /// </summary>
+    private static void PinClip(State state)
+    {
+        if (Live(state.Center) is not Control center) return;
+        if (state.SummaryWindow.Size.X < 1f || state.SummaryScale < 0.01f) return;
+        var local = new Rect2(Vector2.Zero, state.SummaryWindow.Size / state.SummaryScale);
+        RenderingServer.CanvasItemSetCustomRect(center.GetCanvasItem(), true, local);
+        RenderingServer.CanvasItemSetClip(center.GetCanvasItem(), true);
+        center.SetMeta(SummaryClipMeta, state.SummaryWindow);
     }
 
     /// <summary>One body: read its own bounds and ease it in from the nearest edge by the least that clears it.</summary>
