@@ -185,39 +185,61 @@ internal static partial class PortraitSubmenuLayout
     }
 
     /// <summary>
-    /// The corner buttons place themselves from the game window's size in the screen's own units: in the corners on a
-    /// desktop, inside the screen under the width fit (a screen drawn smaller), past the corners on a screen drawn larger.
-    /// Their places come from the screen's size instead, and the window's next resize puts the game's back (landscape).
-    /// The confirm button's picture, which runs 40 units past the corner on a desktop, stays inside. A back button waiting
-    /// out of sight (the custom run's Unready) waits its whole width past the edge: the game's 220 units are less than
-    /// its width on a screen drawn larger.
+    /// The Confirm button places itself from the game window's size in the screen's own units: on a screen drawn larger than
+    /// the window it lands past the corner. Portrait places it in canvas space instead: drawn right edge on the canvas's
+    /// right, drawn bottom on the native footer (244 units above the canvas bottom, the same as the Back), and the show and
+    /// hide positions the native slide uses are written in canvas coordinates. A disabled button waits just past the right
+    /// edge. The Unready button is a Back and is placed by the navigation pass.
     /// </summary>
     private static void KeepCornerButtons(Control screen)
     {
-        if (screen.GetNodeOrNull<Control>("ConfirmButton") is { } confirm && Get<Vector2>(confirm, "_posOffset") is Vector2 offset)
-        {
-            Vector2 show = screen.Size - offset;
-            show.X = Math.Min(show.X, screen.Size.X - confirm.Size.X);
-            SetPlaces(confirm, show, show + new Vector2(180f, 0f));
-        }
-        if (screen.GetNodeOrNull<Control>("UnreadyButton") is { } unready && Get<Vector2>(unready, "_posOffset") is Vector2 backOffset)
-        {
-            var show = new Vector2(-backOffset.X, screen.Size.Y - backOffset.Y);
-            SetPlaces(unready, show, new Vector2(Math.Min(show.X - 180f, -unready.Size.X - 20f), show.Y));
-        }
+        if (screen.GetNodeOrNull<Control>("ConfirmButton") is not { } confirm) return;
+        if (confirm.Size.X < 1f || confirm.Size.Y < 1f) return;
+        Vector2 drawn = confirm.Size * screen.Scale.Abs();
+        Rect2 canvas = screen.GetViewport().GetVisibleRect();
+        Rect2 screenRect = screen.GetGlobalRect();
+        var target = new Vector2(canvas.End.X - drawn.X, canvas.End.Y - CornerFooter);
+        var local = (target - screenRect.Position) / screen.Scale.Abs();
+        SetPlaces(screen, confirm, local, local + new Vector2(180f, 0f));
     }
 
+    /// <summary>The native footer gap below the canvas bottom for a corner button (its 354 units less its 110 height).</summary>
+    private const float CornerFooter = 244f;
+
     /// <summary>
-    /// Gives a corner button its places, and puts it at the one it belongs at unless it is sliding: a slide started before
-    /// the places changed ends at the old one.
+    /// Gives a corner button its show and hide places in canvas space (what its native slide moves to) and puts it at the
+    /// one it belongs at. A place that changed retargets the slide once; a settled button is corrected if the game moved it.
     /// </summary>
-    private static void SetPlaces(Control button, Vector2 show, Vector2 hide)
+    private static void SetPlaces(Control screen, Control button, Vector2 localShow, Vector2 localHide)
     {
-        Field(button, "_showPos")?.SetValue(button, show);
-        Field(button, "_hidePos")?.SetValue(button, hide);
-        if (Get<Tween>(button, "_moveTween") is Tween tween && tween.IsValid() && tween.IsRunning()) return;
-        Vector2 target = Get<bool>(button, "_isEnabled") is true ? show : hide;
-        if (button.Position.DistanceSquaredTo(target) > 1f) button.Position = target;
+        Transform2D xform = screen.GetGlobalTransform();
+        Vector2 show = xform * localShow;
+        Vector2 hide = xform * localHide;
+        FieldInfo? showField = Field(button, "_showPos");
+        FieldInfo? hideField = Field(button, "_hidePos");
+        bool changed = showField?.GetValue(button) is not Vector2 storedShow || storedShow.DistanceTo(show) > 0.5f;
+        showField?.SetValue(button, show);
+        hideField?.SetValue(button, hide);
+        bool enabled = Get<bool>(button, "_isEnabled") is true;
+        Vector2 target = enabled ? show : hide;
+        Tween? tween = Get<Tween>(button, "_moveTween") as Tween;
+        bool running = tween is not null && tween.IsValid() && tween.IsRunning();
+        if (changed)
+        {
+            if (tween is not null && tween.IsValid()) tween.Kill();
+            Field(button, "_moveTween")?.SetValue(button, null);
+            if (button.GlobalPosition.DistanceTo(target) > 2f)
+            {
+                Tween slide = button.CreateTween();
+                slide.TweenProperty(button, "global_position", target, 0.35)
+                    .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+                Field(button, "_moveTween")?.SetValue(button, slide);
+            }
+            else button.GlobalPosition = target;
+            return;
+        }
+        if (running) return;
+        if (button.GlobalPosition.DistanceTo(target) > 0.5f) button.GlobalPosition = target;
     }
 
     private static readonly Dictionary<(Type, string), FieldInfo?> Fields = new();
@@ -235,7 +257,7 @@ internal static partial class PortraitSubmenuLayout
     private static FieldInfo? FindField(Type? type, string name)
     {
         for (; type != null; type = type.BaseType)
-            if (type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is { } field)
+            if (type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is { } field)
                 return field;
         return null;
     }

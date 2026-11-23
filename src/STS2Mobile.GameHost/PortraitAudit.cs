@@ -40,6 +40,8 @@ internal static class PortraitAudit
             if (EffectiveAlpha(control) < 0.05f) continue;
             if (!DrawnRect(control, out Rect2 rect)) continue;
             if (rect.Size.X < 2f || rect.Size.Y < 2f) continue;
+            // A disabled corner button parked at its hide position (the custom run's Unready) is not content on the screen.
+            if (IsParked(control, canvas)) continue;
             // Content in a scrolling grid may run past the top or bottom edge; only its sideways overflow counts.
             Rect2 bounds = InScroller(control) ? new Rect2(canvas.Position.X, rect.Position.Y, canvas.Size.X, rect.Size.Y) : canvas;
             float amount = PortraitFitMathOverflow(rect, bounds);
@@ -53,6 +55,37 @@ internal static class PortraitAudit
         string partialText = string.Join("; ", partial.OrderByDescending(p => p.Amount).Take(limit).Select(p => $"{p.Amount:F0}px {p.Text}"));
         string outsideText = string.Join("; ", outside.Take(Math.Max(3, limit / 2)));
         return $"overflow={partial.Count} offscreen={outside.Count} canvas={canvas.Size.X:F0}x{canvas.Size.Y:F0}{DescribeHand(root, canvas)} | partial: {partialText} | off: {outsideText}";
+    }
+
+    /// <summary>
+    /// The interactive content that is wholly outside the canvas: text fields, buttons and clickables. A corner button the
+    /// game has parked at its hide position (disabled, off-screen) is not counted — it cannot be touched and is not seen.
+    /// </summary>
+    public static System.Collections.Generic.List<string> OffCanvasInteractive(Window root)
+    {
+        Rect2 canvas = root.GetVisibleRect();
+        var outside = new System.Collections.Generic.List<string>();
+        foreach (Node node in Descendants(root))
+        {
+            if (node is not Control control || !IsContent(control) || !control.IsVisibleInTree()) continue;
+            if (EffectiveAlpha(control) < 0.05f) continue;
+            if (!DrawnRect(control, out Rect2 rect) || rect.Size.X < 2f || rect.Size.Y < 2f) continue;
+            if (rect.Intersects(canvas) || IsParked(control, canvas)) continue;
+            outside.Add($"{control.GetType().Name}:{control.Name} [{rect.Position.X:F0},{rect.Position.Y:F0} {rect.Size.X:F0}x{rect.Size.Y:F0}]");
+        }
+        return outside;
+    }
+
+    /// <summary>A disabled clickable the game has slid wholly out of the canvas (its hide position), e.g. the Unready button.</summary>
+    private static bool IsParked(Control control, Rect2 canvas)
+    {
+        if (control.MouseFilter == Control.MouseFilterEnum.Ignore) return false;
+        object? enabled = control.GetType()
+            .GetField("_isEnabled", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
+                                    System.Reflection.BindingFlags.NonPublic)
+            ?.GetValue(control);
+        if (enabled is not false) return false;
+        return !DrawnRect(control, out Rect2 rect) || !rect.Intersects(canvas);
     }
 
     private static readonly HashSet<string> CardGlowParts = new(StringComparer.Ordinal)
