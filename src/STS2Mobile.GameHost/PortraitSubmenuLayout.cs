@@ -53,6 +53,20 @@ internal static partial class PortraitSubmenuLayout
 
     private static readonly Dictionary<ulong, TextServer.AutowrapMode> OriginalWrap = new();
 
+    // The screens whose text is content rather than artwork: their small labels are raised towards 11 points. The relic
+    // collection's icons, the potion lab's art and the timeline's map keep their own text, as does card artwork.
+    private static readonly HashSet<string> TextScaledScreens = new(StringComparer.Ordinal)
+    {
+        Ns + "MainMenu.NCompendiumSubmenu",
+        Ns + "ModdingScreen.NModdingScreen",
+        Ns + "MainMenu.NJoinFriendScreen",
+        Ns + "MainMenu.NMultiplayerSubmenu",
+        Ns + "CharacterSelect.NMultiplayerLoadGameScreen",
+        CustomRunTypeName, DailyRunTypeName, RunHistoryTypeName, ProfileTypeName, StatsTypeName, CardLibraryTypeName,
+        PatchNotesTypeName, BestiaryTypeName, UnlockCardsTypeName, UnlockRelicsTypeName, UnlockPotionsTypeName,
+        UnlockMiscTypeName, UnlockCharacterTypeName,
+    };
+
     public static void Apply(Control screen, string typeName, Action<Control> capture)
     {
         float width = screen.Size.X;
@@ -74,6 +88,17 @@ internal static partial class PortraitSubmenuLayout
                 break;
         }
         KeepCornerButtons(screen);
+        if (typeName == Ns + "ModdingScreen.NModdingScreen")
+        {
+            // The mod list rows at a finger's height and the tickboxes inside them at least as tall; their widths are padded
+            // by PortraitTargetPads as far as the neighbouring controls allow.
+            GrowListRows(screen, type => type == "NModMenuRow", PortraitBands.MinTarget, capture);
+            GrowListRows(screen, type => type == "NTickbox", PortraitBands.MinTarget, capture);
+        }
+        // The screens fitted here are drawn at a design width, so some of their controls are narrower or shorter than a finger;
+        // an invisible pad grows each towards 44 points without moving its art.
+        PortraitTargetPads.Ensure(screen);
+        if (TextScaledScreens.Contains(typeName)) PortraitMenuText.Apply(screen);
     }
 
     /// <summary>
@@ -93,11 +118,12 @@ internal static partial class PortraitSubmenuLayout
             Place(remote, (w - 625f) / 2f, y, 625f, 265f, capture);
             y += 265f + Gap;
         }
-        // The mode dropdown stands over the row's first slot, 10 units in.
+        // The mode dropdown stands over the row's first slot, 10 units in. The row is 106 units tall: 127 units (44 points)
+        // at this screen's 1.2 draw, where it was 64 (27 points).
         float rowLeft = (w - 700f) / 2f;
-        Place(screen.GetNodeOrNull<Control>("LeftContainer/HBoxContainer"), rowLeft, y, 700f, 64f, capture);
-        Place(screen.GetNodeOrNull<Control>("LeftContainer/GameModeDropdown"), rowLeft + 10f, y + 1f, 320f, 64f, capture);
-        y += 64f + Gap;
+        Place(screen.GetNodeOrNull<Control>("LeftContainer/HBoxContainer"), rowLeft, y, 700f, 106f, capture);
+        Place(screen.GetNodeOrNull<Control>("LeftContainer/GameModeDropdown"), rowLeft + 10f, y + 1f, 320f, 106f, capture);
+        y += 106f + Gap;
         if (screen.GetNodeOrNull<Control>("LeftContainer/AscensionPanel") is { Visible: true } ascension)
         {
             Place(ascension, (w - 634f) / 2f, y, 634f, 117f, capture);
@@ -111,6 +137,9 @@ internal static partial class PortraitSubmenuLayout
         y += 55f;
         // The list's scrollbar stands at its right edge: 48 units, kept inside the screen.
         Place(screen.GetNodeOrNull<Control>("RightContainer/ModifiersList"), 16f, y, w - 64f, Math.Max(200f, h - CornerButtonsTop - Gap - y), capture);
+        // The modifier list scrolls; a 106 unit row is 127 units (44 points) at this screen's 1.2 draw.
+        if (screen.GetNodeOrNull<Control>("RightContainer/ModifiersList") is { } modifiers)
+            GrowListRows(modifiers, type => type == "NRunModifierTickbox", 106f, capture);
 
         Place(screen.GetNodeOrNull<Control>("ReadyAndWaitingPanel"), (w - 736f) / 2f, h * 0.4f, 736f, 122f, capture);
         PlaceDisclaimer(screen, w, h, capture);
@@ -217,6 +246,28 @@ internal static partial class PortraitSubmenuLayout
         Place(disclaimer, 24f, h - 120f, w - 48f, 110f, capture);
     }
 
+    /// <summary>
+    /// Gives the rows of a scrolling list a finger's height: each control of the named type gets that much minimum height
+    /// (its width is already the row's), so the rows stay one under another and the list scrolls.
+    /// </summary>
+    private static void GrowListRows(Control root, Func<string, bool> matches, float minHeight, Action<Control> capture)
+    {
+        void Walk(Node node)
+        {
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+                if (matches(control.GetType().Name))
+                {
+                    Vector2 current = control.CustomMinimumSize;
+                    SetMin(control, new Vector2(current.X, Math.Max(minHeight, current.Y)), capture);
+                }
+                Walk(control);
+            }
+        }
+        Walk(root);
+    }
+
     /// <summary>A desktop half spread over the whole virtual canvas, so its children are placed in canvas units.</summary>
     private static void Fill(Control? control, float w, float h, Action<Control> capture) => Place(control, 0f, 0f, w, h, capture);
 
@@ -292,6 +343,9 @@ internal static partial class PortraitSubmenuLayout
 
     public static void RestoreLandscape()
     {
+        PortraitInPlaceScroll.Shared.Clear();
+        PortraitTargetPads.ReleaseAll();
+        PortraitMenuText.Release();
         foreach ((ulong id, TextServer.AutowrapMode mode) in OriginalWrap)
             if (GodotObject.InstanceFromId(id) is Label label && GodotObject.IsInstanceValid(label)) label.AutowrapMode = mode;
         OriginalWrap.Clear();
@@ -323,6 +377,7 @@ internal static partial class PortraitSubmenuLayout
     /// <summary>Forgets kept values of nodes that are gone (a screen closed and freed).</summary>
     public static void PruneDead()
     {
+        PortraitMenuText.PruneDead();
         foreach (var key in OriginalProperties.Keys.Where(k => !GodotObject.IsInstanceIdValid(k.Id)).ToList()) OriginalProperties.Remove(key);
         OriginalParents.RemoveAll(entry => !GodotObject.IsInstanceIdValid(entry.Child));
         foreach (ulong id in OriginalWrap.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) OriginalWrap.Remove(id);

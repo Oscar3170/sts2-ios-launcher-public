@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Godot;
 
 namespace STS2Mobile.GameHost;
@@ -52,14 +53,17 @@ internal static partial class PortraitSubmenuLayout
     // The mode button (260 x 58 on the desktop, its picture keeping its shape) over the back button: 88 units tall, 44.6
     // points.
     private const float BestiaryModeHeight = 88f;
+    // A move button at a finger's height: 79.5 units at the panel's 1.1 draw and the screen's 1.459 draw is 127 units.
+    private const float BestiaryMoveHeight = 79.5f;
 
-    // The list: entries 88 units tall (36 on the desktop; 44.6 points), the whole width of the column a touch target.
-    private const float BestiaryEntryHeight = 88f;
+    // The list: entries 92 units tall (36 on the desktop), 134 units (46.5 points) on the canvas, the whole width of the
+    // column a touch target.
+    private const float BestiaryEntryHeight = 92f;
     // The game puts its selection arrow (36 tall) at an entry's position plus (-42, 119) in the list's margin container,
-    // made for a list 120 units down in it and entries 36 tall. A top margin of 119 + 18 - 44 = 93 centres the arrow on an
-    // 88 unit entry. The scroll's top padding then lifts that margin above the clipped area but for 8 units.
+    // made for a list 120 units down in it and entries 36 tall. A top margin of 119 + 18 - 46 = 91 centres the arrow on a
+    // 92 unit entry. The scroll's top padding then lifts that margin above the clipped area but for 8 units.
     private static readonly Vector2 BestiaryArrowOffset = new(-42f, 119f);
-    private const float BestiaryListTopMargin = 93f;
+    private const float BestiaryListTopMargin = 91f;
     // The arrow stands 42 to 6 units left of the list: the list starts 46 units into the column, inside the clip.
     private const float BestiaryArrowRoom = 46f;
     private const float BestiaryScrollbarWidth = 48f;
@@ -115,6 +119,8 @@ internal static partial class PortraitSubmenuLayout
         float panelBottom = modeTop - Gap;
         LayoutBestiaryPanel(screen.GetNodeOrNull<Control>("StatsContainer"), lowerTop, panelBottom, sliding, capture);
         LayoutBestiaryPanel(screen.GetNodeOrNull<Control>("MoveContainer"), lowerTop, panelBottom, sliding, capture);
+        if (screen.GetNodeOrNull<Control>("MoveContainer") is { } moves)
+            GrowBestiaryMoves(screen, moves, lowerTop, panelBottom, capture);
 
         if (screen.GetNodeOrNull<Control>("ModeButton") is { } mode)
         {
@@ -126,6 +132,61 @@ internal static partial class PortraitSubmenuLayout
         }
 
         LayoutBestiaryList(screen, BestiaryLeftColumn, lowerTop, w - BestiaryLeftColumn - 4f, h - Gap - lowerTop, capture);
+    }
+
+    /// <summary>
+    /// The moves panel's buttons at a finger's height. The panel is only as tall as the room the mode leaves, so a long move
+    /// list is put in a scroll inside it: the buttons stay 44 points and the panel keeps the measured 1.1 scale (a 79.5 unit
+    /// button is 127 units on the canvas) instead of shrinking until they fit.
+    /// </summary>
+    private static void GrowBestiaryMoves(Control screen, Control panel, float top, float bottom, Action<Control> capture)
+    {
+        var buttons = new List<Control>();
+        void Walk(Node node)
+        {
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+                if (control.GetType().Name == "NBestiaryMoveButton") buttons.Add(control);
+                Walk(control);
+            }
+        }
+        Walk(panel);
+        if (buttons.Count == 0) return;
+
+        // The panel is only as tall as the mode's room leaves. When its content can be moved in place (the panel is a plain
+        // control holding the button list) it clips and scrolls; nothing is reparented, so the buttons keep their
+        // registrations. Otherwise the panel keeps its desktop sizes and the pads carry the touch targets.
+        Control? content = MoveableContent(panel, buttons[0]);
+        if (content == null)
+        {
+            if (panel.GetMeta("portrait_scroll_fallback", false).AsBool() == false)
+            {
+                panel.SetMeta("portrait_scroll_fallback", true);
+                GD.Print("Portrait bestiary: the moves panel lays its children out; move buttons keep their sizes and use touch pads.");
+            }
+            return;
+        }
+
+        foreach (Control button in buttons)
+            BestiaryMinSize(button, new Vector2(button.CustomMinimumSize.X, Math.Max(BestiaryMoveHeight, button.CustomMinimumSize.Y)), capture);
+
+        float room = Math.Max(100f, bottom - top) / BestiaryPanelScale;
+        float contentHeight = content.GetCombinedMinimumSize().Y + 8f;
+        float keep = Math.Min(room, Math.Max(100f, contentHeight));
+        BestiaryMinSize(panel, new Vector2(panel.CustomMinimumSize.X, keep), capture);
+        SetKept(panel, "clip_contents", true);
+        capture(content);
+        PortraitInPlaceScroll.Shared.Set(panel, content, screen);
+    }
+
+    /// <summary>The child of the panel that holds the move buttons, when the panel is a plain control that can be scrolled in place.</summary>
+    private static Control? MoveableContent(Control panel, Control button)
+    {
+        if (panel.IsClass("Container")) return null;
+        for (Node? node = button; node != null && node != panel; node = node.GetParent())
+            if (node.GetParent() == panel && node is Control content) return content;
+        return null;
     }
 
     /// <summary>

@@ -1,225 +1,309 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Godot;
-using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
 
 /// <summary>
-/// Portrait reflows for the main menu side screens that are used on every run: the singleplayer and multiplayer host mode cards wrap into
-/// rows of two, and character select stacks the character art over the info panel at full size. Every edit is captured first so
-/// turning Portrait Mode off restores the desktop layout live.
+/// Portrait reflows for the main menu's run-setup screens. The game lays these screens out on its 1680 unit desktop canvas, so
+/// each is drawn on a 1680 unit virtual canvas that fills the portrait width (the canvas the reference rules were measured
+/// on) and laid out from the top of the safe band: the singleplayer mode cards wrap two to a row with the reference card
+/// interior, character select (and Blitz and Dread) lay the roster out four to a row and frame the character art over the
+/// screen with the figure separate from the backdrop, and the info panel, ascension panel and confirm button take their
+/// measured places. Every edit is captured first so turning Portrait Mode off restores the desktop layout live.
 /// </summary>
-internal sealed class PortraitMenuLayout
+internal sealed partial class PortraitMenuLayout
 {
     private const string Ns = "MegaCrit.Sts2.Core.Nodes.Screens.";
     public const string SingleplayerTypeName = Ns + "MainMenu.NSingleplayerSubmenu";
     public const string MultiplayerHostTypeName = Ns + "MainMenu.NMultiplayerHostSubmenu";
     public const string CharacterSelectTypeName = Ns + "CharacterSelect.NCharacterSelectScreen";
-    // Blitz picks a character on the same layout as character select (art, info panel, character buttons).
     public const string BlitzTypeName = Ns + "Blitz.NBlitzScreen";
+    public const string DreadTypeName = Ns + "Dread.NDreadScreen";
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
-        SingleplayerTypeName, MultiplayerHostTypeName, CharacterSelectTypeName, BlitzTypeName,
+        SingleplayerTypeName, MultiplayerHostTypeName, CharacterSelectTypeName, BlitzTypeName, DreadTypeName,
     };
 
-    private const string ModeFlowName = "PortraitModeFlow";
-    private const float ModeCardWidth = 362f;
-    private const float ModeCardHeight = 705f;
-    private const float ModeGap = 24f;
-    private const float BackButtonBand = 200f;
+    /// <summary>The desktop canvas the game and the reference rules lay these screens out on, 1680 units across.</summary>
+    public const float DesignWidth = 1680f;
+
+    private sealed class ScreenState
+    {
+        public string TypeName = "";
+        public float Scale = 1f;
+        public Rect2 Safe;
+        public bool ConfirmScaled;
+        public bool ConfirmPlaced;
+        public bool BackPlaced;
+        public bool InfoPlaced;
+        public Container? Grid;
+        public Action? GridSort;
+        public BoxContainer? ModeRow;
+        public Action? ModeSort;
+        public int FocusCount = -1;
+
+        /// <summary>Forgets what only holds while portrait is on; the snapshots put the desktop layout back.</summary>
+        public void ResetPortrait()
+        {
+            if (GridSort != null && GodotObject.IsInstanceValid(Grid)) Grid.SortChildren -= GridSort;
+            GridSort = null;
+            Grid = null;
+            if (ModeSort != null && GodotObject.IsInstanceValid(ModeRow)) ModeRow!.SortChildren -= ModeSort;
+            ModeSort = null;
+            ModeRow = null;
+            ConfirmScaled = false;
+            ConfirmPlaced = false;
+            BackPlaced = false;
+            InfoPlaced = false;
+            FocusCount = -1;
+        }
+    }
 
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
-    private readonly HashSet<ulong> _singleplayer = new();
-    private readonly HashSet<ulong> _characterSelect = new();
+    private readonly Dictionary<ulong, ScreenState> _screens = new();
 
     public void ApplyNode(Control screen, string typeName, float capHeight, Vector2 canvas)
     {
-        switch (typeName)
-        {
-            case SingleplayerTypeName:
-            case MultiplayerHostTypeName:
-                _singleplayer.Add(screen.GetInstanceId());
-                LayoutSingleplayer(screen, capHeight, canvas);
-                break;
-            case CharacterSelectTypeName:
-            case BlitzTypeName:
-                if (_characterSelect.Add(screen.GetInstanceId()))
-                    GD.Print($"Portrait menu: {screen.GetType().Name} children {string.Join(",", screen.GetChildren().Select(c => c.Name.ToString()))}");
-                _characterSelect.Add(screen.GetInstanceId());
-                LayoutCharacterSelect(screen, capHeight, canvas);
-                break;
-        }
+        ScreenState state = GetState(screen, typeName);
+        Layout(screen, state, capHeight, canvas);
+        PortraitTargetPads.Ensure(screen);
     }
 
     public void OnProcessFrame(Window root, float capHeight)
     {
         Vector2 canvas = root.GetVisibleRect().Size;
-        foreach (ulong id in _singleplayer)
-            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) && screen.IsVisibleInTree())
-                FitModeFlow(screen, capHeight, canvas);
-        foreach (ulong id in _characterSelect)
-            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) && screen.IsVisibleInTree())
-                KeepInfoPanel(screen);
-    }
-
-    // ---- singleplayer modes -----------------------------------------------------------------------------------------------
-
-    private void LayoutSingleplayer(Control screen, float capHeight, Vector2 canvas)
-    {
-        if (screen.GetNodeOrNull<BoxContainer>("ButtonContainer") is not { } row) return;
-        var flow = screen.GetNodeOrNull<HFlowContainer>(ModeFlowName);
-        if (flow == null)
+        foreach ((ulong id, ScreenState state) in _screens)
         {
-            flow = new HFlowContainer { Name = ModeFlowName, MouseFilter = Control.MouseFilterEnum.Ignore, Alignment = FlowContainer.AlignmentMode.Center };
-            flow.AddThemeConstantOverride("h_separation", (int)ModeGap);
-            flow.AddThemeConstantOverride("v_separation", (int)ModeGap);
-            screen.AddChild(flow);
-            screen.MoveChild(flow, row.GetIndex() + 1);
-        }
-        foreach (Node child in row.GetChildren().ToList())
-        {
-            child.SetMeta("portrait_row_index", child.GetIndex());
-            child.Reparent(flow, keepGlobalTransform: false);
-        }
-        flow.Visible = true;
-        FitModeFlow(screen, capHeight, canvas);
-    }
-
-    private static void FitModeFlow(Control screen, float capHeight, Vector2 canvas)
-    {
-        if (screen.GetNodeOrNull<HFlowContainer>(ModeFlowName) is not { Visible: true } flow) return;
-        int visible = flow.GetChildren().OfType<Control>().Count(c => c.Visible);
-        int rows = Math.Max(1, (visible + 1) / 2);
-        float width = 2f * ModeCardWidth + ModeGap;
-        float height = rows * ModeCardHeight + (rows - 1) * ModeGap;
-        float band = canvas.Y - capHeight - BackButtonBand - 40f;
-        float scale = Math.Min(1f, band / height);
-        flow.AnchorLeft = flow.AnchorRight = 0.5f;
-        flow.AnchorTop = flow.AnchorBottom = 0f;
-        flow.OffsetLeft = -width / 2f;
-        flow.OffsetRight = width / 2f;
-        float top = capHeight + 20f + (band - height * scale) / 2f;
-        flow.OffsetTop = top;
-        flow.OffsetBottom = top + height;
-        flow.PivotOffset = new Vector2(width / 2f, 0f);
-        flow.Scale = new Vector2(scale, scale);
-    }
-
-    private static void RestoreSingleplayer(Control screen)
-    {
-        if (screen.GetNodeOrNull<BoxContainer>("ButtonContainer") is not { } row) return;
-        if (screen.GetNodeOrNull<HFlowContainer>(ModeFlowName) is not { } flow) return;
-        foreach (Node child in flow.GetChildren().OrderBy(c => (int)c.GetMeta("portrait_row_index", 0)).ToList())
-        {
-            child.Reparent(row, keepGlobalTransform: false);
-            row.MoveChild(child, Math.Min((int)child.GetMeta("portrait_row_index", 0), row.GetChildCount() - 1));
-        }
-        flow.Visible = false;
-    }
-
-    // ---- character select -------------------------------------------------------------------------------------------------
-
-    private void LayoutCharacterSelect(Control screen, float capHeight, Vector2 canvas)
-    {
-        // The art is 2560 x 1200 around the screen centre with the figure right of centre; it moves up over the top half and
-        // left so the figure stands in the middle of the narrow screen.
-        float artCentreY = capHeight + 640f;
-        float shiftY = artCentreY - canvas.Y / 2f;
-        foreach (string name in new[] { "StaticBg", "AnimatedBg" })
-        {
-            if (screen.GetNodeOrNull<Control>(name) is not { } art) continue;
-            PortraitControlSnapshot snap = Capture(art);
-            art.OffsetLeft = snap.InitialOffsetLeft + ArtShiftX;
-            art.OffsetRight = snap.InitialOffsetRight + ArtShiftX;
-            art.OffsetTop = snap.InitialOffsetTop + shiftY;
-            art.OffsetBottom = snap.InitialOffsetBottom + shiftY;
-        }
-
-        // The info panel (526 x 434) sits under the art, above the ascension panel and the character buttons.
-        if (screen.GetNodeOrNull<Control>("InfoPanel") is { } info)
-        {
-            Capture(info);
-            PlaceInfoPanel(screen, info);
-        }
-
-        // Blitz's title, its "under construction" tag and its info button sit along the top edge, under the notch.
-        foreach (string name in new[] { "ActLabel", "ActDropdown", "RemotePlayerContainer", "BlitzPlaceholder", "UnderConstruction", "BlitzInfoButton" })
-        {
-            if (screen.GetNodeOrNull<Control>(name) is not { } top) continue;
-            PortraitControlSnapshot snap = Capture(top);
-            top.OffsetTop = snap.InitialOffsetTop + capHeight;
-            top.OffsetBottom = snap.InitialOffsetBottom + capHeight;
+            if (GodotObject.InstanceFromId(id) is not Control screen || !GodotObject.IsInstanceValid(screen) || !screen.IsVisibleInTree())
+                continue;
+            Layout(screen, state, capHeight, canvas);
+            PortraitTargetPads.Ensure(screen);
         }
     }
 
-    private const float ArtShiftX = -240f;
-
-    private static void PlaceInfoPanel(Control screen, Control info)
+    private ScreenState GetState(Control screen, string typeName)
     {
-        // Picking a character slides the panel in; while a slide exists the screen snaps the panel back to its last resting
-        // spot first, so a slide under way when the layout runs would carry it back to the desktop spot. Stop and forget it: with
-        // no slide the next pick starts from where the panel is.
-        StopInfoSlide(screen);
-        info.AnchorLeft = info.AnchorRight = 0.5f;
-        info.AnchorTop = info.AnchorBottom = 1f;
-        info.OffsetLeft = -263f;
-        info.OffsetRight = 263f;
-        info.OffsetBottom = -InfoBottomFromEdge;
-        info.OffsetTop = -InfoBottomFromEdge - 434f;
+        ulong id = screen.GetInstanceId();
+        if (!_screens.TryGetValue(id, out ScreenState? state)) _screens[id] = state = new ScreenState();
+        state.TypeName = typeName;
+        return state;
     }
 
-    private static void StopInfoSlide(Control screen)
+    private void Layout(Control screen, ScreenState state, float capHeight, Vector2 canvas)
     {
-        if (GetField(screen, "_infoPanelTween") is Tween tween && tween.IsValid()) tween.Kill();
-        SetField(screen, "_infoPanelTween", null);
+        Fit(screen, state, capHeight, canvas);
+        switch (state.TypeName)
+        {
+            case SingleplayerTypeName:
+            case MultiplayerHostTypeName:
+                LayoutModeCards(screen, state);
+                break;
+            case CharacterSelectTypeName:
+            case BlitzTypeName:
+                LayoutCharacterSelect(screen, state);
+                FrameArt(screen, "AnimatedBg");
+                break;
+            case DreadTypeName:
+                LayoutDread(screen, state);
+                FrameArt(screen, "SubViewportContainer/SubViewport/AnimatedBg");
+                break;
+        }
     }
 
-    /// <summary>Puts the info panel back on its portrait spot when the game has returned it to the desktop one.</summary>
-    private void KeepInfoPanel(Control screen)
+    /// <summary>
+    /// Draws the screen on a virtual canvas <see cref="DesignWidth"/> units across, filling the phone's canvas, and keeps the
+    /// safe band in its units (the cap over the notch at the top, the canvas's lower edge at the bottom). The reference
+    /// numbers are all in this canvas's units.
+    /// </summary>
+    private void Fit(Control screen, ScreenState state, float capHeight, Vector2 canvas)
     {
-        if (screen.GetNodeOrNull<Control>("InfoPanel") is not { } info || !_snapshots.ContainsKey(info.GetInstanceId())) return;
-        if (GetField(screen, "_infoPanelTween") is Tween tween && tween.IsValid() && tween.IsRunning()) return;
-        if (Math.Abs(info.OffsetLeft + 263f) < 0.5f && Math.Abs(info.OffsetBottom + InfoBottomFromEdge) < 0.5f) return;
-        PlaceInfoPanel(screen, info);
+        float scale = Math.Min(1f, canvas.X / DesignWidth);
+        if (scale < 0.01f) scale = 1f;
+        float localHeight = canvas.Y / scale;
+        var size = new Vector2(DesignWidth, localHeight);
+        Vector2 parentOrigin = screen.GetParent() is Control parent ? parent.GetGlobalTransformWithCanvas().Origin : Vector2.Zero;
+        Vector2 position = -parentOrigin;
+
+        Capture(screen);
+        if (screen.AnchorLeft != 0f || screen.AnchorTop != 0f || screen.AnchorRight != 0f || screen.AnchorBottom != 0f)
+        {
+            screen.AnchorLeft = 0f;
+            screen.AnchorTop = 0f;
+            screen.AnchorRight = 0f;
+            screen.AnchorBottom = 0f;
+        }
+        if (screen.PivotOffset != Vector2.Zero) screen.PivotOffset = Vector2.Zero;
+        var drawScale = new Vector2(scale, scale);
+        if (screen.Scale.DistanceSquaredTo(drawScale) > 0.000001f) screen.Scale = drawScale;
+        if (screen.Position.DistanceSquaredTo(position) > 0.25f) screen.Position = position;
+        if (screen.Size.DistanceSquaredTo(size) > 0.25f) screen.Size = size;
+
+        state.Scale = scale;
+        state.Safe = new Rect2(0f, capHeight / scale, DesignWidth, Math.Max(1f, (canvas.Y - capHeight) / scale));
     }
-
-    private static object? GetField(object target, string name) =>
-        target.GetType().GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(target);
-
-    private static void SetField(object target, string name, object? value) =>
-        target.GetType().GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.SetValue(target, value);
-
-    private const float InfoBottomFromEdge = 380f;
-
-    // ---- shared -----------------------------------------------------------------------------------------------------------
 
     public void RestoreLandscape()
     {
-        foreach (ulong id in _singleplayer)
-            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
-                RestoreSingleplayer(screen);
-        foreach (ulong id in _characterSelect)
-            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
-                StopInfoSlide(screen);
+        foreach ((ulong id, ScreenState state) in _screens) state.ResetPortrait();
+        RestoreArt();
+        RestoreFocus();
+        PortraitTargetPads.ReleaseAll();
+        PortraitMenuText.Release();
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
+        // The info panel may slide again from wherever it is: give the game's own resting place back.
+        foreach ((ulong id, ScreenState _) in _screens)
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) &&
+                screen.GetNodeOrNull<Control>("InfoPanel") is { } info)
+                SetField(screen, "_infoPanelPosFinalVal", info.Position);
     }
 
     public void PruneDead()
     {
         foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
-        _singleplayer.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _characterSelect.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _screens.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _screens.Remove(id);
+        PruneFocus();
+        PruneArt();
+        PortraitTargetPads.PruneDead();
+        PortraitMenuText.PruneDead();
     }
 
-    private PortraitControlSnapshot Capture(Control control)
+    private PortraitControlSnapshot Capture(Control control, bool captureVisible = false)
     {
         if (!_snapshots.TryGetValue(control.GetInstanceId(), out PortraitControlSnapshot? snap))
-            _snapshots[control.GetInstanceId()] = snap = new PortraitControlSnapshot(control, captureVisible: false);
+        {
+            _snapshots[control.GetInstanceId()] = snap = new PortraitControlSnapshot(control, captureVisible);
+        }
+        else if (captureVisible && !snap.CaptureVisible)
+        {
+            snap.RecordInitialVisibility(control.Visible);
+        }
         return snap;
     }
+
+    /// <summary>
+    /// Puts the screen's back button in its lower left corner. The game places it from the window's height, which is the
+    /// portrait canvas's height rather than this screen's taller virtual canvas, so without this it would stand partway up
+    /// the screen.
+    /// </summary>
+    private void PlaceBackButton(Control screen, ScreenState state)
+    {
+        Control? back = screen.GetNodeOrNull<Control>("BackButton") ?? screen.GetNodeOrNull<Control>("%BackButton");
+        if (back == null) return;
+        Vector2 show, hide;
+        if (GetField(back, "_posOffset") is Vector2 offset)
+        {
+            show = new Vector2(-offset.X, screen.Size.Y - offset.Y);
+            hide = show + new Vector2(-180f, 0f);
+        }
+        else
+        {
+            show = new Vector2(0f, screen.Size.Y - back.Size.Y - 20f);
+            hide = show - new Vector2(180f, 0f);
+        }
+        bool first = !state.BackPlaced;
+        if (GetField(back, "_showPos") is not Vector2 shown || shown.DistanceSquaredTo(show) > 0.5f)
+            SetField(back, "_showPos", show);
+        if (GetField(back, "_hidePos") is not Vector2 hidden || hidden.DistanceSquaredTo(hide) > 0.5f)
+            SetField(back, "_hidePos", hide);
+        // The game's first slide was aimed at the window corner; put the button at its place instead of letting it travel
+        // there and jump back.
+        if (TweenRunning(back, "_moveTween"))
+        {
+            if (!first) return;
+            (GetField(back, "_moveTween") as Tween)?.Kill();
+        }
+        Vector2 target = GetField(back, "_isEnabled") is true ? show : hide;
+        if (back.Position.DistanceSquaredTo(target) > 1f) back.Position = target;
+        state.BackPlaced = true;
+    }
+
+    // ---- shared reflection ------------------------------------------------------------------------------------------------
+
+    private static readonly Dictionary<(Type, string), FieldInfo?> Fields = new();
+
+    private static FieldInfo? Field(object target, string name)
+    {
+        Type type = target.GetType();
+        if (!Fields.TryGetValue((type, name), out FieldInfo? field))
+            Fields[(type, name)] = field = FindField(type, name);
+        return field;
+    }
+
+    private static object? GetField(object target, string name) => Field(target, name)?.GetValue(target);
+
+    private static void SetField(object target, string name, object? value) => Field(target, name)?.SetValue(target, value);
+
+    private static FieldInfo? FindField(Type? type, string name)
+    {
+        for (; type != null; type = type.BaseType)
+            if (type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is { } field)
+                return field;
+        return null;
+    }
+
+    private static bool TweenRunning(object owner, string field) =>
+        GetField(owner, field) is Tween tween && tween.IsValid() && tween.IsRunning();
+
+    /// <summary>Puts a control at a rectangle of its parent with the top left anchor, changing only what differs.</summary>
+    private void Place(Control? control, float x, float y, float w, float h)
+    {
+        if (control == null) return;
+        Capture(control);
+        if (control.AnchorLeft != 0f || control.AnchorTop != 0f || control.AnchorRight != 0f || control.AnchorBottom != 0f)
+        {
+            control.AnchorLeft = 0f;
+            control.AnchorTop = 0f;
+            control.AnchorRight = 0f;
+            control.AnchorBottom = 0f;
+        }
+        if (MathF.Abs(control.OffsetLeft - x) > 0.5f) control.OffsetLeft = x;
+        if (MathF.Abs(control.OffsetTop - y) > 0.5f) control.OffsetTop = y;
+        if (MathF.Abs(control.OffsetRight - (x + w)) > 0.5f) control.OffsetRight = x + w;
+        if (MathF.Abs(control.OffsetBottom - (y + h)) > 0.5f) control.OffsetBottom = y + h;
+    }
+
+    /// <summary>Sets a control's scale and pivot, changing only what differs (a native hover tween may own the scale).</summary>
+    private static void SetScale(Control control, Vector2 scale, Vector2 pivot)
+    {
+        if (control.PivotOffset.DistanceSquaredTo(pivot) > 0.25f) control.PivotOffset = pivot;
+        if (control.Scale.DistanceSquaredTo(scale) > 0.000001f) control.Scale = scale;
+    }
+
+    private static void SetMinSize(Control control, Vector2 size)
+    {
+        if (control.CustomMinimumSize.DistanceSquaredTo(size) > 0.25f) control.CustomMinimumSize = size;
+    }
+
+    // ---- focus neighbours -------------------------------------------------------------------------------------------------
+
+    private readonly List<(ulong Id, NodePath? Left, NodePath? Right, NodePath? Top, NodePath? Bottom)> _focus = new();
+
+    private void SaveFocus(Control button)
+    {
+        ulong id = button.GetInstanceId();
+        if (_focus.Any(entry => entry.Id == id)) return;
+        _focus.Add((id, button.FocusNeighborLeft, button.FocusNeighborRight, button.FocusNeighborTop, button.FocusNeighborBottom));
+    }
+
+    private void RestoreFocus()
+    {
+        foreach ((ulong id, NodePath? left, NodePath? right, NodePath? top, NodePath? bottom) in _focus)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control button || !GodotObject.IsInstanceValid(button)) continue;
+            if (left is { } l) button.FocusNeighborLeft = l;
+            if (right is { } r) button.FocusNeighborRight = r;
+            if (top is { } t) button.FocusNeighborTop = t;
+            if (bottom is { } b) button.FocusNeighborBottom = b;
+        }
+        _focus.Clear();
+    }
+
+    private void PruneFocus() =>
+        _focus.RemoveAll(entry => !GodotObject.IsInstanceIdValid(entry.Id));
 }

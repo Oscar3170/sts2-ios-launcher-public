@@ -26,8 +26,7 @@ internal sealed class PortraitOverlayLayout
     private const float EdgeMargin = 16f;
     private const float PreviewMargin = 40f;
 
-    public const string GameOverTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen.NGameOverScreen";
-    private const float QuoteMargin = 60f;
+    public const string GameOverTypeName = PortraitGameOverLayout.TypeName;
 
     public const string DreadDisclaimerTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Dread.NDreadInfoDisclaimer";
     private const float DreadListWidth = 480f;
@@ -37,31 +36,32 @@ internal sealed class PortraitOverlayLayout
     private const float PopupMaxScale = 1.8f;
     private const float PopupMargin = 40f;
 
-    private const float GameOverButtonWidth = 560f;
-    private const float GameOverButtonHeight = 128f;
-    private const float GameOverButtonBottom = 112f;
-    private const float GameOverButtonGap = 24f;
-    private const int GameOverButtonFont = 56;
+    // The overlay stack's shared backstop, behind every overlay screen and modal, is a solid 0.85 black; in portrait it is
+    // tinted so the room art stays visible around the screen instead of the view becoming a black cut-out.
+    private const string OverlayStackTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Overlays.NOverlayStack";
+    private static readonly Color OverlayBackstopTint = new(0.015f, 0.02f, 0.03f, 0.55f);
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
-        CrystalSphereTypeName, GameOverTypeName, DreadDisclaimerTypeName, VerticalPopupTypeName,
+        CrystalSphereTypeName, GameOverTypeName, DreadDisclaimerTypeName, VerticalPopupTypeName, OverlayStackTypeName,
     };
 
-    /// <summary>The game over buttons' own state, put back in landscape: where the game shows each, its size, pivot and font limit.</summary>
-    private sealed record GameOverButton(Vector2 GameShow, Vector2 Size, Vector2 Pivot, int MaxFont, float LabelLeft, float LabelRight);
-    private readonly Dictionary<ulong, GameOverButton> _gameOverButtons = new();
-    private readonly Dictionary<ulong, TextServer.AutowrapMode> _wrapModes = new();
+    /// <summary>Everything about the run's end screens (defeat, victory, a boss win) lives in its own file.</summary>
+    private readonly PortraitGameOverLayout _gameOver = new();
 
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
     private readonly HashSet<ulong> _logged = new();
+    private ulong _backstopId;
+    private Color _backstopColor;
+    private bool _backstopTinted;
 
     public void ApplyNode(Control control, string typeName, float capHeight, Vector2 canvas)
     {
         if (typeName == CrystalSphereTypeName) LayoutCrystalSphere(control, capHeight, canvas);
-        else if (typeName == GameOverTypeName) LayoutGameOver(control, canvas);
+        else if (typeName == GameOverTypeName) _gameOver.Apply(control, capHeight, canvas);
         else if (typeName == DreadDisclaimerTypeName) LayoutDreadDisclaimer(control);
         else if (typeName == VerticalPopupTypeName) LayoutVerticalPopup(control, canvas);
+        else if (typeName == OverlayStackTypeName) LayoutOverlayBackstop(control);
     }
 
     /// <summary>
@@ -86,6 +86,35 @@ internal sealed class PortraitOverlayLayout
     }
 
     /// <summary>
+    /// The shared backstop over the room behind every overlay screen (card selections and the rewards) and modal: 0.85 black,
+    /// which would turn the whole portrait view into a black cut-out. It is tinted instead, as the reference layout does, so
+    /// the room art stays visible around the screen. The game tweens the backstop's modulate, which keeps working; its colour
+    /// is captured the first time and put back in landscape.
+    /// </summary>
+    private void LayoutOverlayBackstop(Control stack)
+    {
+        if (stack.GetNodeOrNull<ColorRect>("OverlayBackstop") is not { } backstop) return;
+        if (!_backstopTinted)
+        {
+            _backstopId = backstop.GetInstanceId();
+            _backstopColor = backstop.Color;
+            _backstopTinted = true;
+        }
+        if (backstop.Color != OverlayBackstopTint) backstop.Color = OverlayBackstopTint;
+        if (_logged.Add(stack.GetInstanceId()))
+            GD.Print($"Portrait overlay: overlay backstop tinted {OverlayBackstopTint} (was {_backstopColor}).");
+    }
+
+    private void RestoreOverlayBackstop()
+    {
+        if (!_backstopTinted) return;
+        if (GodotObject.InstanceFromId(_backstopId) is ColorRect backstop && GodotObject.IsInstanceValid(backstop))
+            backstop.Color = _backstopColor;
+        _backstopTinted = false;
+        _backstopId = 0;
+    }
+
+    /// <summary>
     /// Dread's rules popup lists the ascension modifiers in two columns either side of it, 1616 units across in all: past both
     /// edges of the narrow screen, and they fade in after the popup. In portrait the two columns sit side by side under the popup.
     /// </summary>
@@ -103,76 +132,6 @@ internal sealed class PortraitOverlayLayout
             list.OffsetBottom = below + DreadListHeight;
         }
         if (_logged.Add(disclaimer.GetInstanceId())) GD.Print("Portrait overlay: Dread modifier lists moved under the popup.");
-    }
-
-    /// <summary>
-    /// The death quote is one unwrapped line centred on the banner, as wide as its text: a long quote runs off both sides of the
-    /// portrait screen. It wraps inside the screen width instead.
-    /// </summary>
-    private void LayoutGameOver(Control screen, Vector2 canvas)
-    {
-        LayoutGameOverButtons(screen);
-        if (screen.FindChild("DeathQuoteLabel", recursive: true, owned: false) is not RichTextLabel quote) return;
-        Capture(quote);
-        _wrapModes.TryAdd(quote.GetInstanceId(), quote.AutowrapMode);
-        float parentScale = quote.GetParent() is Control p ? Math.Max(p.GetGlobalTransformWithCanvas().Scale.X, 0.01f) : 1f;
-        float half = (canvas.X / 2f - QuoteMargin) / parentScale;
-        quote.AutowrapMode = TextServer.AutowrapMode.WordSmart;
-        quote.OffsetLeft = -half;
-        quote.OffsetRight = half;
-        if (_logged.Add(screen.GetInstanceId())) GD.Print($"Portrait overlay: game over quote wraps at {2f * half:F0}.");
-    }
-
-    /// <summary>
-    /// The game over screen's Continue, Leaderboard and Main Menu buttons share one 260 x 58 unit spot at the bottom middle (20
-    /// points tall on the phone), with View Run beside it. In portrait each is 560 x 128 units (44 points) with its
-    /// text up to 56, View Run above the others. Each button slides to a show position it keeps from when it was made
-    /// (<c>_showPosition</c>) and grows on hover by its scale, so the size and that position are set, not a scale.
-    /// </summary>
-    private void LayoutGameOverButtons(Control screen)
-    {
-        foreach ((string name, int row) in new[] { ("ContinueButton", 0), ("LeaderboardButton", 0), ("MainMenuButton", 0), ("ViewRunButton", 1) })
-        {
-            if (screen.GetNodeOrNull<Control>("%" + name) is not { } button || button.GetParent() is not Control parent) continue;
-            if (button.GetType().GetField("_showPosition", InstAll) is not { } field || field.GetValue(button) is not Vector2 show) continue;
-            ulong id = button.GetInstanceId();
-            Control? label = button.GetNodeOrNull<Control>("Label");
-            if (!_gameOverButtons.ContainsKey(id))
-            {
-                int maxFont = label?.GetType().GetProperty("MaxFontSize", InstAll)?.GetValue(label) is int max ? max : 0;
-                _gameOverButtons[id] = new GameOverButton(show, button.Size, button.PivotOffset, maxFont, label?.OffsetLeft ?? 0f, label?.OffsetRight ?? 0f);
-            }
-            var size = new Vector2(GameOverButtonWidth, GameOverButtonHeight);
-            var target = new Vector2(
-                (parent.Size.X - size.X) / 2f,
-                parent.Size.Y - GameOverButtonBottom - size.Y - row * (size.Y + GameOverButtonGap));
-            if (show == target && button.Size == size) continue;
-            // Hidden buttons sit below or beside their show position: keep that offset.
-            Vector2 away = button.Position - show;
-            field.SetValue(button, target);
-            button.Size = size;
-            button.Position = target + away;
-            button.PivotOffset = size / 2f;
-            GameOverButton state = _gameOverButtons[id];
-            if (label != null) SetButtonLabel(label, state.MaxFont > 0 ? GameOverButtonFont : 0, state.LabelLeft, state.LabelRight);
-            if (_logged.Add(id)) GD.Print($"Portrait overlay: game over {name} is {size.X:F0}x{size.Y:F0} at {target.X:F0},{target.Y:F0}.");
-        }
-    }
-
-    private void RestoreGameOverButtons()
-    {
-        foreach ((ulong id, GameOverButton state) in _gameOverButtons)
-        {
-            if (GodotObject.InstanceFromId(id) is not Control button || !GodotObject.IsInstanceValid(button)) continue;
-            if (button.GetType().GetField("_showPosition", InstAll) is not { } field || field.GetValue(button) is not Vector2 show) continue;
-            Vector2 away = button.Position - show;
-            field.SetValue(button, state.GameShow);
-            button.Size = state.Size;
-            button.Position = state.GameShow + away;
-            button.PivotOffset = state.Pivot;
-            if (button.GetNodeOrNull<Control>("Label") is { } label) SetButtonLabel(label, state.MaxFont, state.LabelLeft, state.LabelRight);
-        }
-        _gameOverButtons.Clear();
     }
 
     private readonly HashSet<ulong> _ftues = new();
@@ -221,6 +180,7 @@ internal sealed class PortraitOverlayLayout
             if (GodotObject.InstanceFromId(id) is Control peek && GodotObject.IsInstanceValid(peek) && peek.IsInsideTree())
                 PlacePeekButton(peek);
         UpdateChoices(canvas);
+        _gameOver.OnProcessFrame();
     }
 
     /// <summary>
@@ -1086,11 +1046,8 @@ internal sealed class PortraitOverlayLayout
     public void RestoreLandscape()
     {
         RestoreChoices();
-        RestoreGameOverButtons();
-        foreach ((ulong id, TextServer.AutowrapMode mode) in _wrapModes)
-            if (GodotObject.InstanceFromId(id) is RichTextLabel label && GodotObject.IsInstanceValid(label))
-                label.AutowrapMode = mode;
-        _wrapModes.Clear();
+        RestoreOverlayBackstop();
+        _gameOver.RestoreLandscape();
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
@@ -1102,8 +1059,7 @@ internal sealed class PortraitOverlayLayout
         _ftues.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _previewRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _peekButtons.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        foreach (ulong id in _wrapModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _wrapModes.Remove(id);
-        foreach (ulong id in _gameOverButtons.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _gameOverButtons.Remove(id);
+        _gameOver.PruneDead();
         PruneChoices();
     }
 

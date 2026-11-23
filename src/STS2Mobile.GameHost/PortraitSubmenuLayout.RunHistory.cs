@@ -111,6 +111,9 @@ internal static partial class PortraitSubmenuLayout
         Control? center = screen.GetNodeOrNull<Control>(RunHistoryContainer + "/CenterContainer");
         Control? map = center?.GetNodeOrNull<Control>("MapPointHistoryContainer") ?? spacer?.GetNodeOrNull<Control>("MapPointHistoryContainer");
         if (spacer == null || center == null || map == null) return;
+        // Safe to move: the node is NMapPointHistory (a plain Control), and its runtime children NActHistoryEntry and
+        // NMapPointHistoryEntry declare no _ExitTree override; only Godot.Node's empty base runs. No reticle or pooled node is
+        // in this subtree (its tween fields are not killed on exit, so nothing is left un-rebuilt).
         MoveKept(map, spacer);
         SetKept(center, "visible", false);
 

@@ -176,6 +176,10 @@ internal sealed class PhoneTouchScroll
     private void OnNodeAdded(Node node)
     {
         Type type = node.GetType();
+        // The settings screen scrolls its rows itself (PortraitSettingsLayout), which leaves drags on its sliders and its
+        // scrollbar to the game: one surface, one drag.
+        if (_listType != null && _listType.IsAssignableFrom(type) && node.GetParent()?.GetType().Name == "NSettingsScreen")
+            return;
         if ((_gridType != null && _gridType.IsAssignableFrom(type)) || (_listType != null && _listType.IsAssignableFrom(type)))
             _views.Add(node.GetInstanceId());
         foreach (Type screen in _screenTypes)

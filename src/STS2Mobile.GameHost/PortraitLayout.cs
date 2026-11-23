@@ -58,24 +58,6 @@ internal sealed class PortraitLayout
     // 40), as much as the row's width allows with three digit health.
     private const int TopBarNumberFontSize = 38;
     private const float TopBarIconWidth = 48f;
-    // The main menu's entries, 44 points tall and 208 wide, text 50 units (about 17 points), the column's box
-    // from a little above the screen's middle to near the city at the bottom (the entries are centred in it).
-    private const float MenuButtonWidth = 600f;
-    private const int MenuFontSize = 50;
-    private const float MenuButtonsTop = -150f;
-    private const float MenuButtonsBottom = 850f;
-    // Settings' panels drawn 1.55 times larger, so a row of 64 units with its divider and gaps (82)
-    // is 127 units (44 points) from the next and text of 28 units reads at 15 points; 1000 units wide as drawn, from 24
-    // units in, with the scrollbar beside them. The tabs are 110 units tall with 44 point touch areas and 13 point text.
-    private const float SettingsScale = 1.55f;
-    private const float SettingsRowsLeft = 24f;
-    private const float SettingsRowsWidth = 1000f;
-    private const float SettingsTabHeight = 110f;
-    private const int SettingsTabFontSize = 38;
-    // The rows end this far above the canvas's lower edge, clear of the back button in the lower left corner.
-    private const float SettingsBottomGap = 380f;
-    private const string SettingsClipperPath = "ScrollContainer/Mask/Clipper";
-    private const string SettingsSpacerName = "PortraitScaleSpacer";
 
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
     private readonly Dictionary<ulong, Vector2> _relicOriginalPos = new();
@@ -84,15 +66,17 @@ internal sealed class PortraitLayout
     private readonly HashSet<ulong> _wiredTopBars = new();
     private readonly HashSet<ulong> _wiredInventories = new();
     private readonly HashSet<ulong> _wiredPotionHolders = new();
-    // Labels whose font portrait enlarges (top bar numbers, the deck count, the main menu's entries), with the game's own
-    // font size to put back in landscape.
+    // Labels whose font portrait enlarges (top bar numbers, the deck count), with the game's own font size to put back in
+    // landscape.
     private readonly Dictionary<ulong, (bool HadOverride, int Size)> _fontSizes = new();
-    private readonly HashSet<ulong> _wiredMenuLabels = new();
     private readonly PortraitCombatLayout _combat = new();
     private readonly PortraitBetweenLayout _between = new();
     private readonly PortraitSelectionPreview _previews = new();
     private readonly PortraitScreenFit _fit = new();
     private readonly PortraitMenuLayout _menus = new();
+    private readonly PortraitMainMenuLayout _mainMenu = new();
+    private readonly PortraitSettingsLayout _settings = new();
+    private readonly PortraitNavigationPads _navPads = new();
     private readonly PortraitOverlayLayout _overlays = new();
     private SceneTree? _tree;
     private FieldInfo? _topBarHideTween;
@@ -139,6 +123,7 @@ internal sealed class PortraitLayout
         tree.ProcessFrame += OnProcessFrame;
         RenderingServer.FramePreDraw += OnHeaderPreDraw;
         _headerSwipe.Attach(tree);
+        _settings.Attach(tree);
         PortraitCombatLayout.SetFlatHandListener(ApplyImmediate);
         QueueApply();
     }
@@ -150,6 +135,7 @@ internal sealed class PortraitLayout
         _combat.Detach();
         RenderingServer.FramePreDraw -= OnHeaderPreDraw;
         _headerSwipe.Detach();
+        _settings.Detach();
         _tree.Root.SizeChanged -= OnRootSizeChanged;
         _tree.NodeAdded -= OnNodeAdded;
         _tree.ProcessFrame -= OnProcessFrame;
@@ -220,12 +206,14 @@ internal sealed class PortraitLayout
             return;
         }
         string? fullName = node.GetType().FullName;
+        if (node is Control navButton && PortraitNavigationPads.Handles(fullName)) _navPads.Track(navButton);
         // The combat-rules FTUE is the one node worth searching the scene tree for again; the combat layout remembers it.
         _combat.NoteNodeAdded(fullName);
         if (fullName is TopBarTypeName or RelicInventoryTypeName or EarlyAccessDisclaimerTypeName or PortraitCombatLayout.CombatRoomTypeName ||
             (fullName != null && (PortraitBetweenLayout.WatchedTypeNames.Contains(fullName) ||
              PortraitSelectionPreview.WatchedTypeNames.Contains(fullName) || PortraitScreenFit.Handles(fullName) ||
-             PortraitMenuLayout.WatchedTypeNames.Contains(fullName) || PortraitOverlayLayout.WatchedTypeNames.Contains(fullName))))
+             PortraitMenuLayout.WatchedTypeNames.Contains(fullName) || PortraitOverlayLayout.WatchedTypeNames.Contains(fullName) ||
+             PortraitSettingsLayout.WatchedTypeNames.Contains(fullName))))
             QueueApply();
     }
 
@@ -240,6 +228,9 @@ internal sealed class PortraitLayout
         _between.OnProcessFrame(_tree.Root, capHeight);
         _fit.OnProcessFrame(_tree.Root, capHeight);
         _menus.OnProcessFrame(_tree.Root, capHeight);
+        _mainMenu.OnProcessFrame(_tree.Root, capHeight);
+        _settings.OnProcessFrame(_tree.Root, capHeight);
+        _navPads.OnProcessFrame();
         _overlays.OnProcessFrame(_tree.Root);
     }
 
@@ -287,11 +278,12 @@ internal sealed class PortraitLayout
 
         foreach (Node node in Traverse(_tree.Root))
         {
-            if (node is NMainMenu mainMenu) LayoutMainMenuPortrait(mainMenu, capHeight);
-            else if (node is NSettingsScreen settings) LayoutSettingsPortrait(settings, capHeight);
+            if (node is NMainMenu mainMenu) _mainMenu.Apply(mainMenu, capHeight, canvas);
+            else if (node is NSettingsScreen settings) _settings.ApplyNode(settings, capHeight);
             else if (node is Control control)
             {
                 string? typeName = control.GetType().FullName;
+                if (PortraitNavigationPads.Handles(typeName)) { _navPads.Track(control); continue; }
                 if (typeName == TopBarTypeName)
                 {
                     _runTopBarId = control.GetInstanceId();
@@ -303,6 +295,7 @@ internal sealed class PortraitLayout
                     LayoutRelicInventoryPortrait(flow, capHeight, canvas);
                 }
                 else if (typeName == EarlyAccessDisclaimerTypeName) LayoutEarlyAccessPortrait(control);
+                else if (typeName == PortraitSettingsLayout.FeedbackScreenTypeName) _settings.ApplyFeedback(control, capHeight);
                 else if (typeName == PortraitCombatLayout.CombatRoomTypeName) _combat.ApplyRoomImmediate(control, capHeight, canvasHeight);
                 else if (typeName != null && PortraitSelectionPreview.WatchedTypeNames.Contains(typeName))
                     _previews.ApplyNode(control, typeName, capHeight, canvas);
@@ -338,6 +331,9 @@ internal sealed class PortraitLayout
         _between.RestoreLandscape();
         _fit.RestoreLandscape();
         _menus.RestoreLandscape();
+        _mainMenu.RestoreLandscape();
+        _settings.Restore();
+        _navPads.RestoreLandscape();
         _overlays.RestoreLandscape();
 
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
@@ -348,22 +344,7 @@ internal sealed class PortraitLayout
 
         foreach (Node node in Traverse(root))
         {
-            if (node is NMainMenu mainMenu)
-            {
-                if (mainMenu.GetNodeOrNull<Control>("%MainMenuBg/BgContainer") is { } bg)
-                    bg.Scale = Vector2.One;
-                if (mainMenu.GetNodeOrNull<Control>("%ContinueRunInfo") is { } runInfo &&
-                    _snapshots.TryGetValue(runInfo.GetInstanceId(), out PortraitControlSnapshot? infoSnap))
-                    SetRunInfoHome(runInfo, new Vector2(infoSnap.InitialOffsetLeft, infoSnap.InitialOffsetTop));
-                foreach (string name in new[] { "ChangeProfileButton", "PatchNotesButton" })
-                    if (mainMenu.GetNodeOrNull<Control>(name) is { } topControl) PhoneHitArea.Remove(topControl);
-            }
-            else if (node is NSettingsScreen settings)
-            {
-                RemoveSettingsTouchAreas(settings);
-                RefreshSettingsPanels(settings);
-            }
-            else if (node is Control control)
+            if (node is Control control)
             {
                 string? typeName = control.GetType().FullName;
                 if (typeName == TopBarTypeName)
@@ -439,106 +420,6 @@ internal sealed class PortraitLayout
     private int GameFontSize(Control label) =>
         _fontSizes.TryGetValue(label.GetInstanceId(), out (bool HadOverride, int Size) font) ? font.Size : label.GetThemeFontSize("font_size");
 
-    private void LayoutMainMenuPortrait(NMainMenu mainMenu, float capHeight)
-    {
-        if (mainMenu.GetNodeOrNull<Control>("%MainMenuBg/BgContainer") is { } bgContainer)
-        {
-            Capture(bgContainer, captureVisible: false);
-            const float bgScale = 2.05f;
-            bgContainer.Scale = new Vector2(bgScale, bgScale);
-            if (bgContainer.GetNodeOrNull<Control>("Control") is { } logoHolder)
-            {
-                Capture(logoHolder, captureVisible: false);
-                logoHolder.Scale = new Vector2(1f / bgScale, 1f / bgScale);
-                logoHolder.OffsetLeft = 98.5f;
-                logoHolder.OffsetRight = 98.5f;
-                logoHolder.OffsetTop = -226f;
-                logoHolder.OffsetBottom = -226f;
-            }
-        }
-
-        if (mainMenu.GetNodeOrNull<Control>("MainMenuTextButtons") is { } buttons)
-        {
-            Capture(buttons, captureVisible: false);
-            buttons.AnchorLeft = 0.5f;
-            buttons.AnchorRight = 0.5f;
-            buttons.AnchorTop = 0.5f;
-            buttons.AnchorBottom = 0.5f;
-            buttons.OffsetLeft = -MenuButtonWidth / 2f;
-            buttons.OffsetRight = MenuButtonWidth / 2f;
-            buttons.OffsetTop = MenuButtonsTop;
-            buttons.OffsetBottom = MenuButtonsBottom;
-            // The main menu's buttons were tiny: each entry is a 44 point row across the middle of the
-            // screen with its text at about 17 points (the game's 32 is 11 points on a 375 point wide phone).
-            foreach (Control button in buttons.GetChildren().OfType<Control>())
-            {
-                Capture(button, captureVisible: false);
-                button.CustomMinimumSize = new Vector2(MenuButtonWidth, PortraitBands.MinTarget);
-                if (button.GetChildCount() > 0 && button.GetChild(0) is Label label) EnlargeMenuLabel(label);
-            }
-        }
-
-        // The run's details show beside Continue while it is hovered; beside a row this wide they would run past the right
-        // edge, so in portrait they show centred above it, between the logo and the buttons.
-        if (mainMenu.GetNodeOrNull<Control>("%ContinueRunInfo") is { } runInfo)
-        {
-            Capture(runInfo, captureVisible: false);
-            float width = runInfo.Size.X > 0f ? runInfo.Size.X : runInfo.OffsetRight - runInfo.OffsetLeft;
-            float height = runInfo.Size.Y > 0f ? runInfo.Size.Y : runInfo.OffsetBottom - runInfo.OffsetTop;
-            SetRunInfoHome(runInfo, new Vector2((MenuButtonWidth - width) / 2f, -height - 16f));
-        }
-
-        foreach (string topControlName in new[] { "ChangeProfileButton", "PatchNotesButton", "ReleaseInfo" })
-        {
-            if (mainMenu.GetNodeOrNull<Control>(topControlName) is { } topControl)
-            {
-                PortraitControlSnapshot snap = Capture(topControl, captureVisible: false);
-                topControl.OffsetTop = snap.InitialOffsetTop + capHeight;
-                topControl.OffsetBottom = snap.InitialOffsetBottom + capHeight;
-                if (topControlName != "ReleaseInfo") GrowToMinTarget(topControl);
-            }
-        }
-    }
-
-    private void EnlargeMenuLabel(Label label)
-    {
-        ulong id = label.GetInstanceId();
-        SetFontSize(label, MenuFontSize);
-        // The game turns the label around its centre on hover and sets that centre once, for its own font size: keep it the
-        // centre as the label grows and shrinks (the same value the game gives it, so landscape is unchanged).
-        if (_wiredMenuLabels.Add(id))
-            label.Resized += () =>
-            {
-                if (GodotObject.IsInstanceValid(label)) label.PivotOffset = label.Size * 0.5f;
-            };
-        label.PivotOffset = label.Size * 0.5f;
-    }
-
-    /// <summary>Grows a control's touch area to 44 points each way around its centre, when its picture is smaller.</summary>
-    private static void GrowToMinTarget(Control control)
-    {
-        Vector2 size = control.Size;
-        if (size.X <= 0f || size.Y <= 0f) return;
-        float padX = Math.Max(0f, (PortraitBands.MinTarget - size.X) / 2f);
-        float padY = Math.Max(0f, (PortraitBands.MinTarget - size.Y) / 2f);
-        if (padX > 0f || padY > 0f) PhoneHitArea.Grow(control, padX, padY, padX, padY);
-    }
-
-    /// <summary>
-    /// Places the continue button's run details and the spot their show and hide animation starts from (the game keeps it
-    /// in <c>_initPosition</c>, taken once when the node is ready).
-    /// </summary>
-    private static void SetRunInfoHome(Control runInfo, Vector2 position)
-    {
-        runInfo.GetType().GetField("_initPosition", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(runInfo, position);
-        float width = runInfo.OffsetRight - runInfo.OffsetLeft;
-        float height = runInfo.OffsetBottom - runInfo.OffsetTop;
-        runInfo.OffsetLeft = position.X;
-        runInfo.OffsetTop = position.Y;
-        runInfo.OffsetRight = position.X + width;
-        runInfo.OffsetBottom = position.Y + height;
-    }
-
     private void LayoutEarlyAccessPortrait(Control disclaimer)
     {
         if (disclaimer.GetNodeOrNull<Control>("Image") is { } image)
@@ -553,182 +434,6 @@ internal sealed class PortraitLayout
             image.OffsetTop = -415f;
             image.OffsetBottom = 415f;
         }
-    }
-
-    /// <summary>
-    /// Settings. The tabs sit under the notch (under the top bar, potions and relics in a run, which
-    /// stay in view: see <see cref="OwnRunBarTweens"/>) and the rows scroll below them, never under them. Each panel but
-    /// Input is drawn <see cref="SettingsScale"/> times larger at a width that fits the screen, so its rows, text,
-    /// tickboxes, page arrows, sliders and the language list grow together; its small controls get 44 point touch areas.
-    /// Input, the keyboard and controller table, keeps the game's size: it already spans the width.
-    /// </summary>
-    private void LayoutSettingsPortrait(NSettingsScreen settings, float capHeight)
-    {
-        bool inRun = settings.GetType().GetField("_isInRun", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(settings) is true;
-        float tabsTop = inRun ? capHeight + PortraitBands.RunContentTop + 12f : capHeight + 24f;
-        if (settings.GetNodeOrNull<Control>("SettingsTabManager") is { } tabManager)
-        {
-            Capture(tabManager, captureVisible: false);
-            tabManager.AnchorLeft = 0.5f;
-            tabManager.AnchorRight = 0.5f;
-            tabManager.OffsetLeft = -504f;
-            tabManager.OffsetRight = 504f;
-            tabManager.OffsetTop = tabsTop;
-            tabManager.OffsetBottom = tabsTop + SettingsTabHeight;
-
-            foreach (string iconName in new[] { "%LeftTabIcon", "%RightTabIcon" })
-            {
-                if (settings.GetNodeOrNull<Control>(iconName) is { } icon)
-                {
-                    Capture(icon, captureVisible: true);
-                    icon.Visible = false;
-                }
-            }
-
-            foreach (string tabName in new[] { "General", "Graphics", "Sound", "Input" })
-            {
-                if (tabManager.GetNodeOrNull<Control>(tabName) is { } tab)
-                {
-                    Capture(tab, captureVisible: false);
-                    tab.CustomMinimumSize = new Vector2(244f, SettingsTabHeight);
-                    float pad = (PortraitBands.MinTarget - SettingsTabHeight) / 2f;
-                    PhoneHitArea.Grow(tab, 0f, pad, 0f, pad);
-                    if (tab.GetNodeOrNull<Control>("Label") is { } tabLabel) SetFontSize(tabLabel, SettingsTabFontSize);
-                }
-            }
-        }
-
-        float rowsTop = tabsTop + SettingsTabHeight + 16f;
-        if (settings.GetNodeOrNull<Control>(SettingsClipperPath) is { } clipper)
-        {
-            // The scroll area: its top edge is where the rows start, its bottom edge stays clear of the back button.
-            Capture(clipper, captureVisible: false);
-            clipper.OffsetTop = rowsTop;
-            clipper.OffsetBottom = -SettingsBottomGap;
-
-            float panelWidth = SettingsRowsWidth / SettingsScale;
-            foreach (Node child in clipper.GetChildren())
-            {
-                if (child is not NSettingsPanel panel) continue;
-                if (IsInputPanel(panel))
-                {
-                    // Input is wider than the screen (a 1100 unit table): drawn a little smaller so it fits.
-                    Capture(panel, captureVisible: false);
-                    float inputWidth = Math.Max(panel.Size.X, 1100f);
-                    panel.AnchorLeft = 0.5f;
-                    panel.AnchorRight = 0.5f;
-                    panel.OffsetLeft = SettingsRowsLeft - 540f;
-                    panel.OffsetRight = SettingsRowsLeft - 540f + inputWidth;
-                    panel.PivotOffset = Vector2.Zero;
-                    float fit = SettingsRowsWidth / inputWidth;
-                    panel.Scale = new Vector2(fit, fit);
-                    continue;
-                }
-                Capture(panel, captureVisible: false);
-                panel.AnchorLeft = 0.5f;
-                panel.AnchorRight = 0.5f;
-                panel.OffsetLeft = SettingsRowsLeft - 540f;
-                panel.OffsetRight = SettingsRowsLeft - 540f + panelWidth;
-                panel.PivotOffset = Vector2.Zero;
-                panel.Scale = new Vector2(SettingsScale, SettingsScale);
-                if (panel.GetNodeOrNull<Control>("VBoxContainer") is { } content)
-                {
-                    Capture(content, captureVisible: false);
-                    content.CustomMinimumSize = new Vector2(panelWidth, 0f);
-                }
-                GrowSettingsTargets(panel);
-            }
-        }
-
-        // The mask fades the rows out at the tabs' lower edge, measured from where the tabs are when it is resized.
-        if (settings.GetNodeOrNull<Control>("ScrollContainer/Mask") is { } mask && mask.HasMethod("OnResized"))
-            mask.Call("OnResized");
-
-        if (settings.GetNodeOrNull<Control>("ScrollContainer/Scrollbar") is { } scrollbar)
-        {
-            Capture(scrollbar, captureVisible: false);
-            scrollbar.AnchorLeft = 0.5f;
-            scrollbar.AnchorRight = 0.5f;
-            scrollbar.AnchorTop = 0f;
-            scrollbar.AnchorBottom = 1f;
-            scrollbar.OffsetLeft = SettingsRowsLeft + SettingsRowsWidth - 540f + 4f;
-            scrollbar.OffsetRight = scrollbar.OffsetLeft + 48f;
-            scrollbar.OffsetTop = rowsTop;
-            scrollbar.OffsetBottom = -SettingsBottomGap;
-        }
-
-        UpdateSettingsScrollRoom(settings);
-    }
-
-    /// <summary>
-    /// The game scrolls a panel by its own height, not its drawn one: a spacer at the end of a scaled panel's rows makes the
-    /// panel as tall to the scroll as its rows are drawn, so the last row can be scrolled into view.
-    /// </summary>
-    private static void UpdateSettingsScrollRoom(NSettingsScreen settings)
-    {
-        if (settings.GetNodeOrNull<Control>(SettingsClipperPath) is not { } clipper) return;
-        foreach (Node child in clipper.GetChildren())
-        {
-            if (child is not NSettingsPanel panel || IsInputPanel(panel) || !panel.IsNodeReady()) continue;
-            if (panel.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } content) continue;
-            Control? spacer = content.GetNodeOrNull<Control>(SettingsSpacerName);
-            if (spacer == null)
-            {
-                spacer = new Control { Name = SettingsSpacerName, MouseFilter = Control.MouseFilterEnum.Ignore, FocusMode = Control.FocusModeEnum.None };
-                content.AddChild(spacer);
-            }
-            content.MoveChild(spacer, content.GetChildCount() - 1);
-            spacer.Visible = true;
-            float rows = 0f;
-            int count = 0;
-            foreach (Node row in content.GetChildren())
-            {
-                if (row == spacer || row is not Control control || !control.Visible) continue;
-                rows += control.GetCombinedMinimumSize().Y;
-                count++;
-            }
-            rows += Math.Max(0, count - 1) * content.GetThemeConstant("separation");
-            float room = MathF.Ceiling(rows * (SettingsScale - 1f));
-            if (Math.Abs(spacer.CustomMinimumSize.Y - room) > 0.5f) spacer.CustomMinimumSize = new Vector2(0f, room);
-            panel.Call(NSettingsPanel.MethodName.RefreshSize);
-        }
-    }
-
-    /// <summary>Gives each of a scaled panel's touch targets a touch area of 44 points as drawn, where its picture is smaller.</summary>
-    private static void GrowSettingsTargets(Control panel)
-    {
-        float min = PortraitBands.MinTarget / SettingsScale;
-        foreach (Node node in Traverse(panel))
-        {
-            if (node is not Control control || !PortraitAudit.IsTouchTarget(control) || PhoneHitArea.IsContainer(control)) continue;
-            Vector2 size = control.Size;
-            if (size.X <= 0f || size.Y <= 0f) continue;
-            float padX = Math.Max(0f, (min - size.X) / 2f);
-            float padY = Math.Max(0f, (min - size.Y) / 2f);
-            if (padX > 0f || padY > 0f) PhoneHitArea.Grow(control, padX, padY, padX, padY);
-        }
-    }
-
-    private static bool IsInputPanel(Control panel) => panel.GetType().Name == "NInputSettingsPanel";
-
-    private static void RefreshSettingsPanels(NSettingsScreen settings)
-    {
-        if (settings.GetNodeOrNull<Control>(SettingsClipperPath) is not { } clipper) return;
-        foreach (Node child in clipper.GetChildren())
-        {
-            if (child is not NSettingsPanel panel) continue;
-            if (panel.GetNodeOrNull<Control>("VBoxContainer/" + SettingsSpacerName) is { } spacer) spacer.Visible = false;
-            if (panel.IsNodeReady()) panel.Call(NSettingsPanel.MethodName.RefreshSize);
-        }
-        if (settings.GetNodeOrNull<Control>("ScrollContainer/Mask") is { } mask && mask.HasMethod("OnResized"))
-            mask.Call("OnResized");
-    }
-
-    private static void RemoveSettingsTouchAreas(NSettingsScreen settings)
-    {
-        foreach (Node node in Traverse(settings))
-            if (node is Control control && control.Name == PhoneHitArea.NodeName && control.GetParent() is Control owner)
-                PhoneHitArea.Remove(owner);
     }
 
     /// <summary>
@@ -1668,7 +1373,6 @@ internal sealed class PortraitLayout
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _snapshots.Remove(id);
         foreach (ulong id in _fontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _fontSizes.Remove(id);
-        _wiredMenuLabels.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
 
         dead.Clear();
         foreach (ulong id in _relicOriginalPos.Keys)
@@ -1683,6 +1387,9 @@ internal sealed class PortraitLayout
         _between.PruneDead();
         _fit.PruneDead();
         _menus.PruneDead();
+        _mainMenu.PruneDead();
+        _settings.PruneDead();
+        _navPads.PruneDead();
         _overlays.PruneDead();
     }
 

@@ -1,0 +1,946 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using Godot;
+using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
+using STS2Mobile.Platform;
+
+namespace STS2Mobile.GameHost;
+
+/// <summary>
+/// The settings screen in portrait, its dropdowns, and the feedback screen settings opens.
+/// <para>The tabs sit under the notch (under the top bar, potions and relics in a run, which stay in view: the run-bar
+/// tweens are taken over in PortraitLayout) and the rows scroll below them, never under them. Each panel but Input is
+/// drawn <see cref="Scale"/> times larger at a width that fits the screen, so its rows, text, tickboxes, page arrows, sliders
+/// and the language list grow together; every row and widget is at least 44 points tall as drawn. Input, the keyboard and
+/// controller table, is drawn at 0.909 (its four columns need 1100 units) with the game's own table size kept: its labels
+/// wrap inside their columns and are raised to at least 11 points, and its rows are taller than the rest for them.
+/// A vertical drag on the rows scrolls them before the GUI: the press under the finger is let go (see
+/// <see cref="PhoneSwipeRelease"/>), so a scroll never toggles a setting, and a drag on a slider or the scrollbar is left to
+/// the game.</para>
+/// <para>The language dropdown is a 320 x 64 unit button over a 600 unit list inside the scaled panel: the button and every
+/// list row get a 44 point target, the list is never taller than the rows area it opens in, and its dismisser covers the whole
+/// screen (the desktop one is 3000 x 2000 around the button, which leaves the bottom of a tall screen uncovered). The feedback
+/// screen is 368 x 305 in the middle of a desktop screen; in portrait it is drawn <see cref="FeedbackScale"/> times larger,
+/// which makes its panel, emoji buttons, dropdown and text phone sized. Every edit is captured first, and all of it is put
+/// back when Portrait Mode is turned off.</para>
+/// </summary>
+internal sealed class PortraitSettingsLayout
+{
+    private const BindingFlags InstAll = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+    private const string Ns = "MegaCrit.Sts2.Core.Nodes.";
+    public const string FeedbackScreenTypeName = Ns + "Screens.FeedbackScreen.NSendFeedbackScreen";
+    private const string DropdownTypeName = Ns + "GodotExtensions.NDropdown";
+    private const string DropdownListTypeName = Ns + "CommonUi.NDropdownContainer";
+    private const string DropdownItemTypeName = Ns + "CommonUi.NDropdownItem";
+    private const string SettingsSliderTypeName = Ns + "Screens.Settings.NSettingsSlider";
+    private const string ScrollContainerTypeName = Ns + "GodotExtensions.NScrollableContainer";
+
+    /// <summary>The feedback screen is only ever laid out by this class; watching it makes Settings' own screen follow.</summary>
+    public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal) { FeedbackScreenTypeName };
+
+    // The panels drawn 1.55 times larger, so a row of 64 units with its divider and gaps (82) is 127 units (44 points) from
+    // the next and text of 28 units reads at 15 points; 1000 units wide as drawn, from 24 units in, with the scrollbar beside
+    // them. The tabs are 110 units tall with 44 point touch areas and 13 point text.
+    private const float Scale = 1.55f;
+    private const float RowsLeft = 24f;
+    private const float RowsWidth = 1000f;
+    private const float TabHeight = 110f;
+    private const int TabFont = 38;
+    // The rows end this far above the canvas's lower edge, clear of the back button in the lower left corner.
+    private const float BottomGap = 380f;
+    private const string ClipperPath = "ScrollContainer/Mask/Clipper";
+    private const string SpacerName = "PortraitScaleSpacer";
+    private const string InputPanelName = "NInputSettingsPanel";
+    // 36 units drawn at Input's fit (its 1100 unit table drawn 1000 wide, 0.909) are 11.4 points: long command and key
+    // names wrap at a size a phone can read instead of silently widening the four column table. A row that holds three lines
+    // of them (the longest key names) is 145 units, 132 drawn at that fit (45.8 points), which is also more than the 127
+    // unit touch target.
+    private const int InputFont = 36;
+    private const float InputRowHeight = 145f;
+    private static readonly string[] RichFontKeys =
+        ["normal_font_size", "bold_font_size", "italics_font_size", "bold_italics_font_size", "mono_font_size"];
+
+    // The game's dropdown list is 600 units tall; at the panel's scale that is 930 units, and it is never drawn taller than
+    // the rows area it opens in.
+    private const float DropdownHeight = 600f;
+    private const float DropdownMargin = 8f;
+
+    // A drag starts after 28 units (about 10 points), up or down, wherever it began in the rows; <see cref="SwipeMath"/>
+    // holds the rule.
+    private const float DragDistance = 28f;
+
+    // The feedback screen's panel is 368 x 305 with 80 x 80 emoji buttons and a 57 unit dropdown: drawn twice as large, the
+    // panel is 736 x 610 (inside the canvas), the emoji buttons 160 units and the dropdown's list rows 88, and its 22-24
+    // unit text reads at 15-17 points. Its decorations (sun, cupcake, flower) reach 530 units from an edge, which twice over
+    // stays inside 1080.
+    private const float FeedbackDesignWidth = 540f;
+    private const float FeedbackBottomMargin = 40f;
+    // The back button's art hangs 40 units past the left edge by design; twice over that is past the audit's allowance, so in
+    // portrait it starts at the edge instead.
+    private const float BackButtonWidth = 200f;
+
+    /// <summary>One settings screen: the rows area, its scroll, and the dropdowns and sliders in its panels.</summary>
+    private sealed class ScreenState
+    {
+        public ulong Clip;
+        public ulong Scroll;
+        public ulong Scrollbar;
+        public readonly List<ulong> Dropdowns = new();
+        public readonly List<ulong> Sliders = new();
+    }
+
+    /// <summary>One dropdown: its open list, its dismisser, and where the list may be drawn.</summary>
+    private sealed class DropdownState
+    {
+        public ulong List;
+        public ulong Dismisser;
+        /// <summary>The settings rows area the list is kept inside; 0 for the whole canvas (the feedback screen).</summary>
+        public ulong Area;
+        public Vector2 Button;
+        public bool Covers;
+    }
+
+    /// <summary>A label's own wrap mode and font sizes, put back in landscape.</summary>
+    private sealed class TextState
+    {
+        public TextServer.AutowrapMode Wrap;
+        public bool HadFont;
+        public int Font;
+        public int[]? RichFonts;
+        public bool[]? RichHad;
+        public (int Min, int Max)? Mega;
+    }
+
+    private enum DragKind : byte { None, Scroll, List }
+
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
+    private readonly Dictionary<ulong, ScreenState> _screens = new();
+    private readonly Dictionary<ulong, DropdownState> _dropdowns = new();
+    private readonly HashSet<ulong> _panels = new();
+    private readonly HashSet<ulong> _feedback = new();
+    private readonly HashSet<ulong> _prepared = new();
+    private readonly Dictionary<ulong, (bool Had, int Size)> _fonts = new();
+    private readonly Dictionary<ulong, TextState> _texts = new();
+
+    private readonly Type? _dropdownType, _listType, _itemType, _sliderType, _scrollType;
+    private readonly FieldInfo? _dropdownList, _dropdownItems, _dropdownDismisser;
+    private readonly FieldInfo? _listMaxHeight, _listDrag, _listLimit, _listDragging, _scrollDragY, _scrollDragging;
+    private readonly PropertyInfo? _scrollLimit;
+    private readonly PropertyInfo? _megaMin, _megaMax, _richMin, _richMax;
+    private readonly bool _ready;
+
+    private SceneTree? _tree;
+    private bool _down;
+    private bool _dragging;
+    private DragKind _kind;
+    private ulong _target;
+    private ulong _surface;
+    private float _startY;
+    private float _initial;
+    private float _limit;
+
+    public PortraitSettingsLayout()
+    {
+        try
+        {
+            Assembly game = typeof(NGame).Assembly;
+            _dropdownType = game.GetType(DropdownTypeName);
+            _listType = game.GetType(DropdownListTypeName);
+            _itemType = game.GetType(DropdownItemTypeName);
+            _sliderType = game.GetType(SettingsSliderTypeName);
+            _scrollType = game.GetType(ScrollContainerTypeName);
+            _dropdownList = _dropdownType?.GetField("_dropdownContainer", InstAll);
+            _dropdownItems = _dropdownType?.GetField("_dropdownItems", InstAll);
+            _dropdownDismisser = _dropdownType?.GetField("_dismisser", InstAll);
+            _listMaxHeight = _listType?.GetField("_maxHeight", InstAll);
+            _listDrag = _listType?.GetField("_targetDragPos", InstAll);
+            _listLimit = _listType?.GetField("_scrollLimitBottom", InstAll);
+            _listDragging = _listType?.GetField("_isDragging", InstAll);
+            _megaMin = typeof(MegaCrit.Sts2.addons.mega_text.MegaLabel).GetProperty("MinFontSize", InstAll);
+            _megaMax = typeof(MegaCrit.Sts2.addons.mega_text.MegaLabel).GetProperty("MaxFontSize", InstAll);
+            _richMin = typeof(MegaCrit.Sts2.addons.mega_text.MegaRichTextLabel).GetProperty("MinFontSize", InstAll);
+            _richMax = typeof(MegaCrit.Sts2.addons.mega_text.MegaRichTextLabel).GetProperty("MaxFontSize", InstAll);
+            if (_scrollType != null)
+            {
+                _scrollDragY = _scrollType.GetField("_targetDragPosY", InstAll);
+                _scrollDragging = _scrollType.GetField("_isDragging", InstAll);
+                _scrollLimit = _scrollType.GetProperty("ScrollLimitBottom", InstAll);
+            }
+            _ready = _dropdownType != null && _listType != null && _itemType != null && _scrollType != null &&
+                     _dropdownList != null && _dropdownItems != null && _listMaxHeight != null && _listDrag != null &&
+                     _listLimit != null && _scrollDragY != null && _scrollDragging != null && _scrollLimit != null &&
+                     _megaMin != null && _megaMax != null;
+            if (!_ready)
+                GD.PrintErr("Portrait settings: the game's dropdowns or scroll view no longer have the expected members; " +
+                            "the drag and the dropdown sizing are off.");
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr("Portrait settings: off: ", error.Message);
+        }
+    }
+
+    public void Attach(SceneTree tree)
+    {
+        if (_tree == tree) return;
+        Detach();
+        _tree = tree;
+        tree.Root.WindowInput += OnWindowInput;
+    }
+
+    public void Detach()
+    {
+        if (_tree != null && GodotObject.IsInstanceValid(_tree.Root)) _tree.Root.WindowInput -= OnWindowInput;
+        _tree = null;
+        Reset();
+    }
+
+    // ---- settings ---------------------------------------------------------------------------------------------------------
+
+    public void ApplyNode(NSettingsScreen settings, float capHeight)
+    {
+        LayoutSettings(settings, capHeight);
+        if (!_screens.ContainsKey(settings.GetInstanceId())) Register(settings);
+    }
+
+    private void LayoutSettings(NSettingsScreen settings, float capHeight)
+    {
+        bool inRun = settings.GetType().GetField("_isInRun", InstAll)?.GetValue(settings) is true;
+        float tabsTop = inRun ? capHeight + PortraitBands.RunContentTop + 12f : capHeight + 24f;
+        if (settings.GetNodeOrNull<Control>("SettingsTabManager") is { } tabManager)
+        {
+            Capture(tabManager, captureVisible: false);
+            tabManager.AnchorLeft = 0.5f;
+            tabManager.AnchorRight = 0.5f;
+            tabManager.OffsetLeft = -504f;
+            tabManager.OffsetRight = 504f;
+            tabManager.OffsetTop = tabsTop;
+            tabManager.OffsetBottom = tabsTop + TabHeight;
+
+            foreach (string iconName in new[] { "%LeftTabIcon", "%RightTabIcon" })
+            {
+                if (settings.GetNodeOrNull<Control>(iconName) is { } icon)
+                {
+                    Capture(icon, captureVisible: true);
+                    icon.Visible = false;
+                }
+            }
+
+            foreach (string tabName in new[] { "General", "Graphics", "Sound", "Input" })
+            {
+                if (tabManager.GetNodeOrNull<Control>(tabName) is not { } tab) continue;
+                Capture(tab, captureVisible: false);
+                tab.CustomMinimumSize = new Vector2(244f, TabHeight);
+                float pad = (PortraitBands.MinTarget - TabHeight) / 2f;
+                PhoneHitArea.Grow(tab, 0f, pad, 0f, pad);
+                if (tab.GetNodeOrNull<Control>("Label") is { } tabLabel) SetFont(tabLabel, TabFont);
+            }
+        }
+
+        float rowsTop = tabsTop + TabHeight + 16f;
+        if (settings.GetNodeOrNull<Control>(ClipperPath) is { } clipper)
+        {
+            // The scroll area: its top edge is where the rows start, its bottom edge stays clear of the back button.
+            Capture(clipper, captureVisible: false);
+            clipper.OffsetTop = rowsTop;
+            clipper.OffsetBottom = -BottomGap;
+
+            float panelWidth = RowsWidth / Scale;
+            foreach (Node child in clipper.GetChildren())
+            {
+                if (child is not NSettingsPanel panel) continue;
+                _panels.Add(panel.GetInstanceId());
+                bool input = IsInputPanel(panel);
+                // Input is wider than the screen (a 1100 unit table): drawn a little smaller so it fits.
+                float inputWidth = input ? Math.Max(panel.Size.X, 1100f) : 0f;
+                float drawnScale = input ? RowsWidth / inputWidth : Scale;
+                Capture(panel, captureVisible: false);
+                panel.AnchorLeft = 0.5f;
+                panel.AnchorRight = 0.5f;
+                panel.OffsetLeft = RowsLeft - 540f;
+                panel.OffsetRight = RowsLeft - 540f + (input ? inputWidth : panelWidth);
+                panel.PivotOffset = Vector2.Zero;
+                panel.Scale = new Vector2(drawnScale, drawnScale);
+                if (panel.GetNodeOrNull<Control>("VBoxContainer") is { } content)
+                {
+                    if (!input)
+                    {
+                        Capture(content, captureVisible: false);
+                        content.CustomMinimumSize = new Vector2(panelWidth, 0f);
+                    }
+                    float rowMinimum = input
+                        ? Math.Max(PortraitBands.MinTarget / drawnScale, InputRowHeight)
+                        : PortraitBands.MinTarget / drawnScale;
+                    GrowRows(content, rowMinimum);
+                    if (input) RaiseInputText(content);
+                }
+                PadTargets(panel, drawnScale);
+            }
+        }
+
+        // The mask fades the rows out at the tabs' lower edge, measured from where the tabs are when it is resized.
+        if (settings.GetNodeOrNull<Control>("ScrollContainer/Mask") is { } mask && mask.HasMethod("OnResized"))
+            mask.Call("OnResized");
+
+        if (settings.GetNodeOrNull<Control>("ScrollContainer/Scrollbar") is { } scrollbar)
+        {
+            Capture(scrollbar, captureVisible: false);
+            scrollbar.AnchorLeft = 0.5f;
+            scrollbar.AnchorRight = 0.5f;
+            scrollbar.AnchorTop = 0f;
+            scrollbar.AnchorBottom = 1f;
+            scrollbar.OffsetLeft = RowsLeft + RowsWidth - 540f + 4f;
+            scrollbar.OffsetRight = scrollbar.OffsetLeft + 48f;
+            scrollbar.OffsetTop = rowsTop;
+            scrollbar.OffsetBottom = -BottomGap;
+        }
+
+        UpdateScrollRoom(settings);
+    }
+
+    /// <summary>
+    /// Every row and every widget in a row is at least <paramref name="minimum"/> units tall where its panel is drawn
+    /// <see cref="Scale"/> times larger, so each is 44 points to a finger: the game's own rows are 64 units (34 points at that
+    /// scale), and the tickbox or paginator inside a row can be smaller still.
+    /// </summary>
+    private void GrowRows(Control content, float minimum)
+    {
+        foreach (Node child in content.GetChildren())
+        {
+            if (child is not Control row || row is ColorRect || !IsRow(row)) continue;
+            GrowHeight(row, minimum);
+            foreach (Node inside in row.GetChildren())
+            {
+                if (inside is not Control widget || widget is Label or RichTextLabel or ColorRect) continue;
+                GrowHeight(widget, minimum);
+            }
+        }
+    }
+
+    private static bool IsRow(Control control)
+    {
+        string name = control.Name.ToString();
+        return !name.Contains("Divider", StringComparison.Ordinal) && !name.StartsWith("Padding", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Input's labels wrap inside their fixed columns, and are raised to at least 11 points: on the desktop a long key name
+    /// widens its column, which would narrow the whole table on the phone.
+    /// </summary>
+    private void RaiseInputText(Control content)
+    {
+        foreach (Node node in Traverse(content))
+        {
+            if (node is not Control control) continue;
+            if (control is not (Label or RichTextLabel)) continue;
+            if (control is Label label && label.Text.Trim().Length == 0) continue;
+            if (control is RichTextLabel rich && rich.GetParsedText().Trim().Length == 0) continue;
+            FloorText(control, InputFont);
+        }
+    }
+
+    /// <summary>
+    /// The game scrolls a panel by its own height, not its drawn one: a spacer at the end of a scaled panel's rows makes the
+    /// panel as tall to the scroll as its rows are drawn, so the last row can be scrolled into view.
+    /// </summary>
+    private void UpdateScrollRoom(NSettingsScreen settings)
+    {
+        if (settings.GetNodeOrNull<Control>(ClipperPath) is not { } clipper) return;
+        foreach (Node child in clipper.GetChildren())
+        {
+            if (child is not NSettingsPanel panel || IsInputPanel(panel) || !panel.IsNodeReady()) continue;
+            if (panel.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } content) continue;
+            Control? spacer = content.GetNodeOrNull<Control>(SpacerName);
+            if (spacer == null)
+            {
+                spacer = new Control { Name = SpacerName, MouseFilter = Control.MouseFilterEnum.Ignore, FocusMode = Control.FocusModeEnum.None };
+                content.AddChild(spacer);
+            }
+            content.MoveChild(spacer, content.GetChildCount() - 1);
+            spacer.Visible = true;
+            float rows = 0f;
+            int count = 0;
+            foreach (Node row in content.GetChildren())
+            {
+                if (row == spacer || row is not Control control || !control.Visible) continue;
+                rows += control.GetCombinedMinimumSize().Y;
+                count++;
+            }
+            rows += Math.Max(0, count - 1) * content.GetThemeConstant("separation");
+            float room = MathF.Ceiling(rows * (Scale - 1f));
+            if (Math.Abs(spacer.CustomMinimumSize.Y - room) > 0.5f) spacer.CustomMinimumSize = new Vector2(0f, room);
+            panel.Call(NSettingsPanel.MethodName.RefreshSize);
+        }
+    }
+
+    /// <summary>Gives each touch target of a panel drawn <paramref name="drawnScale"/> times larger a touch area of 44 points.</summary>
+    private void PadTargets(Control root, float drawnScale)
+    {
+        float minimum = PortraitBands.MinTarget / Math.Max(drawnScale, 0.01f);
+        foreach (Node node in Traverse(root))
+        {
+            if (node is not Control control || !PortraitAudit.IsTouchTarget(control) || PhoneHitArea.IsContainer(control)) continue;
+            Vector2 size = control.Size;
+            Vector2 combined = control.GetCombinedMinimumSize();
+            size = new Vector2(Math.Max(size.X, combined.X), Math.Max(size.Y, combined.Y));
+            if (size.X <= 0f || size.Y <= 0f) continue;
+            float padX = Math.Max(0f, (minimum - size.X) / 2f);
+            float padY = Math.Max(0f, (minimum - size.Y) / 2f);
+            if (padX > 0f || padY > 0f) PhoneHitArea.Grow(control, padX, padY, padX, padY);
+        }
+    }
+
+    private static bool IsInputPanel(Control panel) => panel.GetType().Name == InputPanelName;
+
+    /// <summary>The settings screen's own parts, for the drag and the dropdowns: the rows area, its scroll and scrollbar.</summary>
+    private void Register(NSettingsScreen screen)
+    {
+        var state = new ScreenState();
+        if (screen.GetNodeOrNull<Control>(ClipperPath) is { } clip) state.Clip = clip.GetInstanceId();
+        if (screen.GetNodeOrNull<Control>("ScrollContainer") is { } scroll) state.Scroll = scroll.GetInstanceId();
+        if (screen.GetNodeOrNull<Control>("ScrollContainer/Scrollbar") is { } bar) state.Scrollbar = bar.GetInstanceId();
+        foreach (Node node in Traverse(screen))
+        {
+            if (_dropdownType != null && _dropdownType.IsInstanceOfType(node))
+            {
+                state.Dropdowns.Add(node.GetInstanceId());
+                RegisterDropdown((Control)node, state.Clip);
+            }
+            else if (_sliderType != null && _sliderType.IsInstanceOfType(node))
+            {
+                state.Sliders.Add(node.GetInstanceId());
+            }
+        }
+        _screens[screen.GetInstanceId()] = state;
+    }
+
+    /// <summary>
+    /// The press under a swipe is let go, so a scroll never toggles a tickbox, picks a language or moves a slider: the one
+    /// place that knows how the game records a press is <see cref="PhoneSwipeRelease"/>. A drag on a slider or the scrollbar
+    /// is the game's own and is left alone, and so is the game's own drag on the rows area's background.
+    /// </summary>
+    private void OnWindowInput(InputEvent input)
+    {
+        if (_tree == null || !GodotObject.IsInstanceValid(_tree.Root)) { Reset(); return; }
+        if (!SafeAreaCanvas.IsPortrait || _screens.Count == 0) { Reset(); return; }
+        try
+        {
+            switch (input)
+            {
+                case InputEventScreenTouch touch when touch.Index == 0:
+                    if (touch.Pressed) Begin(ToCanvas(touch.Position));
+                    else End();
+                    return;
+                case InputEventScreenDrag drag when drag.Index == 0:
+                    Move(ToCanvas(drag.Position));
+                    return;
+                // The Linux host and the desktop editor send a mouse; the phone sends touches (and, with the game's
+                // emulate-mouse-from-touch setting, both). Absolute movement keeps the pair from scrolling twice.
+                case InputEventMouseButton button when button.ButtonIndex == MouseButton.Left:
+                    if (button.Pressed) Begin(ToCanvas(button.Position));
+                    else End();
+                    return;
+                case InputEventMouseMotion motion:
+                    if (_down) Move(ToCanvas(motion.Position));
+                    return;
+            }
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr("Portrait settings drag: ", error.Message);
+            Reset();
+        }
+    }
+
+    private Vector2 ToCanvas(Vector2 point) => _tree == null ? point : _tree.Root.GetFinalTransform().AffineInverse() * point;
+
+    /// <summary>The settings screen shown now, or null when another screen covers it.</summary>
+    private NSettingsScreen? VisibleScreen()
+    {
+        foreach (ulong id in _screens.Keys)
+        {
+            if (GodotObject.InstanceFromId(id) is not NSettingsScreen screen || !GodotObject.IsInstanceValid(screen) ||
+                !screen.IsVisibleInTree()) continue;
+            // A screen under the feedback screen (settings hands over to it) is not the one being touched.
+            if (_tree != null && _tree.Root.GuiGetHoveredControl() is { } hover && !screen.IsAncestorOf(hover))
+                continue;
+            return screen;
+        }
+        return null;
+    }
+
+    private void Begin(Vector2 point)
+    {
+        End();
+        if (!_ready) return;
+        NSettingsScreen? screen = VisibleScreen();
+        if (screen == null || !_screens.TryGetValue(screen.GetInstanceId(), out ScreenState? state)) return;
+        // An open dropdown's list is drawn over the rows and scrolls itself.
+        foreach (ulong id in state.Dropdowns)
+        {
+            if (!_dropdowns.TryGetValue(id, out DropdownState? drop) || Resolve(id, drop) is not { } list ||
+                !list.IsVisibleInTree() || !list.GetGlobalRect().HasPoint(point)) continue;
+            if (_listDrag?.GetValue(list) is not Vector2 listDrag) continue;
+            // A list too short to scroll still owns the press: a swipe on it is not a language change.
+            float listLimit = _listLimit?.GetValue(list) is float room ? Math.Min(room, 0f) : 0f;
+            Start(DragKind.List, list, screen, point, listDrag.Y, listLimit);
+            return;
+        }
+        if (state.Clip == 0 || GodotObject.InstanceFromId(state.Clip) is not Control clip ||
+            !GodotObject.IsInstanceValid(clip) || !clip.GetGlobalRect().HasPoint(point)) return;
+        if (state.Scrollbar != 0 && GodotObject.InstanceFromId(state.Scrollbar) is Control bar &&
+            GodotObject.IsInstanceValid(bar) && bar.GetGlobalRect().HasPoint(point)) return;
+        foreach (ulong id in state.Sliders)
+        {
+            if (GodotObject.InstanceFromId(id) is Control slider && GodotObject.IsInstanceValid(slider) &&
+                slider.IsVisibleInTree() && slider.GetGlobalRect().HasPoint(point)) return;
+        }
+        if (state.Scroll == 0 || GodotObject.InstanceFromId(state.Scroll) is not Control scroll ||
+            !GodotObject.IsInstanceValid(scroll)) return;
+        if (_scrollLimit?.GetValue(scroll) is not float limit || limit > -0.5f) return;
+        if (_scrollDragY?.GetValue(scroll) is not float initial) return;
+        Start(DragKind.Scroll, scroll, screen, point, initial, limit);
+    }
+
+    private void Start(DragKind kind, Control target, Control screen, Vector2 point, float initial, float limit)
+    {
+        _down = true;
+        _dragging = false;
+        _kind = kind;
+        _target = target.GetInstanceId();
+        _surface = screen.GetInstanceId();
+        _startY = point.Y;
+        _initial = initial;
+        _limit = limit;
+    }
+
+    private void Move(Vector2 point)
+    {
+        if (!_down || _target == 0) return;
+        if (GodotObject.InstanceFromId(_target) is not Control target || !GodotObject.IsInstanceValid(target) ||
+            !target.IsVisibleInTree())
+        {
+            End();
+            return;
+        }
+        float moved = point.Y - _startY;
+        if (!_dragging)
+        {
+            if (!SwipeMath.Vertical(moved, DragDistance)) return;
+            // The game's own drag (an emulated mouse press on the background) already owns this gesture.
+            if (_kind == DragKind.Scroll && _scrollDragging?.GetValue(target) is true) { Reset(); return; }
+            if (_kind == DragKind.List && _listDragging?.GetValue(target) is true) { Reset(); return; }
+            _dragging = true;
+            Release();
+            if (_kind == DragKind.Scroll) _scrollDragging?.SetValue(target, true);
+        }
+        float scale = Math.Max(0.01f, Math.Abs(target.GetGlobalTransform().Scale.Y));
+        float value = Math.Clamp(_initial + moved / scale, Math.Min(0f, _limit), 0f);
+        if (_kind == DragKind.Scroll) _scrollDragY?.SetValue(target, value);
+        else if (_listDrag != null) _listDrag.SetValue(target, new Vector2(0f, value));
+        _tree?.Root.SetInputAsHandled();
+    }
+
+    /// <summary>Lets go of the press under the swipe: the language item or tickbox the finger went down on.</summary>
+    private void Release()
+    {
+        if (GodotObject.InstanceFromId(_surface) is Control screen && GodotObject.IsInstanceValid(screen))
+            PhoneSwipeRelease.Shared.Release(screen);
+    }
+
+    private void End()
+    {
+        if (_dragging)
+        {
+            if (_kind == DragKind.Scroll && _target != 0 && GodotObject.InstanceFromId(_target) is Control target &&
+                GodotObject.IsInstanceValid(target))
+                _scrollDragging?.SetValue(target, false);
+            Release();
+        }
+        _down = false;
+        _dragging = false;
+        _kind = DragKind.None;
+        _target = 0;
+        _surface = 0;
+    }
+
+    private void Reset() => End();
+
+    // ---- dropdowns --------------------------------------------------------------------------------------------------------
+
+    private void RegisterDropdown(Control dropdown, ulong area)
+    {
+        ulong id = dropdown.GetInstanceId();
+        if (!_dropdowns.TryGetValue(id, out DropdownState? state))
+            _dropdowns[id] = state = new DropdownState();
+        state.Area = area;
+        Resolve(id, state);
+    }
+
+    /// <summary>The dropdown's list, resolved once from the game's own fields (both scenes lay it out differently).</summary>
+    private Control? Resolve(ulong id, DropdownState state)
+    {
+        if (state.List == 0 && GodotObject.InstanceFromId(id) is Control dropdown)
+        {
+            if (_dropdownList?.GetValue(dropdown) is Control list) state.List = list.GetInstanceId();
+            if (_dropdownDismisser?.GetValue(dropdown) is Control dismisser) state.Dismisser = dismisser.GetInstanceId();
+        }
+        return state.List != 0 && GodotObject.InstanceFromId(state.List) is Control found && GodotObject.IsInstanceValid(found)
+            ? found
+            : null;
+    }
+
+    /// <summary>
+    /// Keeps an open list phone sized: every row a 44 point target, the list never taller than the area it opens in, below the
+    /// button when it fits there and above it otherwise, and the dismisser over the whole screen. Runs only while a list is
+    /// shown, and only when the button or its rows have changed.
+    /// </summary>
+    public void OnProcessFrame(Window root, float capHeight)
+    {
+        if (_feedback.Count > 0) HoldFeedback(root, capHeight);
+        if (_dropdowns.Count == 0 || !SafeAreaCanvas.IsPortrait) return;
+        Vector2 canvas = root.GetVisibleRect().Size;
+        foreach ((ulong id, DropdownState state) in _dropdowns)
+        {
+            Control? list = Resolve(id, state);
+            if (list == null || !list.IsVisibleInTree()) { state.Button = Vector2.Inf; state.Covers = false; continue; }
+            if (GodotObject.InstanceFromId(id) is not Control dropdown || !GodotObject.IsInstanceValid(dropdown) ||
+                !dropdown.IsVisibleInTree()) continue;
+            Vector2 button = dropdown.GetGlobalRect().Position;
+            var bounds = new Rect2(Vector2.Zero, canvas);
+            if (state.Area != 0 && GodotObject.InstanceFromId(state.Area) is Control area && GodotObject.IsInstanceValid(area))
+                bounds = area.GetGlobalRect();
+            if (state.Button == button) continue; // no movement since the last pass
+            state.Button = button;
+            KeepOpen(dropdown, list, state, bounds, canvas);
+        }
+    }
+
+    private void KeepOpen(Control dropdown, Control list, DropdownState state, Rect2 bounds, Vector2 canvas)
+    {
+        float scale = Math.Max(0.01f, Math.Abs(list.GetGlobalTransform().Scale.Y));
+        if (_dropdownItems?.GetValue(dropdown) is Control items)
+        {
+            float row = PortraitBands.MinTarget / scale;
+            foreach (Node child in items.GetChildren())
+            {
+                if (child is not Control item || !_itemType!.IsInstanceOfType(item)) continue;
+                GrowHeight(item, row);
+            }
+        }
+        Rect2 button = dropdown.GetGlobalRect();
+        float below = bounds.End.Y - button.End.Y;
+        float above = button.Position.Y - bounds.Position.Y;
+        bool useBelow = below >= DropdownHeight * scale || below >= above;
+        float room = Math.Max(useBelow ? below : above, 0f);
+        float maxHeight = MathF.Min(DropdownHeight, room / scale);
+        if (_listMaxHeight?.GetValue(list) is not float current || Math.Abs(current - maxHeight) > 0.5f)
+        {
+            Capture(list, captureVisible: false);
+            _listMaxHeight?.SetValue(list, maxHeight);
+            if (list.HasMethod("RefreshLayout")) list.Call("RefreshLayout");
+        }
+        Vector2 size = list.Size;
+        var position = new Vector2(
+            Math.Clamp(button.Position.X + (button.Size.X - size.X) / 2f, bounds.Position.X + DropdownMargin,
+                Math.Max(bounds.Position.X + DropdownMargin, bounds.End.X - size.X - DropdownMargin)),
+            useBelow ? button.End.Y : button.Position.Y - size.Y);
+        if (list.GlobalPosition.DistanceTo(position) > 0.5f)
+        {
+            Capture(list, captureVisible: false);
+            list.GlobalPosition = position;
+        }
+        CoverScreen(state, canvas);
+    }
+
+    /// <summary>
+    /// The desktop dismisser is 3000 x 2000 units around the button, which twice overdrawn still leaves the bottom of a tall
+    /// screen uncovered when the dropdown sits near the top. In portrait it is the whole screen instead.
+    /// </summary>
+    private void CoverScreen(DropdownState state, Vector2 canvas)
+    {
+        if (state.Covers || state.Dismisser == 0) return;
+        if (GodotObject.InstanceFromId(state.Dismisser) is not Control dismisser || !GodotObject.IsInstanceValid(dismisser)) return;
+        if (dismisser.GetGlobalRect().Encloses(new Rect2(Vector2.Zero, canvas))) { state.Covers = true; return; }
+        Capture(dismisser, captureVisible: false);
+        dismisser.AnchorLeft = dismisser.AnchorTop = dismisser.AnchorRight = dismisser.AnchorBottom = 0f;
+        dismisser.CustomMinimumSize = Vector2.Zero;
+        dismisser.Size = canvas / dismisser.GetGlobalTransform().Scale.Abs();
+        dismisser.GlobalPosition = Vector2.Zero;
+        state.Covers = true;
+    }
+
+    // ---- the feedback screen ----------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Settings' feedback screen: a 368 x 305 unit panel with 80 unit emoji buttons, drawn twice as large on the virtual canvas
+    /// its decorations fit (540 wide), centred under the notch. Its back button is moved flush with the left edge, where the
+    /// desktop's 40 unit overhang would be twice as far out, and every control is given a 44 point target.
+    /// </summary>
+    public void ApplyFeedback(Control screen, float capHeight)
+    {
+        if (_tree == null || !GodotObject.IsInstanceValid(_tree.Root)) return;
+        FitFeedback(screen, capHeight, _tree.Root.GetVisibleRect().Size);
+        _feedback.Add(screen.GetInstanceId());
+    }
+
+    /// <summary>
+    /// The back button and the touch areas, once the screen is shown and its own containers have laid it out: the screen is
+    /// created hidden, and a hidden container gives its children no size to measure.
+    /// </summary>
+    private void PrepareFeedback(Control screen, float scale, float capHeight)
+    {
+        if (screen.GetNodeOrNull<Control>("BackButton") is { } back)
+        {
+            Capture(back, captureVisible: false);
+            back.OffsetLeft = 0f;
+            back.OffsetRight = BackButtonWidth;
+        }
+        foreach (Node node in Traverse(screen))
+            if (_dropdownType != null && _dropdownType.IsInstanceOfType(node)) RegisterDropdown((Control)node, area: 0);
+        PadTargets(screen, scale);
+        GD.Print($"Portrait settings: feedback screen drawn {scale:F2}x under cap {capHeight:F0}.");
+    }
+
+    /// <summary>Holds the feedback screen's fit; returns the scale it is drawn at.</summary>
+    private float FitFeedback(Control screen, float capHeight, Vector2 canvas)
+    {
+        VirtualCanvas fit = PortraitFitMath.Fit(canvas.X, capHeight, canvas.Y - FeedbackBottomMargin, FeedbackDesignWidth, allowEnlarge: true);
+        Vector2 parentOrigin = screen.GetParent() is Control parent ? parent.GetGlobalTransformWithCanvas().Origin : Vector2.Zero;
+        var position = new Vector2(fit.Left, fit.Top) - parentOrigin;
+        var size = new Vector2(fit.Width, fit.Height);
+        var scale = new Vector2(fit.Scale, fit.Scale);
+        if (!_snapshots.ContainsKey(screen.GetInstanceId())) Capture(screen, captureVisible: false);
+        if (screen.AnchorLeft != 0f || screen.AnchorTop != 0f || screen.AnchorRight != 0f || screen.AnchorBottom != 0f)
+        {
+            screen.AnchorLeft = 0f;
+            screen.AnchorTop = 0f;
+            screen.AnchorRight = 0f;
+            screen.AnchorBottom = 0f;
+        }
+        if (screen.PivotOffset != Vector2.Zero) screen.PivotOffset = Vector2.Zero;
+        if (screen.Scale != scale) screen.Scale = scale;
+        if (screen.Position.DistanceSquaredTo(position) > 0.25f) screen.Position = position;
+        if (screen.Size.DistanceSquaredTo(size) > 0.25f) screen.Size = size;
+        return fit.Scale;
+    }
+
+    private void HoldFeedback(Window root, float capHeight)
+    {
+        Vector2 canvas = root.GetVisibleRect().Size;
+        foreach (ulong id in _feedback)
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) && screen.IsVisibleInTree())
+            {
+                float scale = FitFeedback(screen, capHeight, canvas);
+                if (_prepared.Add(id)) PrepareFeedback(screen, scale, capHeight);
+            }
+    }
+
+    // ---- shared -----------------------------------------------------------------------------------------------------------
+
+    /// <summary>Puts everything back for landscape: the desktop layout, the game's fonts and text, and its own dropdowns.</summary>
+    public void Restore()
+    {
+        foreach (ulong id in _screens.Keys)
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
+                RemoveTouchAreas(screen);
+        foreach (ulong id in _feedback)
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
+                RemoveTouchAreas(screen);
+        RefreshPanels();
+        foreach ((ulong id, (bool had, int size)) in _fonts)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
+            if (had) label.AddThemeFontSizeOverride("font_size", size);
+            else label.RemoveThemeFontSizeOverride("font_size");
+        }
+        _fonts.Clear();
+        foreach ((ulong id, TextState state) in _texts)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+            if (control is Label label) label.AutowrapMode = state.Wrap;
+            if (control is RichTextLabel rich)
+            {
+                rich.AutowrapMode = state.Wrap;
+                if (state.RichFonts != null && state.RichHad != null)
+                    for (int i = 0; i < RichFontKeys.Length; i++)
+                    {
+                        if (state.RichHad[i]) rich.AddThemeFontSizeOverride(RichFontKeys[i], state.RichFonts[i]);
+                        else rich.RemoveThemeFontSizeOverride(RichFontKeys[i]);
+                    }
+            }
+            if (control is Label ownLabel)
+            {
+                if (state.HadFont) ownLabel.AddThemeFontSizeOverride("font_size", state.Font);
+                else ownLabel.RemoveThemeFontSizeOverride("font_size");
+            }
+            if (state.Mega is { } mega) SetMegaSize(control, mega.Min, mega.Max);
+        }
+        _texts.Clear();
+        foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                snapshot.Restore(control);
+        _snapshots.Clear();
+        _screens.Clear();
+        _dropdowns.Clear();
+        _panels.Clear();
+        _feedback.Clear();
+        _prepared.Clear();
+        Reset();
+    }
+
+    private void RefreshPanels()
+    {
+        foreach (ulong id in _panels)
+        {
+            if (GodotObject.InstanceFromId(id) is not NSettingsPanel panel || !GodotObject.IsInstanceValid(panel)) continue;
+            if (panel.GetNodeOrNull<Control>("VBoxContainer/" + SpacerName) is { } spacer) spacer.Visible = false;
+            if (panel.IsNodeReady()) panel.Call(NSettingsPanel.MethodName.RefreshSize);
+        }
+        foreach (ulong id in _screens.Keys)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control screen || !GodotObject.IsInstanceValid(screen)) continue;
+            if (screen.GetNodeOrNull<Control>("ScrollContainer/Mask") is { } mask && mask.HasMethod("OnResized"))
+                mask.Call("OnResized");
+        }
+    }
+
+    private static void RemoveTouchAreas(Node root)
+    {
+        foreach (Node node in Traverse(root))
+            if (node is Control control && control.Name == PhoneHitArea.NodeName && control.GetParent() is Control owner)
+                PhoneHitArea.Remove(owner);
+    }
+
+    public void PruneDead()
+    {
+        foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
+        foreach (ulong id in _fonts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _fonts.Remove(id);
+        foreach (ulong id in _texts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _texts.Remove(id);
+        foreach (ulong id in _panels.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _panels.Remove(id);
+        foreach (ulong id in _feedback.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _feedback.Remove(id);
+        foreach (ulong id in _prepared.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _prepared.Remove(id);
+        foreach (ulong id in _dropdowns.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _dropdowns.Remove(id);
+        foreach ((ulong id, ScreenState state) in _screens)
+        {
+            state.Sliders.RemoveAll(k => !GodotObject.IsInstanceIdValid(k));
+            state.Dropdowns.RemoveAll(k => !GodotObject.IsInstanceIdValid(k));
+        }
+        foreach (ulong id in _screens.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _screens.Remove(id);
+        if (_target != 0 && !GodotObject.IsInstanceIdValid(_target)) Reset();
+    }
+
+    private PortraitControlSnapshot Capture(Control control, bool captureVisible)
+    {
+        if (!_snapshots.TryGetValue(control.GetInstanceId(), out PortraitControlSnapshot? snap))
+            _snapshots[control.GetInstanceId()] = snap = new PortraitControlSnapshot(control, captureVisible);
+        return snap;
+    }
+
+    /// <summary>Grows a control's height to <paramref name="minimum"/> units, capturing its own size the first time.</summary>
+    private void GrowHeight(Control control, float minimum)
+    {
+        if (control.CustomMinimumSize.Y >= minimum - 0.5f) return;
+        Capture(control, captureVisible: false);
+        control.CustomMinimumSize = new Vector2(control.CustomMinimumSize.X, MathF.Ceiling(minimum));
+    }
+
+    /// <summary>Sets a label's font size in portrait, keeping the game's own to put back in landscape.</summary>
+    private void SetFont(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        if (!_fonts.ContainsKey(id))
+        {
+            bool had = label.HasThemeFontSizeOverride("font_size");
+            _fonts[id] = (had, label.GetThemeFontSize("font_size"));
+        }
+        label.AddThemeFontSizeOverride("font_size", size);
+    }
+
+    /// <summary>Wraps one label inside its column and raises it to <paramref name="font"/>, keeping the game's own sizes.</summary>
+    private void FloorText(Control control, int font)
+    {
+        ulong id = control.GetInstanceId();
+        if (!_texts.TryGetValue(id, out TextState? state))
+        {
+            state = new TextState
+            {
+                Wrap = control is Label label ? label.AutowrapMode
+                    : control is RichTextLabel rich ? rich.AutowrapMode
+                    : TextServer.AutowrapMode.Off,
+            };
+            if (control is Label own)
+            {
+                state.HadFont = own.HasThemeFontSizeOverride("font_size");
+                state.Font = own.GetThemeFontSize("font_size");
+            }
+            if (control is RichTextLabel text)
+            {
+                state.RichFonts = new int[RichFontKeys.Length];
+                state.RichHad = new bool[RichFontKeys.Length];
+                for (int i = 0; i < RichFontKeys.Length; i++)
+                {
+                    state.RichHad[i] = text.HasThemeFontSizeOverride(RichFontKeys[i]);
+                    state.RichFonts[i] = text.GetThemeFontSize(RichFontKeys[i]);
+                }
+            }
+            state.Mega = MegaSize(control);
+            _texts[id] = state;
+        }
+        switch (control)
+        {
+            case Label label:
+                label.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                label.AddThemeFontSizeOverride("font_size", font);
+                break;
+            case RichTextLabel rich:
+                rich.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+                foreach (string key in RichFontKeys) rich.AddThemeFontSizeOverride(key, font);
+                break;
+        }
+        SetMegaSize(control, font, font);
+    }
+
+    /// <summary>A Mega label's own font limits (they auto-size between them, so the theme size alone is not enough).</summary>
+    private (int Min, int Max)? MegaSize(Control control)
+    {
+        if (Limits(control) is not { } pair) return null;
+        if (pair.Min.GetValue(control) is not int min || pair.Max.GetValue(control) is not int max) return null;
+        return (min, max);
+    }
+
+    private void SetMegaSize(Control control, int min, int max)
+    {
+        if (Limits(control) is not { } pair) return;
+        pair.Min.SetValue(control, min);
+        pair.Max.SetValue(control, max);
+    }
+
+    /// <summary>The Min/Max pair of a plain or rich Mega label, or null for any other control.</summary>
+    private (PropertyInfo Min, PropertyInfo Max)? Limits(Control control)
+    {
+        if (_megaMin?.DeclaringType is { } plain && plain.IsInstanceOfType(control) && _megaMax != null)
+            return (_megaMin, _megaMax);
+        if (_richMin?.DeclaringType is { } rich && rich.IsInstanceOfType(control) && _richMax != null)
+            return (_richMin, _richMax);
+        return null;
+    }
+
+    private static IEnumerable<Node> Traverse(Node root)
+    {
+        var stack = new Stack<Node>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            Node current = stack.Pop();
+            yield return current;
+            int count = current.GetChildCount();
+            for (int i = count - 1; i >= 0; i--)
+                stack.Push(current.GetChild(i));
+        }
+    }
+}

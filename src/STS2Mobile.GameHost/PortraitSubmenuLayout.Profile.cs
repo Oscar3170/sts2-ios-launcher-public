@@ -15,7 +15,8 @@ internal static partial class PortraitSubmenuLayout
 
     private const float ProfileButtonWidth = 440f;
     private const float ProfileButtonHeight = 560f;
-    private const float ProfileDeleteSize = 80f;
+    // 110 units at the screen's 1.17 draw: 129 units (44.6 points) across, a finger's target inside the 440 unit column.
+    private const float ProfileDeleteSize = 110f;
     private const float ProfileDeleteGap = 12f;
     private const float ProfileColumnGap = 16f;
     private const float ProfileRowGap = 24f;
@@ -52,6 +53,10 @@ internal static partial class PortraitSubmenuLayout
             Control? button = row.GetNodeOrNull<Control>($"ProfileButton{i + 1}") ?? screen.GetNodeOrNull<Control>($"ProfileButton{i + 1}");
             if (button == null) continue;
             capture(button);
+            // Safe to move: NProfileButton and its NDeleteProfileButton derive from NButton, whose _ExitTree only unregisters
+            // the controller/input listeners and hotkeys; _EnterTree connects them again and RegisterHotkeys(restorePriority:
+            // true) puts the removed bindings back. Its other children (NProfileIcon, Mega labels, TextureRect) declare no
+            // _ExitTree at all, and no NSelectionReticle or pooled node is part of this scene.
             MoveKept(button, screen, row.GetIndex() + 1 + i);
             var minimum = new Vector2(ProfileButtonWidth, height);
             if (button.CustomMinimumSize.DistanceSquaredTo(minimum) > 0.25f) button.CustomMinimumSize = minimum;

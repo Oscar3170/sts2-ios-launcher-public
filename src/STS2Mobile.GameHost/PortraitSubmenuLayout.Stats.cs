@@ -16,7 +16,8 @@ internal static partial class PortraitSubmenuLayout
     private const string StatsContentPath = "StatsGrid/ScrollableContent/Mask/Content";
     private const string StatsColumnPath = StatsContentPath + "/StatsScrollableContainer";
     private const float StatsTabsTop = 24f;
-    private const float StatsTabsHeight = 90f;
+    // 98 units at the screen's 1.30 draw: 127 units (44 points) tall, the smallest a tab may be on the canvas.
+    private const float StatsTabsHeight = 98f;
     private const float StatsSide = 32f;
     private const float StatsScrollbarWidth = 48f;
 
@@ -76,6 +77,8 @@ internal static partial class PortraitSubmenuLayout
             capture(panel);
             panel.SizeFlagsHorizontal = Control.SizeFlags.ExpandFill;
         }
+        // The list scrolls (its mask clips it): its rows can take a finger's height without leaving the screen.
+        GrowListRows(screen, type => type == "NStatEntry", 98f, capture);
     }
 
     /// <summary>Sets a spacing theme constant (one the snapshots hold, so capture first), changing it only when it differs.</summary>

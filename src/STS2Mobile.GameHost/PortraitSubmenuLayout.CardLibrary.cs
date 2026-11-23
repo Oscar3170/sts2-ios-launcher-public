@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Godot;
 
 namespace STS2Mobile.GameHost;
@@ -28,26 +30,52 @@ internal static partial class PortraitSubmenuLayout
 
     /// <summary>
     /// The card library: the sidebar's filters and sort buttons drawn 1.5 times as large, over the height the desktop
-    /// layout left empty. The sidebar keeps its 288 unit inner layout and is scaled as a whole (drawn 432 wide, the full
-    /// height); its bottom tickboxes (Multiplayer Cards, View Stats, View Upgrades) end above the back button instead of
-    /// under it. The grid starts at the sidebar's new edge with a wider scroll area, so it keeps two cards to a row.
+    /// layout left empty. The sidebar keeps its 288 unit inner layout and is scaled as a whole (drawn 432 wide); it scrolls,
+    /// because its filter rows and tickboxes are grown to a finger's 44 points, and its lower part ends above the back
+    /// button instead of under it. The grid starts at the sidebar's new edge with a wider scroll area, so it keeps two cards
+    /// to a row.
     /// </summary>
     private static void LayoutCardLibrary(Control screen, float w, float h, Action<Control> capture)
     {
         const float k = CardLibrarySidebarScale;
         float sidebarWidth = CardLibrarySidebarWidth * k;
+        // A filter row is 38 units on the desktop: 85 here is 127 units (44 points) on the canvas.
+        const float FingerSize = 85f;
 
         if (screen.GetNodeOrNull<Control>("Sidebar") is { } sidebar)
         {
-            Place(sidebar, 0f, 0f, CardLibrarySidebarWidth, h / k, capture);
+            float scrollHeight = h / k - (CornerButtonsTop + Gap) / k;
+            // The sidebar's own sort would undo a moved child, so its content can only be scrolled in place when the sidebar
+            // is a plain control. It is one in the shipped scene; otherwise the filters keep their desktop sizes and the touch
+            // pads carry them.
+            bool inPlace = !sidebar.IsClass("Container");
+            if (!inPlace && sidebar.GetMeta("portrait_scroll_fallback", false).AsBool() == false)
+            {
+                sidebar.SetMeta("portrait_scroll_fallback", true);
+                GD.Print("Portrait card library: sidebar lays its children out; filters keep their desktop sizes and use touch pads.");
+            }
+            Place(sidebar, 0f, 0f, CardLibrarySidebarWidth, inPlace ? Math.Max(200f, scrollHeight) : h / k, capture);
             if (sidebar.PivotOffset != Vector2.Zero) sidebar.PivotOffset = Vector2.Zero;
             var scale = new Vector2(k, k);
             if (sidebar.Scale != scale) sidebar.Scale = scale;
             if (sidebar.GetNodeOrNull<Control>("MarginContainer") is { } margins)
             {
-                // The back button stands 354 to 244 units above the screen's lower edge, over the sidebar's lower part.
-                SetConstant(margins, "margin_bottom", (int)MathF.Ceiling((CornerButtonsTop + Gap) / k));
-                SetConstant(margins.GetNodeOrNull<Control>("TopVBox"), "separation", CardLibraryModuleGap);
+                capture(margins);
+                if (inPlace)
+                {
+                    // Nothing leaves the tree: the sidebar clips and the filter column moves under the finger.
+                    SetKept(sidebar, "clip_contents", true);
+                    SetConstant(margins, "margin_bottom", (int)Gap);
+                    SetConstant(margins.GetNodeOrNull<Control>("TopVBox"), "separation", CardLibraryModuleGap);
+                    GrowCardLibraryFilters(margins, 256f, FingerSize, capture);
+                    PortraitInPlaceScroll.Shared.Set(sidebar, margins, screen);
+                }
+                else
+                {
+                    // The back button stands 354 to 244 units above the screen's lower edge, over the sidebar's lower part.
+                    SetConstant(margins, "margin_bottom", (int)MathF.Ceiling((CornerButtonsTop + Gap) / k));
+                    SetConstant(margins.GetNodeOrNull<Control>("TopVBox"), "separation", CardLibraryModuleGap);
+                }
             }
         }
 
@@ -99,5 +127,43 @@ internal static partial class PortraitSubmenuLayout
             capture(control);
             control.AddThemeConstantOverride(name, value);
         }
+    }
+
+    /// <summary>
+    /// Grows the sidebar's controls to a finger's size. Rows that already run the full width only need height; the small
+    /// pool/type/cost boxes get both. A grid whose cells no longer fit at 85 units each goes to the two columns the 256
+    /// unit inner width holds, and the scroll added around the sidebar takes the extra height.
+    /// </summary>
+    private static void GrowCardLibraryFilters(Control root, float width, float finger, Action<Control> capture)
+    {
+        var controls = new List<Control>();
+        void Walk(Node node)
+        {
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+                if (control is GridContainer grid && grid.GetChildren().OfType<Control>().Any(PortraitAudit.IsTouchTarget))
+                {
+                    int columns = Math.Max(1, (int)MathF.Floor((width + 4f) / (finger + 4f)));
+                    SetKept(grid, "columns", columns);
+                }
+                if (PortraitAudit.IsTouchTarget(control) && control.IsVisibleInTree()) controls.Add(control);
+                Walk(control);
+            }
+        }
+        Walk(root);
+        foreach (Control control in controls)
+        {
+            Vector2 current = control.CustomMinimumSize;
+            SetMin(control, new Vector2(Math.Max(finger, current.X), Math.Max(finger, current.Y)), capture);
+        }
+    }
+
+    /// <summary>Sets a control's minimum size (the snapshot holds it), changing only when it differs.</summary>
+    private static void SetMin(Control control, Vector2 size, Action<Control> capture)
+    {
+        if (control.CustomMinimumSize.DistanceSquaredTo(size) <= 0.25f) return;
+        capture(control);
+        control.CustomMinimumSize = size;
     }
 }
