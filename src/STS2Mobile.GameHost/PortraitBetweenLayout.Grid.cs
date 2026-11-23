@@ -64,6 +64,7 @@ internal sealed partial class PortraitBetweenLayout
 
     private readonly Dictionary<ulong, GridState> _gridStates = new();
     private readonly Dictionary<ulong, PortraitGridScreen> _viewUpgrades = new();
+    private readonly Dictionary<ulong, TextServer.AutowrapMode> _gridWrapModes = new();
 
     private static Type? _cardGridType;
     private static FieldInfo? _cardSizeField;
@@ -153,6 +154,8 @@ internal sealed partial class PortraitBetweenLayout
             if (!GodotObject.IsInstanceIdValid(id)) _gridStates.Remove(id);
         foreach (ulong id in new List<ulong>(_viewUpgrades.Keys))
             if (!GodotObject.IsInstanceIdValid(id)) _viewUpgrades.Remove(id);
+        foreach (ulong id in new List<ulong>(_gridWrapModes.Keys))
+            if (!GodotObject.IsInstanceIdValid(id)) _gridWrapModes.Remove(id);
     }
 
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
@@ -176,6 +179,10 @@ internal sealed partial class PortraitBetweenLayout
         }
         _gridStates.Clear();
         _viewUpgrades.Clear();
+        foreach ((ulong id, TextServer.AutowrapMode mode) in _gridWrapModes)
+            if (GodotObject.InstanceFromId(id) is RichTextLabel label && GodotObject.IsInstanceValid(label))
+                label.AutowrapMode = mode;
+        _gridWrapModes.Clear();
     }
 
     // ---- the grid's own rectangle and its cards -----------------------------------------------------------------
@@ -436,6 +443,8 @@ internal sealed partial class PortraitBetweenLayout
         row.OffsetRight = 0f;
         row.OffsetTop = 0f;
         row.OffsetBottom = PortraitGridMath.SortButtonHeight;
+        // The game's row separates its four buttons by 50 units, which alone pushes 4 x 250 units off the canvas.
+        row.AddThemeConstantOverride("separation", (int)PortraitGridMath.SortButtonGap);
 
         List<Control> buttons = new();
         for (int i = 0; i < row.GetChildCount(); i++)
@@ -491,19 +500,27 @@ internal sealed partial class PortraitBetweenLayout
             state.InfoText = screen.GetNodeOrNull<Control>(DeckInfoTextName)?.GetInstanceId() ?? 0;
         if (state.InfoText == 0 || GodotObject.InstanceFromId(state.InfoText) is not Control line || !GodotObject.IsInstanceValid(line)) return;
         if (line.Size.X < 1f || line.Size.Y < 1f) return;
-        float scale = PortraitGridMath.InfoTextScale(line.Size.X, canvas.X);
+        float width = PortraitGridMath.InfoTextWidth(canvas.X);
+        float left = PortraitGridMath.InfoTextLeft(canvas.X);
         float top = canvas.Y - PortraitGridMath.InfoTextTop;
-        float left = (canvas.X - line.Size.X) * 0.5f;
-        if (Math.Abs(line.Scale.X - scale) < 0.002f && Math.Abs(line.OffsetTop - top) < 0.25f &&
-            Math.Abs(line.OffsetLeft - left) < 0.25f) return;
+        if (Math.Abs(line.OffsetLeft - left) < 0.25f && Math.Abs(line.OffsetRight - (left + width)) < 0.25f &&
+            Math.Abs(line.OffsetTop - top) < 0.25f && line.Scale == Vector2.One) return;
         Capture(line, captureVisible: false);
         line.AnchorLeft = line.AnchorTop = line.AnchorRight = line.AnchorBottom = 0f;
-        line.PivotOffset = new Vector2(line.Size.X * 0.5f, line.Size.Y);
-        line.Scale = new Vector2(scale, scale);
+        line.PivotOffset = Vector2.Zero;
+        line.Scale = Vector2.One;
         line.OffsetLeft = left;
-        line.OffsetRight = left + line.Size.X;
+        line.OffsetRight = left + width;
         line.OffsetTop = top;
-        line.OffsetBottom = top + line.Size.Y;
+        line.OffsetBottom = top + PortraitGridMath.InfoTextHeight;
+        // The game draws the line on one unwrapped row; portrait keeps it inside its half of the canvas, at 11 points.
+        if (line is RichTextLabel text)
+        {
+            if (!_gridWrapModes.ContainsKey(line.GetInstanceId())) _gridWrapModes[line.GetInstanceId()] = text.AutowrapMode;
+            if (text.AutowrapMode != TextServer.AutowrapMode.WordSmart) text.AutowrapMode = TextServer.AutowrapMode.WordSmart;
+        }
+        if (line.FindChild("BottomLabel", recursive: true, owned: false) is Control label)
+            SetRichFontSize(label, PortraitGridMath.InfoTextFontSize);
     }
 
     private static Control? ViewUpgradesBoxOf(Control tickbox)

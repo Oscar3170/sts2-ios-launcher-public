@@ -8,6 +8,9 @@ public readonly record struct PreviewPairFit(float Scale, float CenterX, float C
 /// <summary>A row of preview cards' scale, the width its container takes in its own units, and the canvas middle it takes.</summary>
 public readonly record struct PreviewRowFit(float Scale, float LocalWidth, float CenterY);
 
+/// <summary>The transform composition's scale and the canvas point its drawn cards' middle takes.</summary>
+public readonly record struct TransformPreviewFit(float Scale, float CenterX, float CenterY);
+
 /// <summary>
 /// Pure layout math for the deck's card selection screens in portrait: the upgrade/enchant comparison pair, the multi-card
 /// preview rows (upgrade, enchant and the generic deck select), the prompts and the enchant legend under them, the enlarged
@@ -78,11 +81,10 @@ public static class PortraitPreviewMath
     public const float ButtonTopFromBottom = 250f * Unit;
     public const float CloseAboveToggle = 470f * Unit;
 
-    // The transform preview's composition is fitted inside the canvas less 56 reference units either side, less 40 above and
-    // below and 250 at the bottom for the buttons, between 0.1 and 1.98 of its size.
+    // The transform preview's composition is fitted across the canvas less 56 reference units either side (36 here) and
+    // between the notch cap and the prompt, between 0.1 and 1.98 of its own size (0.064 to 1.273 here).
     public const float TransformSideMargin = 56f * Unit;
-    public const float TransformBottomMargin = 40f * Unit;
-    public const float TransformBottomReserve = 250f * Unit;
+    public const float TransformBandMargin = 8f;
     public const float TransformMinScale = 0.1f * Unit;
     public const float TransformMaxScale = 1.98f * Unit;
 
@@ -185,17 +187,23 @@ public static class PortraitPreviewMath
         canvasWidth - buttonWidth - ButtonRightMargin;
 
     /// <summary>
-    /// The transform preview's scale: the whole native composition (both sides, every selected card) fitted into the room
-    /// around the preview's own origin, less the margins the reference leaves and the band its buttons take at the bottom.
+    /// The transform preview's fit: the whole native composition (both sides, every selected card) drawn as wide as the canvas
+    /// allows with <see cref="TransformSideMargin"/> each side, and no taller than the band between the notch cap and the
+    /// prompt. <paramref name="width"/> and <paramref name="height"/> are the composition's drawn size at its own scale, and
+    /// <paramref name="centreX"/>/<paramref name="centreY"/> its drawn middle on the canvas; the returned centre is where that
+    /// middle belongs (the canvas's middle, kept inside the band).
     /// </summary>
-    public static float TransformScale(
-        float centerX, float centerY, float safeLeft, float safeTop, float safeRight, float safeBottom,
-        float extentX, float extentY)
+    public static TransformPreviewFit TransformFit(
+        float canvasWidth, float canvasHeight, float capHeight, float promptTop,
+        float centreX, float centreY, float width, float height)
     {
-        if (extentX <= 0.5f || extentY <= 0.5f) return 1f;
-        float roomX = MathF.Min(centerX - safeLeft, safeRight - centerX) - TransformSideMargin;
-        float roomY = MathF.Min(centerY - safeTop, safeBottom - centerY - TransformBottomReserve) - TransformBottomMargin;
-        if (roomX <= 0.5f || roomY <= 0.5f) return TransformMinScale;
-        return Math.Clamp(MathF.Min(roomX / extentX, roomY / extentY), TransformMinScale, TransformMaxScale);
+        if (width <= 0.5f || height <= 0.5f) return new TransformPreviewFit(1f, centreX, centreY);
+        float room = MathF.Max(1f, canvasWidth - 2f * TransformSideMargin);
+        float band = MathF.Max(1f, promptTop - TransformBandMargin - capHeight - TransformBandMargin);
+        float scale = Math.Clamp(MathF.Min(room / width, band / height), TransformMinScale, TransformMaxScale);
+        float half = height * scale * 0.5f;
+        float middle = Math.Clamp(centreY, capHeight + TransformBandMargin + half,
+            MathF.Max(capHeight + TransformBandMargin + half, promptTop - TransformBandMargin - half));
+        return new TransformPreviewFit(scale, canvasWidth * 0.5f, middle);
     }
 }

@@ -62,7 +62,8 @@ public static class PortraitGridMath
     public const float SortButtonHeight = 127f;
     public const float SortButtonGap = 6f;
     public const float SortArrowSize = 41f;
-    public const int SortFontMax = 31;
+    /// <summary>The largest sort label: 28 units is 9.7 points, with room for the text plus its arrow in a quarter of the row.</summary>
+    public const int SortFontMax = 28;
     public const int SortFontMin = 20;
 
     /// <summary>The View Upgrades box drawn 44 points tall (checkbox and label together).</summary>
@@ -87,10 +88,14 @@ public static class PortraitGridMath
     public const float ToggleTopUpgrade = 135.6f;
     public const float ToggleTopTransform = 144f;
 
-    /// <summary>The deck view's pile info line: above the View Upgrades box, below the grid.</summary>
+    /// <summary>
+    /// The deck view's pile info line: a right-aligned block inside the canvas above the footer, clear of the Back button
+    /// on the left. Half the canvas wide, wrapped, at 11 points (the reference layout's right-hand line).
+    /// </summary>
     public const float InfoTextTop = 270f;
-    public const float InfoTextScaleMax = 1.9f;
-    public const float InfoTextWidthShare = 0.43f;
+    public const float InfoTextWidthShare = 0.5f;
+    public const float InfoTextHeight = 120f;
+    public const int InfoTextFontSize = 32;
 
     /// <summary>The band each screen keeps at the bottom of the canvas.</summary>
     public static float Footer(PortraitGridScreen screen) => screen switch
@@ -191,7 +196,9 @@ public static class PortraitGridMath
     public static float ToggleLeft(float canvasWidth, float nativeWidth, float scale) =>
         (canvasWidth - nativeWidth * scale) * 0.5f;
 
-    /// <summary>The deck view's info line: the ported 1.9 cap, and no wider than 43 % of the canvas.</summary>
-    public static float InfoTextScale(float nativeWidth, float canvasWidth) =>
-        nativeWidth <= 0.01f ? 1f : Math.Min(InfoTextScaleMax, canvasWidth * InfoTextWidthShare / nativeWidth);
+    /// <summary>The deck view's info line box: half the canvas, flush to the right margin (Back keeps the left).</summary>
+    public static float InfoTextWidth(float canvasWidth) => canvasWidth * InfoTextWidthShare;
+
+    /// <summary>Its right edge: the canvas less the grid's own side margin.</summary>
+    public static float InfoTextLeft(float canvasWidth) => canvasWidth - SideInset - InfoTextWidth(canvasWidth);
 }

@@ -53,6 +53,8 @@ internal sealed class PortraitSelectionPreview
         public bool TransformFitted;
         public int TransformTries;
         public Vector2 TransformCanvas;
+        public Vector2 TransformHome;
+        public bool TransformHomeKnown;
         public int RowCount = -1;
         public Vector2 PairFit;
         public float RowScale;
@@ -347,11 +349,13 @@ internal sealed class PortraitSelectionPreview
         if (panel.Transform != null && panel.TransformFitted)
         {
             panel.TransformFitted = false;
-            // Put the game's own scale back before its next Initialize reads the composition's position.
-            if (_snapshots.TryGetValue(panel.Transform.GetInstanceId(), out PortraitControlSnapshot? snap))
-                panel.Transform.Scale = snap.InitialScale;
-            else
-                panel.Transform.Scale = Vector2.One;
+            // Put the game's own scale and place back before its next Initialize reads the composition's position.
+            if (GodotObject.IsInstanceValid(panel.Transform))
+            {
+                panel.Transform.Scale = _snapshots.TryGetValue(panel.Transform.GetInstanceId(),
+                    out PortraitControlSnapshot? snap) ? snap.InitialScale : Vector2.One;
+                if (panel.TransformHomeKnown) panel.Transform.Position = panel.TransformHome;
+            }
         }
     }
 
@@ -462,7 +466,7 @@ internal sealed class PortraitSelectionPreview
     private void CenterRow(Control row, float width, float centerY, int attempt)
     {
         if (CardDefaultSize() is not { } cardSize) return;
-        if (!RowBounds(row, cardSize, out Rect2 union)) return;
+        if (!CardUnion(row, cardSize, out Rect2 union)) return;
         float room = width - PortraitPreviewMath.RowMargin;
         if (union.Size.X > room + 0.5f)
         {
@@ -482,15 +486,15 @@ internal sealed class PortraitSelectionPreview
     }
 
     /// <summary>The cards' drawn rectangle in canvas coordinates, as the harness measures them (a card is centred on its node).</summary>
-    private static bool RowBounds(Node node, Vector2 cardSize, out Rect2 union)
+    private static bool CardUnion(Node node, Vector2 cardSize, out Rect2 union)
     {
         union = default;
         bool any = false;
-        CollectBounds(node, cardSize, ref union, ref any);
+        CollectCardBounds(node, cardSize, ref union, ref any);
         return any;
     }
 
-    private static void CollectBounds(Node node, Vector2 cardSize, ref Rect2 union, ref bool any)
+    private static void CollectCardBounds(Node node, Vector2 cardSize, ref Rect2 union, ref bool any)
     {
         for (int i = 0; i < node.GetChildCount(); i++)
         {
@@ -502,7 +506,7 @@ internal sealed class PortraitSelectionPreview
                 union = any ? union.Merge(rect) : rect;
                 any = true;
             }
-            CollectBounds(child, cardSize, ref union, ref any);
+            CollectCardBounds(child, cardSize, ref union, ref any);
         }
     }
 
@@ -520,45 +524,49 @@ internal sealed class PortraitSelectionPreview
         Control preview = panel.Transform!;
         if (!GodotObject.IsInstanceValid(preview) || !preview.IsInsideTree()) return;
         if (CardDefaultSize() is not { } cardSize) return;
-        Transform2D inverse = preview.GetGlobalTransform().AffineInverse();
-        Vector2 extent = Vector2.Zero;
-        foreach (string side in BeforeAfter)
+        PortraitControlSnapshot snap = Capture(preview);
+        if (!panel.TransformHomeKnown)
         {
-            if (preview.GetNodeOrNull<Control>(side) is not { } holder) continue;
-            AddCardExtent(holder, inverse, cardSize, ref extent);
+            panel.TransformHome = preview.Position;
+            panel.TransformHomeKnown = true;
         }
-        if (extent.X <= 0.5f || extent.Y <= 0.5f) return;
-        float scale = PortraitPreviewMath.TransformScale(
-            preview.GlobalPosition.X, preview.GlobalPosition.Y,
-            0f, state.CapHeight, state.Canvas.X, state.Canvas.Y, extent.X, extent.Y);
-        Capture(preview);
-        preview.Scale = Vector2.One * scale;
+        // Measure the game's own composition: never the scale a previous fit left behind.
+        if (preview.Scale != snap.InitialScale) preview.Scale = snap.InitialScale;
+        if (!CardUnion(preview, cardSize, out Rect2 union)) return;
+        TransformPreviewFit fit = PortraitPreviewMath.TransformFit(
+            state.Canvas.X, state.Canvas.Y, state.CapHeight, PortraitPreviewMath.TransformPromptTop(state.Canvas.Y),
+            union.GetCenter().X, union.GetCenter().Y, union.Size.X, union.Size.Y);
+        preview.Scale = Vector2.One * fit.Scale;
         panel.TransformFitted = true;
         panel.TransformCanvas = state.Canvas;
+        // The drawn composition need not be symmetric about the preview's own pivot: measure it where it is now and move the
+        // whole thing so its middle is the canvas's middle (and its height stays in the band above the prompt).
+        if (!CardUnion(preview, cardSize, out Rect2 drawn))
+        {
+            if (_logged.Add(preview.GetInstanceId()))
+                GD.Print($"Portrait selection preview: transform composition fitted at {fit.Scale:F3}, no cards to centre.");
+            return;
+        }
+        float dx = fit.CenterX - drawn.GetCenter().X;
+        float dy = fit.CenterY - drawn.GetCenter().Y;
+        if (Math.Abs(dx) > 0.25f || Math.Abs(dy) > 0.25f)
+        {
+            Vector2 parentScale = preview.GetParent() is Control parent && parent.IsInsideTree()
+                ? parent.GetGlobalTransform().Scale.Abs()
+                : Vector2.One;
+            preview.Position += new Vector2(dx / Math.Max(parentScale.X, 0.01f), dy / Math.Max(parentScale.Y, 0.01f));
+        }
         if (_logged.Add(preview.GetInstanceId()))
-            GD.Print($"Portrait selection preview: transform composition {extent.X:F0}x{extent.Y:F0} fitted at {scale:F2}.");
+            GD.Print($"Portrait selection preview: transform composition {union.Size.X:F0}x{union.Size.Y:F0} fitted at " +
+                     $"{fit.Scale:F3}, drawn {drawn.Size.X:F0}x{drawn.Size.Y:F0}, moved {dx:F0},{dy:F0}.");
     }
 
     private readonly HashSet<ulong> _logged = new();
 
-    private static void AddCardExtent(Node node, Transform2D inverse, Vector2 cardSize, ref Vector2 extent)
-    {
-        foreach (Node child in node.GetChildren())
-        {
-            if (child.GetType().FullName == CardTypeName && child is Control card)
-            {
-                Vector2 centre = inverse * card.GlobalPosition;
-                Vector2 edge = centre.Abs() + cardSize * card.GetGlobalTransform().Scale.Abs() * 0.5f;
-                extent = new Vector2(MathF.Max(extent.X, edge.X), MathF.Max(extent.Y, edge.Y));
-            }
-            AddCardExtent(child, inverse, cardSize, ref extent);
-        }
-    }
-
     private static Vector2? CardDefaultSize()
     {
         if (_cardDefaultSize != null) return _cardDefaultSize.GetValue(null) is Vector2 size ? size : null;
-        _cardType ??= typeof(PortraitSelectionPreview).Assembly.GetType(CardTypeName);
+        _cardType ??= typeof(MegaCrit.Sts2.Core.Nodes.NGame).Assembly.GetType(CardTypeName);
         _cardDefaultSize = _cardType?.GetField("defaultSize", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
         return _cardDefaultSize?.GetValue(null) is Vector2 found ? found : null;
     }

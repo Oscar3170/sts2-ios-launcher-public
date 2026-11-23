@@ -173,23 +173,48 @@ public class PortraitPreviewMathTests
         Assert.Equal(expected, PortraitPreviewMath.PreviewCenterY(capHeight, canvasHeight, fraction), 2);
     }
 
-    [Fact]
-    public void TransformFitFillsTheRoomAroundThePreview()
+    [Theory]
+    [InlineData(1920f, 136f, 850f, 422f, 535f, 960f, 1.185882f, 960f, 1008f, 500.44f)]
+    [InlineData(1920f, 136f, 900.4f, 207.65f, 534.98f, 959.98f, 1.119502f, 959.98f, 1008f, 232.46f)]
+    [InlineData(2340f, 162f, 850f, 422f, 535f, 960f, 1.185882f, 960f, 1008f, 500.44f)]
+    [InlineData(2340f, 162f, 900.4f, 207.65f, 534.98f, 959.98f, 1.119502f, 959.98f, 1008f, 232.46f)]
+    public void TransformFitSpansTheCanvasWithTheReferenceMargins(
+        float canvasHeight, float capHeight, float width, float height, float centreX, float centreY,
+        float scale, float middle, float drawnWidth, float drawnHeight)
     {
-        // The pair at the upgrade screen's middle: 504 units either side, 946 below the cap for the buttons at the bottom.
-        Assert.Equal(1.008f, PortraitPreviewMath.TransformScale(
-            540f, 1207.44f, 0f, 162f, 1080f, 2340f, 500f, 700f), 3);
-        // At 9:16 the same composition is taller than the room under the cap, so its height limits the fit.
-        Assert.Equal(0.823613f, PortraitPreviewMath.TransformScale(
-            540f, 992.32f, 0f, 136f, 1080f, 1920f, 500f, 900f), 5);
-        // Clamped like the reference: at most 1.98 (1.273 here), at least 0.1 (0.064).
-        Assert.Equal(PortraitPreviewMath.TransformMaxScale, PortraitPreviewMath.TransformScale(
-            540f, 1207.44f, 0f, 162f, 1080f, 2340f, 10f, 10f), 5);
-        Assert.Equal(PortraitPreviewMath.TransformMinScale, PortraitPreviewMath.TransformScale(
-            540f, 1207.44f, 0f, 162f, 1080f, 2340f, 10000f, 10000f), 5);
-        // Nothing to measure keeps the game's own size.
-        Assert.Equal(1f, PortraitPreviewMath.TransformScale(
-            540f, 1207.44f, 0f, 162f, 1080f, 2340f, 0f, 0f), 3);
+        TransformPreviewFit fit = PortraitPreviewMath.TransformFit(
+            1080f, canvasHeight, capHeight, PortraitPreviewMath.TransformPromptTop(canvasHeight),
+            centreX, centreY, width, height);
+        Assert.Equal(scale, fit.Scale, 5);
+        Assert.Equal(540f, fit.CenterX, 3);
+        Assert.Equal(middle, fit.CenterY, 2);
+        // The drawn composition is the canvas less 36 either side, and inside the band between the cap and the prompt.
+        Assert.Equal(drawnWidth, width * fit.Scale, 2);
+        Assert.Equal(drawnHeight, height * fit.Scale, 2);
+        float promptTop = PortraitPreviewMath.TransformPromptTop(canvasHeight);
+        Assert.True(fit.CenterY - height * fit.Scale * 0.5f >= capHeight + 7.9f);
+        Assert.True(fit.CenterY + height * fit.Scale * 0.5f <= promptTop - 7.9f);
+    }
+
+    [Fact]
+    public void TransformFitClampsLikeTheReferenceAndKeepsTheBand()
+    {
+        // A tiny composition grows to the reference's 1.98 (1.273 here); a huge one shrinks to 0.1 (0.064).
+        Assert.Equal(PortraitPreviewMath.TransformMaxScale, PortraitPreviewMath.TransformFit(
+            1080f, 1920f, 136f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 10f, 10f).Scale, 5);
+        Assert.Equal(PortraitPreviewMath.TransformMinScale, PortraitPreviewMath.TransformFit(
+            1080f, 1920f, 136f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 30000f, 30000f).Scale, 5);
+        // A composition taller than the band is kept inside it (its middle stops where the band ends).
+        TransformPreviewFit tall = PortraitPreviewMath.TransformFit(
+            1080f, 1920f, 136f, PortraitPreviewMath.TransformPromptTop(1920f), 540f, 960f, 100f, 2000f);
+        Assert.Equal(0.750929f, tall.Scale, 5);
+        Assert.True(tall.CenterY - 2000f * tall.Scale * 0.5f >= 144f);
+        // Nothing to measure keeps the game's own size and place.
+        TransformPreviewFit none = PortraitPreviewMath.TransformFit(
+            1080f, 1920f, 136f, 1600f, 500f, 900f, 0f, 0f);
+        Assert.Equal(1f, none.Scale, 3);
+        Assert.Equal(500f, none.CenterX, 3);
+        Assert.Equal(900f, none.CenterY, 3);
     }
 
     [Fact]

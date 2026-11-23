@@ -223,8 +223,14 @@ public class PortraitGridMathTests
     {
         float top = TallHeight - PortraitGridMath.InfoTextTop;
         Assert.True(top > PortraitGridMath.ViewportBottom(TallHeight, PortraitGridScreen.DeckView));
-        // Narrow labels take the 1.9 cap; a wide one is held to 43 % of the canvas.
-        Assert.Equal(1.9f, PortraitGridMath.InfoTextScale(124f, 1080f), 3);
-        Assert.Equal(0.43f * 1080f, PortraitGridMath.InfoTextScale(300f, 1080f) * 300f, 2);
+        // Half the canvas, flush to the right margin, so the Back button keeps the left and nothing runs off the canvas.
+        Assert.Equal(540f, PortraitGridMath.InfoTextWidth(1080f), 3);
+        Assert.Equal(510f, PortraitGridMath.InfoTextLeft(1080f), 3);
+        Assert.Equal(1080f, PortraitGridMath.InfoTextLeft(1080f) + PortraitGridMath.InfoTextWidth(1080f) + PortraitGridMath.SideInset, 3);
+        // The box stands above the View Upgrades box and inside the footer band.
+        Assert.True(PortraitGridMath.InfoTextTop - PortraitGridMath.InfoTextHeight > PortraitGridMath.ToggleTop(PortraitGridScreen.DeckView));
+        // 11 points at 2.88 units per point.
+        Assert.True(PortraitGridMath.InfoTextFontSize >= 11f * 1080f / 375f - 0.5f);
+        Assert.True(PortraitGridMath.InfoTextFontSize <= 11f * 1080f / 375f + 1f);
     }
 }
