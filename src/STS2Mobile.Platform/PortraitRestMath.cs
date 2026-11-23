@@ -71,14 +71,29 @@ public static class PortraitRestMath
     /// </summary>
     public const int OptionLabelFontSize = 48;
 
+    /// <summary>
+    /// Four buttons and their three gaps at <see cref="MinOptionScale"/> are 1003.6 units, so four is the most one row holds
+    /// with a finger-sized button; more options wrap into balanced rows.
+    /// </summary>
+    public const int MaxOptionsPerRow = 4;
+
+    /// <summary>
+    /// The gap between two wrapped rows, in the buttons' own units. An option's label hangs 25 units below its box, so 48
+    /// leaves it a little room above the next row's box.
+    /// </summary>
+    public const float OptionsRowGap = 48f;
+
+    /// <summary>A wrapped row keeps 8 units from the canvas edge (a four-button row draws 1013.6 wide inside 1080).</summary>
+    public const float OptionsGridMargin = 8f;
+
     /// <summary>The row's box width: the template's rule, raised to the buttons' own combined minimum so a container never fights it.</summary>
     public static float OptionsWidth(int count, float minimumWidth) =>
         Math.Max(Math.Max(OptionsFloorWidth, count * OptionsButtonWidth + Math.Max(0, count - 1) * OptionsSeparation), minimumWidth);
 
     /// <summary>
     /// The row's scale: the width the row needs fits <see cref="OptionsSideMargin"/> inside the canvas, never above the
-    /// template's 1.6 (converted). A row of up to four options keeps its buttons at 44 points; a longer row shrinks instead,
-    /// because there is no width left for a bigger button.
+    /// template's 1.6 (converted). A row of up to four options keeps its buttons at 44 points; a longer row wraps instead
+    /// (<see cref="OptionsRowCount"/>).
     /// </summary>
     public static float OptionsScale(float rowWidth, float canvasWidth)
     {
@@ -95,6 +110,75 @@ public static class PortraitRestMath
         float width = OptionsWidth(count, minimumWidth);
         float scale = OptionsScale(width, canvasWidth);
         return new RestOptionsRow(width, OptionsHeight, scale, (canvasWidth - width * scale) * 0.5f, canvasHeight - OptionsBottomInset);
+    }
+
+    // ---- wrapped rows --------------------------------------------------------------------------------------------------
+
+    /// <summary>The natural width of a row of this many of the game's buttons.</summary>
+    public static float NaturalRowWidth(int count) =>
+        count * NativeOptionWidth + Math.Max(0, count - 1) * NativeOptionSeparation;
+
+    /// <summary>
+    /// How many rows the options take: one while four or fewer fit a single row at a finger-sized button, otherwise balanced
+    /// rows of at most four (five options are 3 + 2, eleven are 4 + 4 + 3).
+    /// </summary>
+    public static int OptionsRowCount(int count)
+    {
+        if (count <= 0) return 0;
+        if (count <= MaxOptionsPerRow) return 1;
+        return (count + MaxOptionsPerRow - 1) / MaxOptionsPerRow;
+    }
+
+    /// <summary>The options in one wrapped row; the first rows take the remainder, so no row is left nearly empty.</summary>
+    public static int OptionsInRow(int count, int row)
+    {
+        int rows = OptionsRowCount(count);
+        if (rows <= 1) return count;
+        int each = count / rows;
+        return each + (row < count % rows ? 1 : 0);
+    }
+
+    /// <summary>
+    /// The scale of every wrapped row: the widest row fits the canvas with <see cref="OptionsGridMargin"/> on each side, and
+    /// never grows past the 44 point button.
+    /// </summary>
+    public static float OptionsGridScale(int count, float canvasWidth)
+    {
+        int widest = Math.Max(1, OptionsInRow(count, 0));
+        float fit = (canvasWidth - 2f * OptionsGridMargin) / NaturalRowWidth(widest);
+        return Math.Min(MinOptionScale, Math.Max(fit, 0.05f));
+    }
+
+    /// <summary>How tall the wrapped row is drawn, from the top row's box to the bottom row's box.</summary>
+    public static float OptionsGridHeight(int count, float canvasWidth)
+    {
+        int rows = Math.Max(1, OptionsRowCount(count));
+        float scale = OptionsGridScale(count, canvasWidth);
+        return ((rows - 1) * (OptionsHeight + OptionsRowGap) + OptionsHeight) * scale;
+    }
+
+    /// <summary>
+    /// Fills one box per wrapped row: rows are centred, the bottom row's box top stays exactly where a single row's is
+    /// (<see cref="OptionsBottomInset"/> above the safe bottom) and the rest stack above it. More than eight rows is not a
+    /// layout this screen can take, so the caller's buffer is never overrun.
+    /// </summary>
+    public static int OptionsGrid(int count, float canvasWidth, float canvasHeight, Span<RestOptionsRow> rows)
+    {
+        int rowCount = OptionsRowCount(count);
+        if (rowCount <= 0 || rows.Length == 0) return 0;
+        rowCount = Math.Min(rowCount, rows.Length);
+        float scale = OptionsGridScale(count, canvasWidth);
+        float pitch = (OptionsHeight + OptionsRowGap) * scale;
+        float bottomRow = canvasHeight - OptionsBottomInset;
+        for (int row = 0; row < rowCount; row++)
+        {
+            int inRow = OptionsInRow(count, row);
+            float natural = NaturalRowWidth(inRow);
+            float width = OptionsWidth(inRow, natural);
+            rows[row] = new RestOptionsRow(
+                width, OptionsHeight, scale, (canvasWidth - width * scale) * 0.5f, bottomRow - (rowCount - 1 - row) * pitch);
+        }
+        return rowCount;
     }
 
     // ---- the question and the copy -------------------------------------------------------------------------------------

@@ -30,7 +30,7 @@ internal sealed partial class PortraitBetweenLayout
     private const string RestUnderdocksBackgroundName = "RestSiteBG2";
     private const string RestWaterSourceName = "RestSiteBG";
 
-    /// <summary>One rest room's framed nodes, covers and the canvas they were framed for.</summary>
+    /// <summary>One rest room's framed nodes, covers, the wrapped options row and the canvas they were framed for.</summary>
     private sealed class RestState
     {
         public Vector2 Canvas;
@@ -41,6 +41,10 @@ internal sealed partial class PortraitBetweenLayout
         public ulong UnderlayNode;
         public ulong WaterNode;
         public readonly Dictionary<ulong, RestFramed> Items = new();
+        /// <summary>The choices row while its options are wrapped: the box this file gives it and the re-sort handler.</summary>
+        public ulong Choices;
+        public Action? Sorted;
+        public Vector2 GridCanvas;
     }
 
     /// <summary>A node's own place, scale and pivot, before this file reframed it.</summary>
@@ -84,8 +88,8 @@ internal sealed partial class PortraitBetweenLayout
             state = new RestState();
             _restStates[id] = state;
         }
-        LayoutRestChoices(room, canvas);
-        LayoutRestText(room, canvas);
+        float headerTop = LayoutRestChoices(room, state, canvas);
+        LayoutRestText(room, canvas, headerTop);
         if (!state.Framed || !state.Canvas.IsEqualApprox(canvas)) ApplyRestArt(room, state, canvas);
     }
 
@@ -100,6 +104,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         foreach (RestState state in _restStates.Values)
         {
+            DisconnectRestSort(state);
             foreach (RestFramed framed in state.Items.Values)
             {
                 if (GodotObject.InstanceFromId(framed.Id) is not CanvasItem item || !GodotObject.IsInstanceValid(item)) continue;
@@ -125,30 +130,152 @@ internal sealed partial class PortraitBetweenLayout
 
     // ---- the options row -----------------------------------------------------------------------------------------
 
-    private void LayoutRestChoices(Control room, Vector2 canvas)
+    /// <summary>
+    /// Lays the options out and returns the top the question stands above. Up to four options stay in the game's own row;
+    /// more wrap into balanced rows of at most four, because a single row cannot keep a finger-sized button. The buttons are
+    /// never moved: they stay the game's children, so its own rebuild, disable and focus code keeps working. Godot 4.5's
+    /// <c>Container</c> emits <c>sort_children</c> after the box fit (<c>scene/gui/container.cpp</c>), so the handler this
+    /// file connects re-places the buttons on that signal, after every native re-sort including the game's rebuild.
+    /// </summary>
+    private float LayoutRestChoices(Control room, RestState state, Vector2 canvas)
     {
-        if (room.GetNodeOrNull<Control>("%ChoicesContainer") is not { } choices) return;
-        int count = 0;
-        foreach (Node child in choices.GetChildren())
+        float pinnedTop = canvas.Y - PortraitRestMath.OptionsBottomInset;
+        if (room.GetNodeOrNull<Container>("%ChoicesContainer") is not { } choices) return pinnedTop;
+        int count = RestOptionCount(choices);
+        if (count <= 0) return pinnedTop;
+        if (PortraitRestMath.OptionsRowCount(count) <= 1)
         {
-            if (child is not Control button) continue;
-            count++;
-            StyleRestOptionLabel(button);
+            DisconnectRestSort(state);
+            for (int i = 0; i < choices.GetChildCount(); i++)
+                if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) StyleRestOptionLabel(button);
+            RestOptionsRow row = PortraitRestMath.OptionsRow(count, choices.GetCombinedMinimumSize().X, canvas.X, canvas.Y);
+            bool placed = Mathf.IsEqualApprox(choices.Scale.X, row.Scale)
+                && Mathf.IsEqualApprox(choices.Size.X, row.Width) && Mathf.IsEqualApprox(choices.Size.Y, row.Height)
+                && Mathf.IsEqualApprox(choices.Position.X, row.X) && Mathf.IsEqualApprox(choices.Position.Y, row.Y)
+                && choices.PivotOffset.LengthSquared() < 0.0001f
+                && choices.AnchorLeft == 0f && choices.AnchorTop == 0f && choices.AnchorRight == 0f && choices.AnchorBottom == 0f;
+            if (!placed)
+            {
+                Capture(choices, captureVisible: false);
+                choices.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+                choices.Size = new Vector2(row.Width, row.Height);
+                choices.Position = new Vector2(row.X, row.Y);
+                choices.PivotOffset = Vector2.Zero;
+                choices.Scale = new Vector2(row.Scale, row.Scale);
+            }
+            return row.Y;
         }
-        if (count == 0) return;
-        RestOptionsRow row = PortraitRestMath.OptionsRow(count, choices.GetCombinedMinimumSize().X, canvas.X, canvas.Y);
-        bool placed = Mathf.IsEqualApprox(choices.Scale.X, row.Scale)
-            && Mathf.IsEqualApprox(choices.Size.X, row.Width) && Mathf.IsEqualApprox(choices.Size.Y, row.Height)
-            && Mathf.IsEqualApprox(choices.Position.X, row.X) && Mathf.IsEqualApprox(choices.Position.Y, row.Y)
+        return LayoutRestRows(state, choices, count, canvas);
+    }
+
+    /// <summary>
+    /// Gives the game's row the wrapped grid's box and returns its top. The row's own width stays as the game made it (one
+    /// line of all its buttons), which is at least the widest wrapped row; only its height takes the grid's, so its rect
+    /// covers every row. The buttons inside are placed by <see cref="PlaceRestGrid"/> after each native re-sort.
+    /// </summary>
+    private float LayoutRestRows(RestState state, Container choices, int count, Vector2 canvas)
+    {
+        state.GridCanvas = canvas;
+        RestOptionsRow first = RestGridFirst(count, canvas);
+        float height = RestGridHeightUnits(count);
+        bool placed = Mathf.IsEqualApprox(choices.Scale.X, first.Scale)
+            && Mathf.IsEqualApprox(choices.Position.X, first.X) && Mathf.IsEqualApprox(choices.Position.Y, first.Y)
+            && Mathf.IsEqualApprox(choices.Size.Y, height)
             && choices.PivotOffset.LengthSquared() < 0.0001f
             && choices.AnchorLeft == 0f && choices.AnchorTop == 0f && choices.AnchorRight == 0f && choices.AnchorBottom == 0f;
-        if (placed) return;
-        Capture(choices, captureVisible: false);
-        choices.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
-        choices.Size = new Vector2(row.Width, row.Height);
-        choices.Position = new Vector2(row.X, row.Y);
-        choices.PivotOffset = Vector2.Zero;
-        choices.Scale = new Vector2(row.Scale, row.Scale);
+        if (!placed)
+        {
+            Capture(choices, captureVisible: false);
+            choices.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+            choices.Size = new Vector2(choices.Size.X, height);
+            choices.Position = new Vector2(first.X, first.Y);
+            choices.PivotOffset = Vector2.Zero;
+            choices.Scale = new Vector2(first.Scale, first.Scale);
+        }
+        if (state.Sorted == null || state.Choices != choices.GetInstanceId())
+        {
+            DisconnectRestSort(state);
+            state.Choices = choices.GetInstanceId();
+            state.Sorted = () => PlaceRestGrid(state);
+            choices.SortChildren += state.Sorted;
+        }
+        // The grid can change without a re-sort (a new canvas); placing it again is idempotent and allocates nothing.
+        PlaceRestGrid(state);
+        for (int i = 0; i < choices.GetChildCount(); i++)
+            if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) StyleRestOptionLabel(button);
+        return first.Y;
+    }
+
+    /// <summary>
+    /// The <c>sort_children</c> handler: after the game's box has fitted its buttons into one line, place each in its grid
+    /// cell. It runs during the sort, so it allocates nothing and writes only the rects that differ.
+    /// </summary>
+    private void PlaceRestGrid(RestState state)
+    {
+        if (GodotObject.InstanceFromId(state.Choices) is not Container choices || !GodotObject.IsInstanceValid(choices)) return;
+        int total = choices.GetChildCount();
+        int count = RestOptionCount(choices);
+        if (count <= PortraitRestMath.MaxOptionsPerRow) return;
+        int rows = PortraitRestMath.OptionsRowCount(count);
+        Span<RestOptionsRow> boxes = stackalloc RestOptionsRow[rows];
+        int placedRows = PortraitRestMath.OptionsGrid(count, state.GridCanvas.X, state.GridCanvas.Y, boxes);
+        float widest = boxes[0].Width;
+        float pitch = PortraitRestMath.OptionsHeight + PortraitRestMath.OptionsRowGap;
+        int index = 0;
+        for (int row = 0; row < placedRows; row++)
+        {
+            int inRow = PortraitRestMath.OptionsInRow(count, row);
+            float start = (widest - PortraitRestMath.NaturalRowWidth(inRow)) * 0.5f;
+            float top = row * pitch;
+            for (int column = 0; column < inRow; column++)
+            {
+                while (index < total && (choices.GetChild(index) is not Control live || live.IsQueuedForDeletion())) index++;
+                if (index >= total) return;
+                var button = (Control)choices.GetChild(index);
+                index++;
+                float x = start + column * (PortraitRestMath.NativeOptionWidth + PortraitRestMath.NativeOptionSeparation);
+                if (!Mathf.IsEqualApprox(button.Position.X, x) || !Mathf.IsEqualApprox(button.Position.Y, top))
+                    button.Position = new Vector2(x, top);
+                if (!Mathf.IsEqualApprox(button.Size.X, PortraitRestMath.NativeOptionWidth)
+                    || !Mathf.IsEqualApprox(button.Size.Y, PortraitRestMath.OptionsHeight))
+                    button.Size = new Vector2(PortraitRestMath.NativeOptionWidth, PortraitRestMath.OptionsHeight);
+            }
+        }
+    }
+
+    /// <summary>The option buttons the game has in its row: its rebuild queues the old ones for deletion in the same frame.</summary>
+    private static int RestOptionCount(Container choices)
+    {
+        int count = 0;
+        for (int i = 0; i < choices.GetChildCount(); i++)
+            if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) count++;
+        return count;
+    }
+
+    /// <summary>The first wrapped row's box: where the row container goes and at what scale.</summary>
+    private static RestOptionsRow RestGridFirst(int count, Vector2 canvas)
+    {
+        Span<RestOptionsRow> boxes = stackalloc RestOptionsRow[1];
+        PortraitRestMath.OptionsGrid(count, canvas.X, canvas.Y, boxes);
+        return boxes[0];
+    }
+
+    /// <summary>The wrapped grid's height in the buttons' own units, from the top row's box to the bottom row's box.</summary>
+    private static float RestGridHeightUnits(int count) =>
+        (PortraitRestMath.OptionsRowCount(count) - 1) * (PortraitRestMath.OptionsHeight + PortraitRestMath.OptionsRowGap)
+        + PortraitRestMath.OptionsHeight;
+
+    /// <summary>Stops re-placing the row's buttons and asks the game's box to lay them out again as one line.</summary>
+    private static void DisconnectRestSort(RestState state)
+    {
+        if (state.Sorted == null) return;
+        if (GodotObject.InstanceFromId(state.Choices) is Container container && GodotObject.IsInstanceValid(container))
+        {
+            container.SortChildren -= state.Sorted;
+            container.QueueSort();
+        }
+        state.Sorted = null;
+        state.Choices = 0;
     }
 
     /// <summary>The label under an option is set in the button's own units, so it grows with the row and reads large enough for a phone.</summary>
@@ -162,10 +289,10 @@ internal sealed partial class PortraitBetweenLayout
 
     // ---- the question and the copy -------------------------------------------------------------------------------
 
-    private void LayoutRestText(Control room, Vector2 canvas)
+    private void LayoutRestText(Control room, Vector2 canvas, float rowTop)
     {
         if (room.GetNodeOrNull<Control>("%Header") is { } header)
-            PlaceRestText(header, PortraitRestMath.Header(canvas.Y - PortraitRestMath.OptionsBottomInset, canvas.X),
+            PlaceRestText(header, PortraitRestMath.Header(rowTop, canvas.X),
                 PortraitRestMath.HeaderFontSize, rich: false, move: true);
         if (room.GetNodeOrNull<Control>("%Description") is { } description)
         {
