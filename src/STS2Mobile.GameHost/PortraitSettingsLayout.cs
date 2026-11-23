@@ -64,9 +64,9 @@ internal sealed class PortraitSettingsLayout
     private static readonly string[] RichFontKeys =
         ["normal_font_size", "bold_font_size", "italics_font_size", "bold_italics_font_size", "mono_font_size"];
 
-    // The game's dropdown list is 600 units tall; at the panel's scale that is 930 units, and it is never drawn taller than
-    // the rows area it opens in.
-    private const float DropdownHeight = 600f;
+    // TouchSpire's dropdown list is 600 units tall on its 1680 canvas: 386 drawn here (x 0.643), three 44 point rows, and
+    // never taller than the rows area it opens in.
+    private const float DropdownHeight = 386f;
     private const float DropdownMargin = 8f;
 
     // A drag starts after 28 units (about 10 points), up or down, wherever it began in the rows; <see cref="SwipeMath"/>
@@ -79,9 +79,6 @@ internal sealed class PortraitSettingsLayout
     // stays inside 1080.
     private const float FeedbackDesignWidth = 540f;
     private const float FeedbackBottomMargin = 40f;
-    // The back button's art hangs 40 units past the left edge by design; twice over that is past the audit's allowance, so in
-    // portrait it starts at the edge instead.
-    private const float BackButtonWidth = 200f;
 
     /// <summary>One settings screen: the rows area, its scroll, and the dropdowns and sliders in its panels.</summary>
     private sealed class ScreenState
@@ -560,6 +557,9 @@ internal sealed class PortraitSettingsLayout
                 GodotObject.IsInstanceValid(target))
                 _scrollDragging?.SetValue(target, false);
             Release();
+            // The finger lift is the swipe's, not a tap: the list item or tickbox it ends over must not act on it, even
+            // when press, drag and release arrive in one frame.
+            _tree?.Root.SetInputAsHandled();
         }
         _down = false;
         _dragging = false;
@@ -632,23 +632,26 @@ internal sealed class PortraitSettingsLayout
                 GrowHeight(item, row);
             }
         }
-        Rect2 button = dropdown.GetGlobalRect();
+        Rect2 buttonRect = dropdown.GetGlobalRect();
+        Rect2 button = buttonRect;
         float below = bounds.End.Y - button.End.Y;
         float above = button.Position.Y - bounds.Position.Y;
-        bool useBelow = below >= DropdownHeight * scale || below >= above;
+        // 386 drawn units are TouchSpire's 600 unit list on its 1680 canvas (x 0.643): three 44 point rows.
+        bool useBelow = below >= DropdownHeight || below >= above;
         float room = Math.Max(useBelow ? below : above, 0f);
-        float maxHeight = MathF.Min(DropdownHeight, room / scale);
+        float maxHeight = MathF.Min(DropdownHeight / scale, room / scale);
         if (_listMaxHeight?.GetValue(list) is not float current || Math.Abs(current - maxHeight) > 0.5f)
         {
             Capture(list, captureVisible: false);
             _listMaxHeight?.SetValue(list, maxHeight);
             if (list.HasMethod("RefreshLayout")) list.Call("RefreshLayout");
         }
-        Vector2 size = list.Size;
+        // The list is a child of the scaled panel: its size is in local units, the bounds and the button's rect are drawn.
+        Vector2 drawn = list.GetGlobalRect().Size;
         var position = new Vector2(
-            Math.Clamp(button.Position.X + (button.Size.X - size.X) / 2f, bounds.Position.X + DropdownMargin,
-                Math.Max(bounds.Position.X + DropdownMargin, bounds.End.X - size.X - DropdownMargin)),
-            useBelow ? button.End.Y : button.Position.Y - size.Y);
+            Math.Clamp(buttonRect.GetCenter().X - drawn.X / 2f, bounds.Position.X + DropdownMargin,
+                Math.Max(bounds.Position.X + DropdownMargin, bounds.End.X - drawn.X - DropdownMargin)),
+            useBelow ? button.End.Y : button.Position.Y - drawn.Y);
         if (list.GlobalPosition.DistanceTo(position) > 0.5f)
         {
             Capture(list, captureVisible: false);
@@ -689,17 +692,12 @@ internal sealed class PortraitSettingsLayout
     }
 
     /// <summary>
-    /// The back button and the touch areas, once the screen is shown and its own containers have laid it out: the screen is
-    /// created hidden, and a hidden container gives its children no size to measure.
+    /// The touch areas, once the screen is shown and its own containers have laid it out: the screen is created hidden, and a
+    /// hidden container gives its children no size to measure. Its back button is placed by <see cref="PortraitNavigationPads"/>,
+    /// which owns every back button.
     /// </summary>
     private void PrepareFeedback(Control screen, float scale, float capHeight)
     {
-        if (screen.GetNodeOrNull<Control>("BackButton") is { } back)
-        {
-            Capture(back, captureVisible: false);
-            back.OffsetLeft = 0f;
-            back.OffsetRight = BackButtonWidth;
-        }
         foreach (Node node in Traverse(screen))
             if (_dropdownType != null && _dropdownType.IsInstanceOfType(node)) RegisterDropdown((Control)node, area: 0);
         PadTargets(screen, scale);

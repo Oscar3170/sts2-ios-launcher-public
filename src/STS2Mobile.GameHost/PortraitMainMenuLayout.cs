@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using Godot;
+using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using STS2Mobile.Platform;
 
@@ -24,6 +25,8 @@ internal sealed class PortraitMainMenuLayout
     private const string ReticleRightPath = "%ButtonReticleRight";
     private const string ProfileName = "ChangeProfileButton";
     private const string ProfileRowName = "HBoxContainer";
+    private const string ProfileTitlePath = "MarginContainer/VBoxContainer/Title";
+    private const string ProfileDescriptionPath = "MarginContainer/VBoxContainer/Description";
     private const string NotesName = "PatchNotesButton";
     private const string NotesIconName = "Icon";
     private const string ReleasePath = "%ReleaseInfo";
@@ -312,7 +315,8 @@ internal sealed class PortraitMainMenuLayout
         ulong buttonId = button.GetInstanceId();
         // The game defers its own caret placement for a focused button. Defer ours too: the queue is first in, first out, so
         // this runs after the game's handler and replaces the positions it computed from the desktop label's rect.
-        button.Connect("Focused", Callable.From(() => Callable.From(() => FocusCarets(menuId, buttonId)).CallDeferred()));
+        button.Connect("Focused", Callable.From<NClickableControl>(_ =>
+            Callable.From(() => FocusCarets(menuId, buttonId)).CallDeferred()));
     }
 
     /// <summary>
@@ -412,8 +416,8 @@ internal sealed class PortraitMainMenuLayout
 
     /// <summary>
     /// The profile row, the release-notes button, the version label and the mod status, moved under the safe cap. The two
-    /// buttons become 44 point touch targets; the profile's own name and description are drawn 1.8 times their desktop size
-    /// so they read, and the version and mod status are fine print at 8 points.
+    /// buttons become 44 point touch targets; the profile's own name and description are drawn at 11 points, and the version
+    /// and mod status are fine print at 8 points.
     /// </summary>
     private void LayoutUtilities(NMainMenu menu, float capHeight, Vector2 canvas, MenuState state)
     {
@@ -436,20 +440,21 @@ internal sealed class PortraitMainMenuLayout
         {
             Capture(profile, captureVisible: false);
             var content = Vector2.Zero;
-            float scale = 1f;
             if (profile.GetNodeOrNull<HBoxContainer>(ProfileRowName) is { } row)
             {
                 Capture(row, captureVisible: false);
                 WireProfileRow(row, menu.GetInstanceId());
+                // The row keeps the native 1x shape (and its 1.02 hover tween); the name and description carry the size.
+                if (row.GetNodeOrNull<Label>(ProfileTitlePath) is { } title)
+                    SetLabelFont(title, PortraitMainMenuMath.ProfileFontSize);
+                if (row.GetNodeOrNull<Label>(ProfileDescriptionPath) is { } description)
+                    SetLabelFont(description, PortraitMainMenuMath.ProfileFontSize);
                 content = row.GetCombinedMinimumSize();
-                scale = PortraitMainMenuMath.ProfileScale(target, content.X, content.Y, canvas.X);
                 row.Size = content;
-                row.Scale = new Vector2(scale, scale);
-                row.PivotOffset = Vector2.Zero;
                 row.Position = new Vector2(PortraitMainMenuMath.ProfilePadding,
-                    (target - content.Y * scale) * 0.5f);
+                    (target - content.Y) * 0.5f);
             }
-            float width = Math.Max(target, content.X * scale + 2f * PortraitMainMenuMath.ProfilePadding);
+            float width = Math.Max(target, content.X + 2f * PortraitMainMenuMath.ProfilePadding);
             Place(profile, new Vector2(inset, top), new Vector2(width, target));
             profile.PivotOffset = new Vector2(width, target) * 0.5f;
         }
@@ -488,7 +493,7 @@ internal sealed class PortraitMainMenuLayout
                 if (state.ModStatusOriginalIndex < 0) state.ModStatusOriginalIndex = modded.GetIndex();
                 menu.MoveChild(modded, column.GetIndex());
             }
-            LayoutModDetails(menu, capHeight, canvas, box.Y + height);
+            LayoutModDetails(menu, capHeight, canvas, box.Y);
         }
     }
 

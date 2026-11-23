@@ -180,6 +180,8 @@ internal sealed class PortraitGameOverLayout
         public bool SummaryTinted;
         public float SummaryScale = 1f;
         public float SummaryView, SummaryContent, SummaryMax, SummaryScroll;
+        public bool RefitBusy;
+        public readonly List<ulong> RefitNodes = new(3);
         public bool CenterClip;
         public Control.MouseFilterEnum CenterFilter;
         public Action? CenterSort;
@@ -568,11 +570,19 @@ internal sealed class PortraitGameOverLayout
         state.SummaryScale = MathF.Min(SummaryMaxScale,
             MathF.Max(0.2f, (state.Canvas.X - 2f * SummarySide) / SummaryContentWidth));
         center.Scale = new Vector2(state.SummaryScale, state.SummaryScale);
+        // Its own size changes as its score lines, badges and discoveries arrive, at every level between the score grid and
+        // the window: each of them asks for the measurement again, so the scroll range is never left behind.
         Action refit = () => RefitSummary(state);
         state.Refit = refit;
-        center.MinimumSizeChanged += refit;
+        state.RefitNodes.Clear();
+        foreach (Control? hook in new[] { center, summary, center.GetNodeOrNull<Control>("%ScoreLineContainer") })
+        {
+            if (hook == null || !GodotObject.IsInstanceValid(hook)) continue;
+            hook.MinimumSizeChanged += refit;
+            state.RefitNodes.Add(hook.GetInstanceId());
+        }
         // The game's own CenterContainer places its child every time it sorts: the column's offset is put back after it.
-        Action sort = () => ApplySummaryScroll(state);
+        Action sort = () => RefitSummary(state);
         state.CenterSort = sort;
         if (center is Container box) box.SortChildren += sort;
         state.Built = true;
@@ -581,17 +591,30 @@ internal sealed class PortraitGameOverLayout
         GD.Print($"Portrait game over: the run summary scrolls in place at {state.SummaryScale:F3} of the game's size.");
     }
 
-    /// <summary>The game's summary grows as its score lines, badges and discoveries arrive: the window's range follows it.</summary>
+    /// <summary>
+    /// The game's summary grows as its score lines, badges and discoveries arrive: the window's range and the column's
+    /// offset follow it. The window's height is the one the screen set (a container cannot be made smaller than its child,
+    /// so its own size is not what is on screen), and the column's height is its own minimum.
+    /// </summary>
     private void RefitSummary(State state)
     {
+        if (state.RefitBusy) return;
         if (Live(state.Center) is not Control center) return;
         if (Live(state.Summary) is not Control summary) return;
-        state.SummaryView = center.Size.Y;
-        state.SummaryContent = MathF.Max(1f, summary.GetCombinedMinimumSize().Y);
-        state.SummaryMax = MathF.Max(0f, state.SummaryContent - state.SummaryView);
-        state.SummaryScroll = Math.Clamp(state.SummaryScroll, 0f, state.SummaryMax);
-        ApplySummaryScroll(state);
-        PadSummaryChips(center);
+        state.RefitBusy = true;
+        try
+        {
+            if (state.SummaryView <= 0f) state.SummaryView = center.Size.Y;
+            state.SummaryContent = MathF.Max(1f, MathF.Max(summary.GetCombinedMinimumSize().Y, summary.Size.Y));
+            state.SummaryMax = MathF.Max(0f, state.SummaryContent - state.SummaryView);
+            state.SummaryScroll = Math.Clamp(state.SummaryScroll, 0f, state.SummaryMax);
+            ApplySummaryScroll(state);
+            PadSummaryChips(center);
+        }
+        finally
+        {
+            state.RefitBusy = false;
+        }
     }
 
     /// <summary>
@@ -677,9 +700,12 @@ internal sealed class PortraitGameOverLayout
     private void BeginSummaryDrag(State state, Vector2 point)
     {
         EndSummaryDrag(state);
-        if (state.SummaryMax <= 0.5f) return;
         if (Live(state.Center) is not Control window || !window.GetGlobalRect().HasPoint(point)) return;
         if (Live(state.Summary) is not Control summary || !summary.IsVisibleInTree()) return;
+        // The column may have grown since the last measurement (its own minimum changed): measure again before deciding
+        // that there is nothing to scroll.
+        RefitSummary(state);
+        if (state.SummaryMax <= 0.5f) return;
         _dragDown = true;
         _dragMoving = false;
         _dragStartY = point.Y;
@@ -815,6 +841,9 @@ internal sealed class PortraitGameOverLayout
         // The window is the CenterContainer itself: its rect is the window in its own (scaled) units, so the clip and the
         // column drawn at 1.337 are exactly the screen's width.
         var size = new Vector2(width / state.SummaryScale, MathF.Max(1f, height / state.SummaryScale));
+        // The screen's own window height, not the container's: a container may be taller than the window it is told to be
+        // once its column has grown past it, and the clip stays where it was placed.
+        state.SummaryView = size.Y;
         if (!center.Position.IsEqualApprox(at) || !center.Size.IsEqualApprox(size))
         {
             center.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
@@ -1004,7 +1033,10 @@ internal sealed class PortraitGameOverLayout
             quote.MinimumSizeChanged -= quoteFit;
         if (state.VictoryFit is { } victoryFit && Live(state.Victory) is RichTextLabel victory)
             victory.MinimumSizeChanged -= victoryFit;
-        if (state.Refit is { } refit && Live(state.Center) is Control center) center.MinimumSizeChanged -= refit;
+        if (state.Refit is { } refit)
+            foreach (ulong id in state.RefitNodes)
+                if (GodotObject.InstanceFromId(id) is Control hooked && GodotObject.IsInstanceValid(hooked))
+                    hooked.MinimumSizeChanged -= refit;
 
         foreach (Tween tween in state.ActorTweens.Values)
             if (GodotObject.IsInstanceValid(tween)) tween.Kill();

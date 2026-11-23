@@ -11,8 +11,9 @@ namespace STS2Mobile.GameHost;
 /// each is drawn on a 1680 unit virtual canvas that fills the portrait width (the canvas the reference rules were measured
 /// on) and laid out from the top of the safe band: the singleplayer mode cards wrap two to a row with the reference card
 /// interior, character select (and Blitz and Dread) lay the roster out four to a row and frame the character art over the
-/// screen with the figure separate from the backdrop, and the info panel, ascension panel and confirm button take their
-/// measured places. Every edit is captured first so turning Portrait Mode off restores the desktop layout live.
+/// screen (a separate backdrop scene where the character has one, otherwise a figure-biased cover), and the info panel,
+/// ascension panel and confirm button take their measured places. Every edit is captured first so turning Portrait Mode off
+/// restores the desktop layout live.
 /// </summary>
 internal sealed partial class PortraitMenuLayout
 {
@@ -93,24 +94,35 @@ internal sealed partial class PortraitMenuLayout
         return state;
     }
 
+    private readonly HashSet<string> _reportedLayoutErrors = new();
+
     private void Layout(Control screen, ScreenState state, float capHeight, Vector2 canvas)
     {
-        Fit(screen, state, capHeight, canvas);
-        switch (state.TypeName)
+        try
         {
-            case SingleplayerTypeName:
-            case MultiplayerHostTypeName:
-                LayoutModeCards(screen, state);
-                break;
-            case CharacterSelectTypeName:
-            case BlitzTypeName:
-                LayoutCharacterSelect(screen, state);
-                FrameArt(screen, "AnimatedBg");
-                break;
-            case DreadTypeName:
-                LayoutDread(screen, state);
-                FrameArt(screen, "SubViewportContainer/SubViewport/AnimatedBg");
-                break;
+            Fit(screen, state, capHeight, canvas);
+            switch (state.TypeName)
+            {
+                case SingleplayerTypeName:
+                case MultiplayerHostTypeName:
+                    LayoutModeCards(screen, state);
+                    break;
+                case CharacterSelectTypeName:
+                case BlitzTypeName:
+                    LayoutCharacterSelect(screen, state);
+                    FrameArt(screen, "AnimatedBg");
+                    break;
+                case DreadTypeName:
+                    LayoutDread(screen, state);
+                    FrameArt(screen, "SubViewportContainer/SubViewport/AnimatedBg");
+                    break;
+            }
+        }
+        catch (Exception error)
+        {
+            // A layout fault must not take the game down: log the first error per screen type and leave the screen usable.
+            if (_reportedLayoutErrors.Add(state.TypeName))
+                GD.PrintErr($"Portrait menu: {state.TypeName} layout stopped: {error}");
         }
     }
 
@@ -194,11 +206,13 @@ internal sealed partial class PortraitMenuLayout
     private void PlaceBackButton(Control screen, ScreenState state)
     {
         Control? back = screen.GetNodeOrNull<Control>("BackButton") ?? screen.GetNodeOrNull<Control>("%BackButton");
-        if (back == null) return;
+        if (back == null || back.Size.Y < 1f) return;
+        // The game hangs the art past the screen's left edge. On the phone that leaves the only back target partly off
+        // canvas (and a tap at its centre in the window's edge); keep the whole button on the canvas instead.
         Vector2 show, hide;
         if (GetField(back, "_posOffset") is Vector2 offset)
         {
-            show = new Vector2(-offset.X, screen.Size.Y - offset.Y);
+            show = new Vector2(Mathf.Max(0f, -offset.X), Mathf.Min(screen.Size.Y - offset.Y, screen.Size.Y - back.Size.Y));
             hide = show + new Vector2(-180f, 0f);
         }
         else
@@ -206,6 +220,11 @@ internal sealed partial class PortraitMenuLayout
             show = new Vector2(0f, screen.Size.Y - back.Size.Y - 20f);
             hide = show - new Vector2(180f, 0f);
         }
+        show.Y = Mathf.Max(0f, show.Y);
+        // Nothing on the screen may cover the back target: last child wins the GUI hit test. Moving a node within its own
+        // parent does not exit the tree, so the button keeps its connections.
+        if (back.GetParent() is Control parent && !PhoneHitArea.IsContainer(parent) && back.GetIndex() != parent.GetChildCount() - 1)
+            parent.MoveChild(back, parent.GetChildCount() - 1);
         bool first = !state.BackPlaced;
         if (GetField(back, "_showPos") is not Vector2 shown || shown.DistanceSquaredTo(show) > 0.5f)
             SetField(back, "_showPos", show);

@@ -61,17 +61,9 @@ public class PortraitMainMenuMathTests
     }
 
     [Fact]
-    public void ProfileRowIsDrawnLargeEnoughToRead()
+    public void ProfileTextIsDrawnLargeEnoughToRead()
     {
-        float scale = PortraitMainMenuMath.ProfileScale(127f, 228f, 52f, 1080f);
-        Assert.Equal(1.8f, scale, 3);
-        // The description's 18 unit font is 11 points at that scale (2.88 units to a point).
-        Assert.True(18f * scale / (1080f / 375f) >= 11f);
-    }
-
-    [Fact]
-    public void WideProfileRowShrinksToTheButton()
-    {
-        Assert.Equal(511.2f / 400f, PortraitMainMenuMath.ProfileScale(127f, 400f, 52f, 1080f), 3);
+        // 32 units are 11.1 points (2.88 units to a point).
+        Assert.True(PortraitMainMenuMath.ProfileFontSize / (1080f / 375f) >= 11f);
     }
 }

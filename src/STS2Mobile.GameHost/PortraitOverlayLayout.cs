@@ -35,6 +35,8 @@ internal sealed class PortraitOverlayLayout
     public const string VerticalPopupTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NVerticalPopup";
     private const float PopupMaxScale = 1.8f;
     private const float PopupMargin = 40f;
+    /// <summary>A touch target is grown past the minimum, so a measured 127 is not a rounding away from 126.9.</summary>
+    private const float PopupPadMargin = 3f;
 
     // The overlay stack's shared backstop, behind every overlay screen and modal, is a solid 0.85 black; in portrait it is
     // tinted so the room art stays visible around the screen instead of the view becoming a black cut-out.
@@ -54,6 +56,7 @@ internal sealed class PortraitOverlayLayout
     private ulong _backstopId;
     private Color _backstopColor;
     private bool _backstopTinted;
+    private readonly HashSet<ulong> _popupPads = new();
 
     public void ApplyNode(Control control, string typeName, float capHeight, Vector2 canvas)
     {
@@ -81,8 +84,34 @@ internal sealed class PortraitOverlayLayout
         float scale = onScreen / parentScale;
         popup.PivotOffset = new Vector2(width, height) / 2f;
         popup.Scale = new Vector2(scale, scale);
+        SizePopupButtons(popup);
         if (_logged.Add(popup.GetInstanceId()))
             GD.Print($"Portrait overlay: {popup.GetParent()?.Name}/{popup.Name} drawn at {onScreen:F2}.");
+    }
+
+    /// <summary>
+    /// Yes and No are 180 x 72 unit buttons drawn at the popup's scale, which is not quite enough on every shape (the audit
+    /// found 314 x 125.65): each gets a touch area of 44 points as drawn, measured from its own drawn rect so the button's
+    /// picture and the popup's scale stay as they are.
+    /// </summary>
+    private void SizePopupButtons(Control popup)
+    {
+        foreach (string name in new[] { "YesButton", "NoButton" })
+        {
+            if (popup.GetNodeOrNull<Control>(name) is not { } button || !button.Visible) continue;
+            Rect2 drawn = button.GetGlobalRect();
+            Vector2 local = button.Size;
+            if (local.X <= 1f || local.Y <= 1f) continue;
+            float scaleX = Math.Max(drawn.Size.X / local.X, 0.01f);
+            float scaleY = Math.Max(drawn.Size.Y / local.Y, 0.01f);
+            float padX = Math.Max(0f, ((PortraitBands.MinTarget + PopupPadMargin) / scaleX - local.X) / 2f);
+            float padY = Math.Max(0f, ((PortraitBands.MinTarget + PopupPadMargin) / scaleY - local.Y) / 2f);
+            if (padX <= 0f && padY <= 0f) continue;
+            PhoneHitArea.Grow(button, padX, padY, padX, padY);
+            _popupPads.Add(button.GetInstanceId());
+            if (_logged.Add(button.GetInstanceId()))
+                GD.Print($"Portrait overlay: {name} drawn {drawn.Size.X:F0}x{drawn.Size.Y:F0}, touch area +{padX:F1},+{padY:F1}.");
+        }
     }
 
     /// <summary>
@@ -1047,6 +1076,10 @@ internal sealed class PortraitOverlayLayout
     {
         RestoreChoices();
         RestoreOverlayBackstop();
+        foreach (ulong id in _popupPads)
+            if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button))
+                PhoneHitArea.Remove(button);
+        _popupPads.Clear();
         _gameOver.RestoreLandscape();
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))

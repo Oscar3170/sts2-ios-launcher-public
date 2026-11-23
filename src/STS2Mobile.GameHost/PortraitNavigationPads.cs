@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Reflection;
 using Godot;
 using STS2Mobile.Platform;
 
@@ -18,10 +20,18 @@ internal sealed class PortraitNavigationPads
     private const string ScreenPadMeta = "phone_target_pad";
     /// <summary>The control a screen's planner owns, even where it deliberately keeps its own target under the minimum.</summary>
     private const string PlannedControlMeta = "phone_target_planned";
+    private const string ShowPosField = "_showPos";
+    private const string HidePosField = "_hidePos";
+    private const string EnabledField = "_isEnabled";
+    private const string MoveTweenField = "_moveTween";
+    private const BindingFlags AnyField = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
 
     private readonly HashSet<ulong> _tracked = new();
     private readonly Dictionary<ulong, Vector2> _paddedAt = new();
     private readonly List<ulong> _dead = new();
+    private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _originalPositions = new();
+    private static Type? _backType;
+    private static FieldInfo? _showPos, _hidePos, _enabled, _moveTween;
 
     public static bool Handles(string? typeName) => typeName == BackTypeName || typeName == ArrowTypeName;
 
@@ -39,6 +49,7 @@ internal sealed class PortraitNavigationPads
                 continue;
             }
             if (!control.IsVisibleInTree() || control.Size.X < 1f || control.Size.Y < 1f) continue;
+            if (IsBack(control)) PlaceBack(control);
             // A screen layout that owns this control decides its pad: it knows the neighbours and may cap it short on purpose.
             if (control.HasMeta(PlannedControlMeta) || (PhoneHitArea.Of(control) is { } screenPad && screenPad.HasMeta(ScreenPadMeta)))
             {
@@ -73,10 +84,63 @@ internal sealed class PortraitNavigationPads
     public void RestoreLandscape()
     {
         foreach (ulong id in _tracked)
-            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
-                PhoneHitArea.Remove(control);
+        {
+            if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+            PhoneHitArea.Remove(control);
+            if (_originalPositions.TryGetValue(id, out (Vector2 Show, Vector2 Hide) original)) RestoreBack(control, original);
+        }
         _tracked.Clear();
         _paddedAt.Clear();
+        _originalPositions.Clear();
+    }
+
+    /// <summary>Whether this is a back button (they are the only buttons that cache a slide position).</summary>
+    public static bool IsBack(Control control) => control.GetType().FullName == BackTypeName;
+
+    /// <summary>
+    /// The native Back sits with 40 units of its art past the left edge (its cached show position is the offset). Move its
+    /// cached show and hide positions to x = 0 so the slide in lands fully inside the canvas, and settle a button that already
+    /// finished sliding; a slide still running is left to land and corrected the frame it stops.
+    /// </summary>
+    private void PlaceBack(Control control)
+    {
+        if (!EnsureBackFields(control.GetType()) || _showPos is null) return;
+        var show = (Vector2)_showPos.GetValue(control)!;
+        var hide = _hidePos is null ? show : (Vector2)_hidePos.GetValue(control)!;
+        ulong id = control.GetInstanceId();
+        if (!_originalPositions.ContainsKey(id)) _originalPositions[id] = (show, hide);
+        if (show.X < -0.5f)
+        {
+            float shift = -show.X;
+            var shifted = new Vector2(0f, show.Y);
+            var shiftedHide = hide + new Vector2(shift, 0f);
+            _showPos.SetValue(control, shifted);
+            if (_hidePos is not null) _hidePos.SetValue(control, shiftedHide);
+            show = shifted;
+            hide = shiftedHide;
+        }
+        if (_moveTween?.GetValue(control) is Tween tween && tween.IsValid() && tween.IsRunning()) return;
+        bool enabled = _enabled?.GetValue(control) is true;
+        Vector2 target = enabled ? (Vector2)_showPos.GetValue(control)! : (_hidePos is null ? show : (Vector2)_hidePos.GetValue(control)!);
+        if (control.GlobalPosition.DistanceTo(target) > 0.6f) control.GlobalPosition = target;
+    }
+
+    private static void RestoreBack(Control control, (Vector2 Show, Vector2 Hide) original)
+    {
+        if (!EnsureBackFields(control.GetType())) return;
+        _showPos?.SetValue(control, original.Show);
+        _hidePos?.SetValue(control, original.Hide);
+    }
+
+    private static bool EnsureBackFields(Type type)
+    {
+        if (_backType == type) return _showPos is not null;
+        _backType = type;
+        _showPos = type.GetField(ShowPosField, AnyField);
+        _hidePos = type.GetField(HidePosField, AnyField);
+        _enabled = type.GetField(EnabledField, AnyField);
+        _moveTween = type.GetField(MoveTweenField, AnyField);
+        return _showPos is not null;
     }
 
     public void PruneDead()
@@ -84,5 +148,7 @@ internal sealed class PortraitNavigationPads
         _tracked.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in new List<ulong>(_paddedAt.Keys))
             if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _paddedAt.Remove(id);
+        foreach (ulong id in new List<ulong>(_originalPositions.Keys))
+            if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _originalPositions.Remove(id);
     }
 }

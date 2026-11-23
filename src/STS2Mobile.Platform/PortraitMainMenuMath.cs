@@ -46,10 +46,9 @@ public static class PortraitMainMenuMath
     public const int ReleaseFontSize = 24;
     public const int ModStatusFontSize = 24;
 
-    /// <summary>The profile row is drawn up to 1.8 times its desktop size, as the reference's 2.8 does on 1680.</summary>
-    public const float ProfileContentMaxScale = 1.8f;
+    /// <summary>The profile row keeps its desktop shape; its name and description are drawn at 11 points so they read.</summary>
+    public const int ProfileFontSize = 32;
     public const float ProfilePadding = 9f;
-    public const float ProfileMaxWidthFraction = 0.49f;
 
     /// <summary>
     /// The column for <paramref name="count"/> visible rows. The reference starts it at 48% of the screen; the launcher keeps
@@ -75,16 +74,4 @@ public static class PortraitMainMenuMath
     /// <summary>The continue button's run details: the reference scale, clamped so they never reach past the canvas's sides.</summary>
     public static float ContinueInfoScale(float nativeWidth, float canvasWidth) =>
         Math.Min(ContinueScale, Math.Max(0f, canvasWidth - 2f * ContinueSideMargin) / Math.Max(1f, nativeWidth));
-
-    /// <summary>
-    /// The scale the profile row is drawn at: its desktop size times as much as the 44 point button allows, up to the
-    /// reference's 1.8, so the profile name and description stay readable next to the icon and its hotkey badge.
-    /// </summary>
-    public static float ProfileScale(float buttonHeight, float contentWidth, float contentHeight, float canvasWidth)
-    {
-        float room = Math.Max(1f, buttonHeight - 2f * ProfilePadding);
-        float width = Math.Max(1f, canvasWidth * ProfileMaxWidthFraction - 2f * ProfilePadding);
-        return Math.Min(ProfileContentMaxScale,
-            Math.Min(room / Math.Max(1f, contentHeight), width / Math.Max(1f, contentWidth)));
-    }
 }
