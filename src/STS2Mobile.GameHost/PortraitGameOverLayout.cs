@@ -169,6 +169,8 @@ internal sealed class PortraitGameOverLayout
         public Vector2 BannerSize;
         public float BannerBottom;
         public Vector2 BannerShow, BannerHide;
+        public bool BannerRaised;
+        public int BannerZ;
         public bool BannerSlid;
         public bool Built;
         public bool Settled;
@@ -393,6 +395,14 @@ internal sealed class PortraitGameOverLayout
             (Reflection.Value.BannerShow?.GetValue(banner) is not Vector2 shown || shown.IsEqualApprox(banner.GlobalPosition)))
             return;
         Capture(banner);
+        if (!state.BannerRaised)
+        {
+            // The death tableau is drawn under the screen's Ui, but the bodies can still reach the quote's line at 9:16; the
+            // banner is lifted above the whole screen so the quote always stays readable over them.
+            state.BannerRaised = true;
+            state.BannerZ = banner.ZIndex;
+            banner.ZIndex = 6;
+        }
         banner.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.TopLeft);
         banner.PivotOffset = Vector2.Zero;
         banner.Scale = new Vector2(scale, scale);
@@ -655,7 +665,7 @@ internal sealed class PortraitGameOverLayout
         {
             if (state.SummaryView <= 0f) state.SummaryView = center.Size.Y;
             Vector2 minimum = summary.GetCombinedMinimumSize();
-            state.SummaryContent = MathF.Max(1f, MathF.Max(minimum.Y, summary.Size.Y));
+            state.SummaryContent = ContentBottom(summary, MathF.Max(minimum.Y, summary.Size.Y));
             state.SummaryColumnWidth = MathF.Max(1f, minimum.X);
             state.SummaryMax = MathF.Max(0f, state.SummaryContent - state.SummaryView);
             state.SummaryScroll = Math.Clamp(state.SummaryScroll, 0f, state.SummaryMax);
@@ -667,6 +677,27 @@ internal sealed class PortraitGameOverLayout
         {
             state.RefitBusy = false;
         }
+    }
+
+    /// <summary>
+    /// How far the column's content really reaches: the bottom of its last block that is shown. The game's column keeps
+    /// the badges, the score bar and the discovery section in its minimum height even when they hold nothing, and scrolling
+    /// to a range that included them left the last score row an empty column above the window's bottom.
+    /// </summary>
+    private static float ContentBottom(Control column, float fallback)
+    {
+        if (column.GetChildCount() == 1 && column.GetChild(0) is Control blocks)
+        {
+            float bottom = 0f;
+            foreach (Node child in blocks.GetChildren())
+            {
+                if (child is not Control block || !GodotObject.IsInstanceValid(block)) continue;
+                if (!block.Visible || block.Modulate.A < 0.05f || block.Size.Y < 1f) continue;
+                bottom = MathF.Max(bottom, block.Position.Y + block.Size.Y);
+            }
+            if (bottom > 1f) return bottom;
+        }
+        return MathF.Max(1f, fallback);
     }
 
     /// <summary>
@@ -1189,6 +1220,7 @@ internal sealed class PortraitGameOverLayout
         {
             Reflection.Value.BannerShow?.SetValue(banner, state.BannerShow);
             Reflection.Value.BannerHide?.SetValue(banner, state.BannerHide);
+            if (state.BannerRaised) banner.ZIndex = state.BannerZ;
         }
         if (Live(state.SummaryBackstop) is ColorRect tint2)
         {
