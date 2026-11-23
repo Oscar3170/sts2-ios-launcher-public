@@ -230,8 +230,11 @@ internal sealed class PhoneHoverTips
         // A potion's popup is drawn over the middle of the screen; its description is never allowed to cover the Use and
         // Discard buttons, so a column with no room beside the popup is put under it.
         Rect2? popup = PotionPopupOf(ownerControl)?.GetGlobalRect();
-        // Carry the phone scale on the tip set itself; every column is placed relative to it below.
-        float setScale = Mathf.Max(scale, 0.01f);
+        // An event option's tip set carries the phone scale on its root (the phone check reads it there). Every other owner
+        // keeps scale 1: the game positions the set from its own size, so scaling a set it also moves shifts the drawn tip
+        // away from where the columns were fitted (the wrapped relic strip's tips must stay next to their relic).
+        bool scaleSet = ownerControl?.GetType().FullName == "MegaCrit.Sts2.Core.Nodes.Events.NEventOptionButton";
+        float setScale = scaleSet ? Mathf.Max(scale, 0.01f) : 1f;
         if (!Mathf.IsEqualApprox(set.Scale.X, setScale) || !Mathf.IsEqualApprox(set.Scale.Y, setScale))
             set.Scale = new Vector2(setScale, setScale);
         Transform2D toCanvas = set.GetGlobalTransformWithCanvas();
