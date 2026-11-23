@@ -59,6 +59,10 @@ internal sealed partial class PortraitBetweenLayout
         public float HeaderBottom;
         /// <summary>Frames left to retry the energy-icon rewrite while a rebuilt page settles its text.</summary>
         public int IconPassesLeft;
+        /// <summary>Rewards-phase clip bottom and fade band; the crop itself is framed once for the dialogue band.</summary>
+        public float RewardBottom, RewardFadeStart, RewardFadeEnd;
+        /// <summary>The clip bottom and fade band drawn this frame (tweened at the dialogue/rewards edge).</summary>
+        public float ClipBottomNow, FadeStartNow, FadeEndNow;
         public AncientArtFrame Frame;
         public float ContentTop;
         public float ContentWidth;
@@ -129,6 +133,16 @@ internal sealed partial class PortraitBetweenLayout
             state.HeaderBottom = capHeight + PortraitBands.TopBarHeight;
             ConfigureAncientFrame(state, layout, AncientOptionCount(layout));
         }
+        // One crop for the whole event: only the clip and fade bottom move when the rewards are revealed.
+        bool lastLine = layout.GetType().GetProperty("IsDialogueOnLastLine", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?.GetValue(layout) is true;
+        float targetBottom = lastLine ? state.RewardBottom : state.Frame.ClipBottom;
+        float targetFadeStart = lastLine ? state.RewardFadeStart : state.Frame.FadeStart;
+        float targetFadeEnd = lastLine ? state.RewardFadeEnd : state.Frame.FadeEnd;
+        float step = (float)Math.Min(1.0, layout.GetProcessDeltaTime() / 0.3);
+        state.ClipBottomNow = Mathf.Lerp(state.ClipBottomNow, targetBottom, step);
+        state.FadeStartNow = Mathf.Lerp(state.FadeStartNow, targetFadeStart, step);
+        state.FadeEndNow = Mathf.Lerp(state.FadeEndNow, targetFadeEnd, step);
         if (state.ClipId == 0 || GodotObject.InstanceFromId(state.ClipId) is not Control existing || !GodotObject.IsInstanceValid(existing))
             CreateAncientClip(state, layout, bg);
         EnsureAncientArt(state, layout, bg, canvas);
@@ -260,11 +274,21 @@ internal sealed partial class PortraitBetweenLayout
         float optionsHeight = metrics.TotalHeight(Enumerable.Repeat(metrics.RowHeight, Math.Max(optionCount, 0)).ToArray());
         bool compact = state.Canvas.Y <= state.Canvas.X * (16f / 9f) + 1f;
         float focus = PortraitAncientMath.FocusX(AncientBackgroundScene(layout));
-        bool dialogue = layout.GetType().GetProperty("IsDialogueOnLastLine", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?.GetValue(layout) is not true;
+        float artTop = PortraitAncientMath.ArtTop(state.HeaderBottom);
+        // The painting is placed once, for the deeper dialogue band; the rewards band is the same crop with its bottom
+        // pulled up, so nothing in the art's scale or position ever changes during the event.
         state.Frame = PortraitAncientMath.FrameArt(
-            state.Canvas.X, state.Canvas.Y, PortraitAncientMath.ArtTop(state.HeaderBottom), nameplateTop, optionsHeight,
-            PortraitAncientMath.DialogueLineReserve, compact, focus, dialogue);
+            state.Canvas.X, state.Canvas.Y, artTop, nameplateTop, optionsHeight,
+            PortraitAncientMath.DialogueLineReserve, compact, focus, dialogue: true);
+        AncientArtFrame rewards = PortraitAncientMath.FrameArt(
+            state.Canvas.X, state.Canvas.Y, artTop, nameplateTop, optionsHeight,
+            PortraitAncientMath.DialogueLineReserve, compact, focus, dialogue: false);
+        state.RewardBottom = rewards.ClipBottom;
+        state.RewardFadeStart = rewards.FadeStart;
+        state.RewardFadeEnd = rewards.FadeEnd;
+        state.ClipBottomNow = state.Frame.ClipBottom;
+        state.FadeStartNow = state.Frame.FadeStart;
+        state.FadeEndNow = state.Frame.FadeEnd;
 
         // The column holds the dialogue stack over the art; the game later grows it down to the nameplate for the rewards.
         state.ContentWidth = state.Canvas.X - 2f * PortraitAncientMath.ContentSideInset;
@@ -393,7 +417,7 @@ internal sealed partial class PortraitBetweenLayout
         if (state.ClipId == 0 || GodotObject.InstanceFromId(state.ClipId) is not Control clip || !GodotObject.IsInstanceValid(clip))
             return;
         var clipPosition = new Vector2(0f, state.Frame.ClipTop - layout.GlobalPosition.Y);
-        var clipSize = new Vector2(canvas.X, Math.Max(1f, state.Frame.ClipBottom - state.Frame.ClipTop));
+        var clipSize = new Vector2(canvas.X, Math.Max(1f, state.ClipBottomNow - state.Frame.ClipTop));
         if (!clip.Position.IsEqualApprox(clipPosition)) clip.Position = clipPosition;
         if (!clip.Size.IsEqualApprox(clipSize)) clip.Size = clipSize;
 
@@ -448,14 +472,14 @@ internal sealed partial class PortraitBetweenLayout
         if (!fade.GlobalPosition.IsEqualApprox(cover.GlobalPosition)) fade.GlobalPosition = cover.GlobalPosition;
         if (fade.Material is not ShaderMaterial material) return;
         float origin = fade.GlobalPosition.Y;
-        if (!Mathf.IsEqualApprox(state.FadeStart, state.Frame.FadeStart - origin))
+        if (!Mathf.IsEqualApprox(state.FadeStart, state.FadeStartNow - origin))
         {
-            state.FadeStart = state.Frame.FadeStart - origin;
+            state.FadeStart = state.FadeStartNow - origin;
             material.SetShaderParameter("lower_start", state.FadeStart);
         }
-        if (!Mathf.IsEqualApprox(state.FadeEnd, state.Frame.FadeEnd - origin))
+        if (!Mathf.IsEqualApprox(state.FadeEnd, state.FadeEndNow - origin))
         {
-            state.FadeEnd = state.Frame.FadeEnd - origin;
+            state.FadeEnd = state.FadeEndNow - origin;
             material.SetShaderParameter("lower_end", state.FadeEnd);
         }
     }
@@ -536,7 +560,9 @@ internal sealed partial class PortraitBetweenLayout
         const float titleGap = 32f;
         float height = MathF.Max(60f, titleHeight + titleGap + MathF.Max(textSize.Y, 22f) + 8f);
         float width = Math.Clamp(MathF.Max(80f, textSize.X + 8f), 80f, 760f);
-        float left = epithet.Position.X;
+        // The portrait nameplate sits the same inset in from the canvas edge as the reward rows; the banner's own x slide is
+        // stopped above, so this offset stays put.
+        float left = PortraitAncientMath.ContentSideInset - banner.GlobalPosition.X;
         epithet.AnchorLeft = 0f;
         epithet.AnchorTop = 0f;
         epithet.AnchorRight = 0f;
