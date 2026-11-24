@@ -61,6 +61,9 @@ internal sealed class PhoneTouchCards
     /// </summary>
     public static bool HoverFromTouch { get; private set; }
 
+    // A real mouse must keep moving for this long after a touch release before the synthetic hover is handed back.
+    private const int MouseAfterTouchGraceFrames = 10;
+
     /// <summary>
     /// The hand card under a finger that is down in play mode and has not been picked up yet (after
     /// <see cref="TouchCardMath.PickupSlop"/> it is dragging instead); the portrait hand grows this card in place under
@@ -230,10 +233,11 @@ internal sealed class PhoneTouchCards
         }
         else if (input is InputEventMouseMotion { Device: >= 0 })
         {
-            // A real mouse moving is proof the hover belongs to a pointer again: the engine's emulated mouse, which a touch
-            // drives, carries device -1, a real one does not. It also covers a touch release lost to backgrounding, which
-            // would otherwise leave the game's focus ignored until the next gesture.
-            HoverFromTouch = false;
+            // A real mouse moving is proof the hover belongs to a pointer again. The engine also emits mouse motion from
+            // the touch stream (its device number is not reliable here), so motions during the finger-down gesture and
+            // for a few frames after its release must not hand hover back to the synthetic pointer under the finger.
+            if (!_down && (_releaseFrame < 0 || Engine.GetProcessFrames() > _releaseFrame + MouseAfterTouchGraceFrames))
+                HoverFromTouch = false;
         }
         else if (input is InputEventScreenDrag drag && drag.Index == 0 && _down)
         {
