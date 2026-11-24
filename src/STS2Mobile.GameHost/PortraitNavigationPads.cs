@@ -210,10 +210,11 @@ internal sealed class PortraitNavigationPads
     /// line, the upgrade screen's Close above its View Upgrades box, and any other screen keeps the game's own footer gap under
     /// its bottom. A hidden Back is parked wholly outside the canvas: the native slide is kept, but its -180 local units cannot
     /// clear a portrait Back drawn from x = 0.
-    /// <para>Everything is written to <c>Position</c>, the rect's top-left: that is the corner the game's own <c>_showPos</c>
-    /// means (<c>OnWindowChange</c> assigns it straight to <c>Position</c>) and the corner Godot's hit test, <c>GetGlobalRect</c>
-    /// and the harness all read, so the art, the tap target and the measured rect cannot drift apart. The button is never pivoted:
-    /// a bottom pivot renders the art one height away from the rect that receives the taps.</para>
+    /// <para>The cached places are written in the button's parent coordinates, the space the game's own
+    /// <c>OnWindowChange</c> assumes when it assigns <c>Position = _showPos</c>. The movement itself is a canvas point:
+    /// <c>GlobalPosition</c> and the native slide tween both use the canvas, while a screen such as Blitz or Dread is scaled
+    /// inside it. Mixing the two spaces put a Back at its local Y (thousands of units) as a global position, off the phone.
+    /// The button is never pivoted: a bottom pivot renders the art one height away from the rect that receives the taps.</para>
     /// </summary>
     private void PlaceBack(Control control)
     {
@@ -267,14 +268,17 @@ internal sealed class PortraitNavigationPads
         }
         float highest = Math.Max(canvas.Position.Y + FooterBottomMargin, canvas.End.Y - height - FooterBottomMargin);
         top = Math.Min(Math.Max(top, canvas.Position.Y + FooterBottomMargin), highest);
-        var show = LocalPoint(control, new Vector2(canvas.Position.X, top));
+        var showCanvas = new Vector2(canvas.Position.X, top);
         // The native slide moves one button width left (NBackButton._hideOffset is -180 local units); keep its direction and
         // timing, but clear everything the button can draw, plus the hover growth about the top-left it scales from.
-        var hide = LocalPoint(control, new Vector2(canvas.Position.X - reach * HoverHeadroom - HideMargin, top));
+        var hideCanvas = new Vector2(canvas.Position.X - reach * HoverHeadroom - HideMargin, top);
+        // Cached places are parent-local, for the game's Position = _showPos path; the button itself moves in canvas space.
+        var show = LocalPoint(control, showCanvas);
+        var hide = LocalPoint(control, hideCanvas);
         bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed)
             || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
         bool enabled = fields.Enabled?.GetValue(control) is true;
-        Vector2 target = enabled ? show : hide;
+        Vector2 target = enabled ? showCanvas : hideCanvas;
         Tween? tween = fields.MoveTween?.GetValue(control) as Tween;
         if (changed)
         {
