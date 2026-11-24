@@ -333,10 +333,9 @@ internal sealed class PhoneTouchCards
             return;
         }
 
-        // Two frames after a release the engine's emulated mouse has settled on whatever sits under it; from then on a
-        // real pointer (desktop, or a mouse on a tablet) owns the hover again.
-        if (HoverFromTouch && !_down && Engine.GetProcessFrames() > _releaseFrame + 2)
-            HoverFromTouch = false;
+        // The hover stays owned by touch until a real mouse moves (OnWindowInput) or portrait is left. The engine parks
+        // its emulated mouse where the finger lifted; allowing that synthetic hover to become native focus two frames
+        // after release grows whichever card sits under the lift point and makes the whole hand wobble as the card returns.
 
         bool overlays = r.OverlayCount() > 0;
         bool playInProgress = r.CurrentCardPlay(hand) != null;
