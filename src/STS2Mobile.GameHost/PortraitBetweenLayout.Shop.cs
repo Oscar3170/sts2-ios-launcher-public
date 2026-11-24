@@ -748,8 +748,8 @@ internal sealed partial class PortraitBetweenLayout
     {
         if (!state.Paged) return;
         EnsureShopTabs(inventory, state);
-        bool closing = state.CloseTween is { } tween && GodotObject.IsInstanceValid(tween) && tween.IsRunning();
-        bool shown = open || closing;
+        // The tabs leave with the Back press, not after the stock has finished sliding away.
+        bool shown = open;
         if (state.CardsTab is { } cardsTab && GodotObject.IsInstanceValid(cardsTab) && cardsTab.Visible != shown)
             cardsTab.Visible = shown;
         if (state.ItemsTab is { } itemsTab && GodotObject.IsInstanceValid(itemsTab) && itemsTab.Visible != shown)
@@ -801,6 +801,7 @@ internal sealed partial class PortraitBetweenLayout
 
     private void OnShopClosed(Control inventory, ShopState state)
     {
+        HideShopTabs(state);
         PhoneSelectConfirm.Clear("shop close");
         BeginOwnedShopClose(inventory, state);
     }
