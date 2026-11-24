@@ -61,9 +61,6 @@ internal sealed class PhoneTouchCards
     /// </summary>
     public static bool HoverFromTouch { get; private set; }
 
-    // A real mouse must keep moving for this long after a touch release before the synthetic hover is handed back.
-    private const int MouseAfterTouchGraceFrames = 10;
-
     /// <summary>
     /// The hand card under a finger that is down in play mode and has not been picked up yet (after
     /// <see cref="TouchCardMath.PickupSlop"/> it is dragging instead); the portrait hand grows this card in place under
@@ -233,11 +230,10 @@ internal sealed class PhoneTouchCards
         }
         else if (input is InputEventMouseMotion { Device: >= 0 })
         {
-            // A real mouse moving is proof the hover belongs to a pointer again. The engine also emits mouse motion from
-            // the touch stream (its device number is not reliable here), so motions during the finger-down gesture and
-            // for a few frames after its release must not hand hover back to the synthetic pointer under the finger.
-            if (!_down && (_releaseFrame < 0 || Engine.GetProcessFrames() > _releaseFrame + MouseAfterTouchGraceFrames))
-                HoverFromTouch = false;
+            // A real mouse moving is proof the hover belongs to a pointer again: the engine's emulated mouse, which a touch
+            // drives, carries device -1, a real one does not. It also covers a touch release lost to backgrounding, which
+            // would otherwise leave the game's focus ignored until the next gesture.
+            HoverFromTouch = false;
         }
         else if (input is InputEventScreenDrag drag && drag.Index == 0 && _down)
         {
@@ -337,9 +333,10 @@ internal sealed class PhoneTouchCards
             return;
         }
 
-        // The hover stays owned by touch until a real mouse moves (OnWindowInput) or portrait is left. The engine parks
-        // its emulated mouse where the finger lifted; allowing that synthetic hover to become native focus two frames
-        // after release grows whichever card sits under the lift point and makes the whole hand wobble as the card returns.
+        // Two frames after a release the engine's emulated mouse has settled on whatever sits under it; from then on a
+        // real pointer (desktop, or a mouse on a tablet) owns the hover again.
+        if (HoverFromTouch && !_down && Engine.GetProcessFrames() > _releaseFrame + 2)
+            HoverFromTouch = false;
 
         bool overlays = r.OverlayCount() > 0;
         bool playInProgress = r.CurrentCardPlay(hand) != null;
