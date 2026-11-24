@@ -253,6 +253,12 @@ internal sealed class PortraitNavigationPads
             // reference units). The button's scene offsets are in its scaled parent's units and landed it level with the box.
             top = PortraitPreviewMath.CloseTop(canvas.End.Y);
         }
+        else if (InShopInventory(control))
+        {
+            // The shop's Back and Cards/Items tabs share the bottom row the stock reserves for them. The generic footer gap
+            // put it above that row, and the tabs, measured from this button, followed it into the stock.
+            top = PortraitShopMath.TabRowTop(canvas.End.Y, control.Size.Y);
+        }
         else if (IsPanelBack(control) || HasFooterLegend(control))
         {
             // The comparison buttons' line (PortraitPreviewMath.ButtonTop): its Cancel and Confirm put their tops on it, and it
@@ -357,6 +363,16 @@ internal sealed class PortraitNavigationPads
     {
         for (Node? node = control.GetParent(); node is not null && node is not Window; node = node.GetParent())
             if (node is Control parent && parent.Name.ToString().Contains("PreviewContainer", StringComparison.Ordinal))
+                return true;
+        return false;
+    }
+
+    /// <summary>Whether the Back belongs to a merchant inventory, whose Cards/Items row owns the bottom band.</summary>
+    private static bool InShopInventory(Control control)
+    {
+        for (Node? node = control.GetParent(); node is not null && node is not Window; node = node.GetParent())
+            if (node.GetType().FullName is PortraitBetweenLayout.MerchantInventoryTypeName
+                or PortraitBetweenLayout.FakeMerchantInventoryTypeName)
                 return true;
         return false;
     }
