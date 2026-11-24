@@ -1021,6 +1021,9 @@ internal sealed partial class PortraitBetweenLayout
                                   room.GetNodeOrNull<Control>("MerchantButton") ??
                                   scene.GetNodeOrNull<Control>("%MerchantButton");
             if (state.BlitzMerchant != null) Capture(state.BlitzMerchant, captureVisible: false);
+            state.Party = scene.GetNodeOrNull<Control>("%CharacterContainer") ??
+                           scene.GetNodeOrNull<Control>("CharacterContainer");
+            if (state.Party != null) Capture(state.Party, captureVisible: false);
             Capture(scene, captureVisible: false);
             Capture(bg, captureVisible: false);
             return state;
@@ -1142,6 +1145,14 @@ internal sealed partial class PortraitBetweenLayout
                 scene.GlobalPosition -= new Vector2(box.End.X - (canvas.X - margin), 0f);
             else if (box.Position.X < margin)
                 scene.GlobalPosition += new Vector2(margin - box.Position.X, 0f);
+        }
+        // The authored CharacterContainer sits left of the portrait crop (about -286 at 1080 wide) while the merchant is kept
+        // at the right edge: the local player was in the tree but entirely off screen. Stand the party beside the table at
+        // the authored floor height; only the off-screen case is moved so the native composition is otherwise untouched.
+        if (state.Party is { } party && GodotObject.IsInstanceValid(party))
+        {
+            Vector2 at = party.GlobalPosition;
+            if (at.X < 0f) party.GlobalPosition = new Vector2(canvas.X * 0.16f, at.Y);
         }
         EnsureShopBlitzFade(state, canvas, floor);
     }
