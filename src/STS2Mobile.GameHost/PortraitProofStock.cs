@@ -288,8 +288,7 @@ internal static partial class PortraitProof
         Control? clip = map.GetNodeOrNull<Control>("PortraitMapViewport");
         string frame = clip == null
             ? "clip=none"
-            : $"clip=[{CanvasRect(clip)}] share={(map.GetNodeOrNull<Control>("PortraitMapShare") is { } mount ? CanvasRect(mount) : "none")} " +
-              $"cover={(map.GetNodeOrNull<TextureRect>("PortraitMapBackdrop") is { } backdrop ? CanvasRect(backdrop) : "none")}";
+            : $"clip=[{CanvasRect(clip)}] share={(map.GetNodeOrNull<Control>("PortraitMapShare") is { } mount ? CanvasRect(mount) : "none")}";
         return $"map-visible={map.IsVisibleInTree()} mapX={mapPos.X:F1} mapY={mapPos.Y:F0} points[{points}] limits={PortraitBetweenLayout.MapScrollLimits(map, tree.Root)} band={bandTop:F0}..{bandBottom:F0} {frame} boss[{Boss("_bossPointNode")}] second[{Boss("_secondBossPointNode")}] top-bar[{bar}]";
     }
 

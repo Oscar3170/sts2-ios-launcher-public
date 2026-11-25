@@ -3,23 +3,20 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Godot;
-using MegaCrit.Sts2.Core.Nodes;
 using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
 
 /// <summary>
-/// The Spire Map in portrait: the torn-scroll art under the act backdrop, one clipped viewport for the whole graph
-/// (points, paths, drawings, marker), the native legend under the launcher's pill, the drawing tools and Share button at
-/// 44 points on the canvas bottom, and the Back ribbon above them. Every edit is captured first so leaving portrait puts
-/// the game's own map and footer back.
+/// The Spire Map in portrait: the native torn scroll fills the clipped chart (points, paths, drawings, marker).
+/// The Back ribbon overlays it and the drawing tools and Share sit at the canvas bottom. Every edit is captured
+/// first so leaving portrait puts the game's own map and footer back.
 /// </summary>
 internal sealed partial class PortraitBetweenLayout
 {
     private const string LegendPillName = "PortraitLegendPill";
     private const string MapViewportName = "PortraitMapViewport";
     private const string MapShiftName = "PortraitMapShift";
-    private const string MapBackdropName = "PortraitMapBackdrop";
     private const string MapShareMountName = "PortraitMapShare";
 
     private const float LegendPillWidth = 230f;
@@ -41,8 +38,6 @@ internal sealed partial class PortraitBetweenLayout
     // Native legend is 340 x 454 at scale 1; the phone reference draws it at 2.3 on a 1680-wide canvas, which is
     // 2.3 * 1080 / 1680 at ours (about 1.48: 13-22 point text).
     private static readonly float MapLegendScale = PortraitBetweenMath.MapLegendScale;
-    // The act's own art behind the transparent edges of the torn paper.
-    private static readonly Color MapBackdropTint = new(0.20f, 0.23f, 0.25f);
 
     private sealed class MapFrame
     {
@@ -60,7 +55,6 @@ internal sealed partial class PortraitBetweenLayout
         public bool PaperLogged;
         public Control? Legend;
         public Button? Pill;
-        public TextureRect? Backdrop;
         public Control? Share;
         public Control? ShareMount;
         public Control? Toast;
@@ -345,7 +339,6 @@ internal sealed partial class PortraitBetweenLayout
         map.VisibilityChanged += frame.VisibilityHandler;
         frame.CenterPending = map.IsVisibleInTree();
 
-        // The act's own top illustration fills the bands the torn paper does not reach.
         frame.Points = theMap.GetNodeOrNull<Control>("Points");
         frame.Bg = theMap.GetNodeOrNull<Control>("MapBg");
         frame.BgBaseLeft = frame.Bg?.Position.X ?? -PortraitBetweenMath.MaxMapCentreShift;
@@ -355,7 +348,6 @@ internal sealed partial class PortraitBetweenLayout
             : canvas.X * 0.5f;
         frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
         frame.Legend = map.GetNodeOrNull<Control>("%MapLegend");
-        EnsureMapBackdrop(map, frame, ActMapTexture());
         MountMapShare(map, frame, canvas);
         UpdateMapGraph(theMap, frame, canvas.X);
         UpdateMapFrame(map, frame, canvas, clipTop, clipBottom);
@@ -375,50 +367,6 @@ internal sealed partial class PortraitBetweenLayout
             if (shift.Position.Y != -clipTop) shift.Position = new Vector2(0f, -clipTop);
             if (shift.Size != canvas) shift.Size = canvas;
         }
-    }
-
-    /// <summary>The act's top map illustration, the same texture the native torn scroll's first slice shows.</summary>
-    private static Texture2D? ActMapTexture()
-    {
-        try
-        {
-            Type? runManager = typeof(NGame).Assembly.GetType("MegaCrit.Sts2.Core.Runs.RunManager");
-            object? instance = runManager?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            object? state = runManager?.GetMethod("DebugOnlyGetState", BindingFlags.Public | BindingFlags.Instance)
-                ?.Invoke(instance, null);
-            object? act = state?.GetType().GetProperty("Act", BindingFlags.Public | BindingFlags.Instance)?.GetValue(state);
-            return act?.GetType().GetProperty("MapTopBg", BindingFlags.Public | BindingFlags.Instance)?.GetValue(act) as Texture2D;
-        }
-        catch (Exception exception)
-        {
-            GD.PrintErr($"Portrait map backdrop: no act texture ({exception.Message})");
-            return null;
-        }
-    }
-
-    private static void EnsureMapBackdrop(Control map, MapFrame frame, Texture2D? texture)
-    {
-        texture ??= (frame.Map?.GetNodeOrNull<Control>("MapBg/MapTop") as TextureRect)?.Texture;
-        if (texture == null) return;
-        if (frame.Backdrop is { } existing && GodotObject.IsInstanceValid(existing))
-        {
-            if (existing.Texture != texture) existing.Texture = texture;
-            return;
-        }
-        var backdrop = new TextureRect
-        {
-            Name = MapBackdropName,
-            Texture = texture,
-            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
-            StretchMode = TextureRect.StretchModeEnum.KeepAspectCovered,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            Modulate = MapBackdropTint,
-        };
-        backdrop.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        map.AddChild(backdrop);
-        // Just behind the clipped graph, over the game's own backstop.
-        map.MoveChild(backdrop, Math.Min(frame.MapIndex, map.GetChildCount() - 1));
-        frame.Backdrop = backdrop;
     }
 
     /// <summary>Scales the native Share button through a mount: its own hover tween keeps driving the button's scale.</summary>
@@ -535,7 +483,6 @@ internal sealed partial class PortraitBetweenLayout
             if (stack.Share is { } share && GodotObject.IsInstanceValid(share) &&
                 share.GetParent() == stack.ShareMount && share.IsVisibleInTree())
                 PlaceMapShare(stack, canvas);
-            if (stack.Backdrop is null) EnsureMapBackdrop(map, stack, ActMapTexture());
             PlaceMapToast(map, stack, canvas, clipBottom);
         }
 
@@ -589,7 +536,6 @@ internal sealed partial class PortraitBetweenLayout
         if (_mapPointLayouts.TryGetValue(id, out (ulong First, int Count) known) && known.First == first && known.Count == count)
             return;
         _mapPointLayouts[id] = (first, count);
-        if (frame != null) EnsureMapBackdrop(map, frame, ActMapTexture());
 
         var rooms = new List<Control>();
         foreach (Control point in points.GetChildren().OfType<Control>())
@@ -659,7 +605,7 @@ internal sealed partial class PortraitBetweenLayout
         return pill;
     }
 
-    /// <summary>Back to the game's own map: the clip, the shift, the backdrop, the Share mount and the point sizes go.</summary>
+    /// <summary>Back to the game's own map: remove the clip, shift, Share mount and point sizing.</summary>
     private void RestoreMapLandscape()
     {
         foreach ((ulong id, MapFrame frame) in _mapFrames.ToList())
@@ -754,17 +700,11 @@ internal sealed partial class PortraitBetweenLayout
                 map.MoveChild(theMap, Math.Min(frame.MapIndex, map.GetChildCount() - 1));
             }
         }
-        if (frame.Backdrop is { } backdrop && GodotObject.IsInstanceValid(backdrop))
-        {
-            backdrop.GetParent()?.RemoveChild(backdrop);
-            backdrop.QueueFree();
-        }
         if (frame.Clip is { } clip && GodotObject.IsInstanceValid(clip))
         {
             clip.GetParent()?.RemoveChild(clip);
             clip.QueueFree();
         }
-        frame.Backdrop = null;
         frame.Clip = null;
         frame.Shift = null;
         frame.ShareMount = null;
@@ -782,7 +722,7 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _mapPointLayouts.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapPointLayouts.Remove(id);
     }
 
-    /// <summary>Top of the band below the top bar and relic strip, and the bottom of the band above the back button.</summary>
+    /// <summary>Top below the relic strip and fallback bottom above the drawing tools.</summary>
     public static (float Top, float Bottom) VisibleBand(Window root)
     {
         float canvasHeight = Math.Max(root.GetVisibleRect().Size.Y, SafeAreaCanvas.MinPortraitHeight);
