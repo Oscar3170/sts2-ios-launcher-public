@@ -45,4 +45,6 @@ Use the existing owner instead of adding a second path. Split large classes by i
 
 ## Reference: portrait combat hand
 
+[`PortraitHandLayout`](src/STS2Mobile.GameHost/PortraitHandLayout.cs) owns hand targets, in-hand selection, and temporary changes to pooled hand cards. `PortraitCombatLayout` keeps the frame and restore order and passes the computed bands to the hand. `PhoneTouchCards` still owns gestures and native play/selection input; it does not own layout targets.
+
 [`HandLayoutPatches.cs`](src/STS2Mobile.GamePatcher/HandLayoutPatches.cs) guards both the focused and ordinary geometry in `NPlayerHand.RefreshLayout` and the return geometry in `NHandCardHolder.SetDefaultTargets` as one step. It does not skip either whole method: hitbox filters, focus neighbours, index labels, and the return `ZIndex` reset still run. [`HandLayoutGate`](src/STS2Mobile.Platform/HandLayoutGate.cs) allows suppression only after the portrait host can own targets. The host uses native motion setters for portrait slots and scales only the pressed card's artwork, leaving its hitbox and neighbours stable. Arrival bounds are not a reason to bring back after-the-fact desktop retarget repairs. Verify slow pickup and cancelled return over another card by sampling its visible artwork, holder, and hitbox separately.
