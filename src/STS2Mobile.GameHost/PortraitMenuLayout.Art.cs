@@ -92,22 +92,6 @@ internal sealed partial class PortraitMenuLayout
         }
     }
 
-    /// <summary>
-    /// Where the figure is centred: the reference's focus column at 39% of the screen, but never so low that the face sits
-    /// behind the info panel (the panel is higher than the reference's at 9:16, where the roster takes more of the screen).
-    /// </summary>
-    private static Vector2 FigureTarget(Control art, Vector2 viewport, Transform2D toCanvas, float focus)
-    {
-        Vector2 target = viewport * new Vector2(focus, 0.39f);
-        if (art.GetParent()?.GetParent() is not Control screen || screen.GetNodeOrNull<Control>("InfoPanel") is not { } info)
-            return target;
-        float panelTop = info.GetGlobalRect().Position.Y;
-        Vector2 inCanvas = toCanvas * target;
-        if (inCanvas.Y <= panelTop - 48f) return target;
-        inCanvas.Y = panelTop - 48f;
-        return toCanvas.AffineInverse() * inCanvas;
-    }
-
     /// <summary>Frames one character scene; false while its Spine skeleton is still loading so a later frame retries.</summary>
     private bool FrameArtChild(Control art, Vector2 viewport, Transform2D toCanvas)
     {
@@ -159,7 +143,7 @@ internal sealed partial class PortraitMenuLayout
                     "FOOL_bg" or "NECROBINDER_bg" => 0.44f,
                     _ => 0.49f,
                 };
-                Vector2 target = FigureTarget(art, viewport, toCanvas, focus);
+                Vector2 target = viewport * new Vector2(focus, FigureCenterY);
                 if (float.IsFinite(figureScale) && figureScale > 0f)
                 {
                     spine.Scale = Vector2.One * figureScale;

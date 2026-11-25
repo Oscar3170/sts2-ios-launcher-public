@@ -56,6 +56,11 @@ internal sealed partial class PortraitMenuLayout
         _ => 0.49f,
     };
 
+    // The reference's fixed vertical band for the figure's centre. Never derive this from the live InfoPanel: when the art
+    // is framed on its first ready frame the panel is still being animated and its global transform can read as y=0, which
+    // moved the whole portrait off the top of the screen.
+    private const float FigureCenterY = 0.39f;
+
     /// <summary>
     /// Frames one split-composition character. False while its second playback is not ready (the caller falls back to the
     /// whole composition's cover for those frames, as the reference does).
@@ -109,7 +114,7 @@ internal sealed partial class PortraitMenuLayout
         art.Position = viewport * 0.5f - cover.GetCenter() * artScale;
         float figureScale = Mathf.Min(viewport.X * 1.40f / figureBounds.Size.X, viewport.Y * 0.63f / figureBounds.Size.Y);
         if (!float.IsFinite(figureScale) || figureScale <= 0f) return false;
-        Vector2 target = FigureTarget(art, viewport, toCanvas, FigureFocus(name));
+        Vector2 target = viewport * new Vector2(FigureFocus(name), FigureCenterY);
         figure.Scale = new Vector2(figureScale / artScale, figureScale / artScale);
         figure.Position = (target - art.Position - figureBounds.GetCenter() * figureScale) / artScale;
         Vector2 drawn = figureBounds.Size * figureScale;
