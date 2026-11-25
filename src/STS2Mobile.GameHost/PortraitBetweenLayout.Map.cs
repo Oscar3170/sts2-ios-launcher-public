@@ -30,17 +30,13 @@ internal sealed partial class PortraitBetweenLayout
     // The draw, erase and clear buttons are 60 units in the bar; the whole bar grows until each button is 44 points.
     private const float DrawingToolsScale = PortraitBands.MinTarget / 60f;
     // Share is 64 units tall natively; its mount grows it to the same 44 points without touching its own hover tween.
-    // A first-guess footer band for the graph clip before the native controls are measured; the clip itself follows the
-    // drawing bar's drawn top and the Back ribbon's shown top.
+    // Fallback for the graph clip before the drawing bar can be measured.
     private const float MapFooterBand = 150f;
     // Share and the drawing tools sit this far above the canvas bottom; Share's right edge is 32 units from the edge.
     private const float MapFooterInset = 32f;
     private const float MapFooterBottomInset = 24f;
     private const float MapLegendInset = 20f;
     private const float MapToolGap = 6f;
-    // The Back ribbon's shown top sits 354 units above the canvas bottom (native scene offsets); keep a little clearance
-    // if its own position field is unavailable.
-    private const float MapBackReserve = 360f;
     private const float MapToastGap = 8f;
     // Native legend is 340 x 454 at scale 1; the phone reference draws it at 2.3 on a 1680-wide canvas, which is
     // 2.3 * 1080 / 1680 at ours (about 1.48: 13-22 point text).
@@ -56,8 +52,6 @@ internal sealed partial class PortraitBetweenLayout
         public Control? Points;
         public Control? Bg;
         public Control? Tools;
-        public Control? Back;
-        public FieldInfo? BackShowField;
         public float BgBaseLeft;
         public float PaperCenterX;
         public float GraphOffsetX;
@@ -211,28 +205,6 @@ internal sealed partial class PortraitBetweenLayout
         return Math.Min(corner.Y, end.Y) - MapToolGap;
     }
 
-    /// <summary>The shown top of the Back ribbon in canvas units (the native show position, or the reserve fallback).</summary>
-    private static float MapBackTop(Control map, MapFrame? frame, float canvasHeight)
-    {
-        Control? back = frame?.Back;
-        if (back == null || !GodotObject.IsInstanceValid(back))
-        {
-            back = map.GetNodeOrNull<Control>("Back");
-            if (frame != null) frame.Back = back;
-        }
-        if (back is { } button && GodotObject.IsInstanceValid(button))
-        {
-            FieldInfo? show = frame?.BackShowField;
-            if (show == null)
-            {
-                show = button.GetType().GetField("_showPos", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (frame != null) frame.BackShowField = show;
-            }
-            if (show?.GetValue(button) is Vector2 shown) return shown.Y - map.GlobalPosition.Y;
-        }
-        return canvasHeight - MapBackReserve;
-    }
-
     /// <summary>
     /// The parchment is part of the graph and scales with it; this only holds its own position, because the game rewrites
     /// <c>NMapBg.Position</c> on a viewport change from the offset it cached before the portrait layout widened it.
@@ -301,14 +273,11 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>
-    /// The graph's visible band. It starts under the stone header (the relic strip floats over the map art) and stops above
-    /// the footer: the Back ribbon and the drawing tools are native siblings of the map, so the chart ends above the higher
-    /// of the two. The game draws paths, points, the marker and free strokes in the map container, so clipping the whole
-    /// container keeps all of them out of the header and the footer at once.
+    /// The graph clips under the stone header and at the top of the drawing bar. The native Back ribbon stays in
+    /// front of the parchment as a sibling of the chart, without reserving a separate row.
     /// </summary>
     private static float MapClipBottom(Control map, MapFrame? frame, float canvasHeight)
     {
-        float bottom = canvasHeight - MapFooterBand;
         Control? tools = frame?.Tools;
         if (tools == null || !GodotObject.IsInstanceValid(tools))
         {
@@ -317,11 +286,9 @@ internal sealed partial class PortraitBetweenLayout
         }
         if (tools is { } bar && GodotObject.IsInstanceValid(bar) && bar.Size.Y > 0f && bar.Scale.Y > 0f)
         {
-            float top = bar.Position.Y - bar.Size.Y * (bar.Scale.Y - 1f);
-            bottom = Math.Min(bottom, top - MapToolGap);
+            return bar.Position.Y - bar.Size.Y * (bar.Scale.Y - 1f);
         }
-        bottom = Math.Min(bottom, MapBackTop(map, frame, canvasHeight) - MapToolGap);
-        return bottom;
+        return canvasHeight - MapFooterBand;
     }
 
     private MapFrame? EnsureMapFrame(Control map, Vector2 canvas, float clipTop, float clipBottom)
@@ -387,7 +354,6 @@ internal sealed partial class PortraitBetweenLayout
             ? paper.Position.X + paper.Size.X * 0.5f
             : canvas.X * 0.5f;
         frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
-        frame.Back = map.GetNodeOrNull<Control>("Back");
         frame.Legend = map.GetNodeOrNull<Control>("%MapLegend");
         EnsureMapBackdrop(map, frame, ActMapTexture());
         MountMapShare(map, frame, canvas);
