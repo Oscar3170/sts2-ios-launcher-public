@@ -13,7 +13,8 @@ namespace STS2Mobile.GameHost;
 /// (in the control's own units, so a screen drawn at a scale still gets a full-size target). Applied from the node-added pass
 /// and kept on the visible buttons by the per-frame pass; removed again in landscape.
 /// <para>It is also the single writer of every Back's <c>_showPos</c>/<c>_hidePos</c>: a shown Back puts its rect's top on the
-/// screen's footer line, and a disabled one is parked wholly outside the canvas, so no sliver of its enlarged art is left at the
+/// screen's footer line (the map's own is lifted only where the drawing bar pinned to the canvas bottom would otherwise sit
+/// in it), and a disabled one is parked wholly outside the canvas, so no sliver of its enlarged art is left at the
 /// left edge (the native hide offset only clears the game's own unscaled button). A Back is never pivoted and its places are
 /// written in its parent's coordinates, the space the game's own <c>Position = _showPos</c> assumes.</para>
 /// </summary>
@@ -244,7 +245,10 @@ internal sealed class PortraitNavigationPads
         // Park clear of everything the button can draw, not just its box: the native art plane is wider than the box and the
         // hover/focus outline lights up around it. `reach` is the art's right edge measured from the box's left edge.
         Rect2 box = CanvasRect(control);
-        float reach = Math.Max(DrawnWidth, DrawnUnion(control).End.X - box.Position.X);
+        Rect2 drawn = DrawnUnion(control);
+        float reach = Math.Max(DrawnWidth, drawn.End.X - box.Position.X);
+        // How far everything the button can draw reaches below its box's top; the Back scales from that corner.
+        float drawnDepth = drawn.End.Y - box.Position.Y;
         Vector2 offset = fields.PosOffset?.GetValue(control) is Vector2 value ? value : new Vector2(40f, 354f);
         float top;
         if (IsUpgradeClose(control))
@@ -272,6 +276,12 @@ internal sealed class PortraitNavigationPads
             float gap = Math.Max(0f, offset.Y - control.Size.Y) * parentScale.Y;
             top = canvas.End.Y - gap - height;
         }
+        // The map's drawing bar is pinned to the canvas bottom, below the game's own footer gap. On the reference canvas
+        // that gap already leaves the Back's art clear of the bar; where it would not, lift the Back just enough to keep
+        // everything it draws above the bar's drawn top, with the hover growth about the top-left it scales from. The bar
+        // and the chart clip above it stay the map layout's.
+        if (MapScreenOf(control) is { } mapScreen && PortraitBetweenLayout.MapBackFooterLimit(mapScreen) is float limit)
+            top = Math.Min(top, limit - drawnDepth * HoverHeadroom);
         float highest = Math.Max(canvas.Position.Y + FooterBottomMargin, canvas.End.Y - height - FooterBottomMargin);
         top = Math.Min(Math.Max(top, canvas.Position.Y + FooterBottomMargin), highest);
         var showCanvas = new Vector2(canvas.Position.X, top);
@@ -376,6 +386,12 @@ internal sealed class PortraitNavigationPads
                 return true;
         return false;
     }
+
+    /// <summary>The act map a Back belongs to, whose drawing bar is pinned to the canvas bottom.</summary>
+    private static Control? MapScreenOf(Control control) =>
+        control.GetParent() is Control screen && screen.GetType().FullName == PortraitBetweenLayout.MapScreenTypeName
+            ? screen
+            : null;
 
     /// <summary>
     /// Whether this is the upgrade screen's Close, which the reference lifts above its View Upgrades box. Its own scene offsets

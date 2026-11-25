@@ -10,8 +10,9 @@ namespace STS2Mobile.GameHost;
 
 /// <summary>
 /// The Spire Map in portrait: the torn-scroll art under the act backdrop, one clipped viewport for the whole graph
-/// (points, paths, drawings, marker), the native legend under the launcher's pill, and the drawing tools and Share button
-/// at 44 points. Every edit is captured first so leaving portrait puts the game's own map and footer back.
+/// (points, paths, drawings, marker), the native legend under the launcher's pill, the drawing tools and Share button at
+/// 44 points on the canvas bottom, and the Back ribbon above them. Every edit is captured first so leaving portrait puts
+/// the game's own map and footer back.
 /// </summary>
 internal sealed partial class PortraitBetweenLayout
 {
@@ -29,7 +30,8 @@ internal sealed partial class PortraitBetweenLayout
     // The draw, erase and clear buttons are 60 units in the bar; the whole bar grows until each button is 44 points.
     private const float DrawingToolsScale = PortraitBands.MinTarget / 60f;
     // Share is 64 units tall natively; its mount grows it to the same 44 points without touching its own hover tween.
-    // The footer controls stay inside this bottom margin, and the graph clip stops above them.
+    // A first-guess footer band for the graph clip before the native controls are measured; the clip itself follows the
+    // drawing bar's drawn top and the Back ribbon's shown top.
     private const float MapFooterBand = 150f;
     // Share and the drawing tools sit this far above the canvas bottom; Share's right edge is 32 units from the edge.
     private const float MapFooterInset = 32f;
@@ -166,7 +168,7 @@ internal sealed partial class PortraitBetweenLayout
             Capture(tools, captureVisible: false);
             tools.PivotOffset = new Vector2(0f, tools.Size.Y);
             tools.Scale = new Vector2(DrawingToolsScale, DrawingToolsScale);
-            PlaceMapTools(map, tools, null, canvasHeight);
+            PlaceMapTools(tools, canvasHeight);
         }
         Vector2 canvas = new(canvasWidth, canvasHeight);
         float clipTop = PortraitBands.HeaderBottom(capHeight);
@@ -182,16 +184,31 @@ internal sealed partial class PortraitBetweenLayout
     /// <summary>
     /// Puts the untouched drawing bar's visible bottom <see cref="MapFooterBottomInset"/> above the canvas bottom, using the
     /// same canvas height the rest of the portrait layout reads (the native bar is positioned from the design height).
+    /// Position.Y is the bar's unscaled origin and its pivot is the bottom-left corner, so the drawn bottom is
+    /// Position.Y + Size.Y while the bar itself grows upwards.
     /// </summary>
-    private static void PlaceMapTools(Control map, Control? tools, MapFrame? frame, float canvasHeight)
+    private static void PlaceMapTools(Control? tools, float canvasHeight)
     {
         if (tools is not { } bar || !GodotObject.IsInstanceValid(bar) || bar.Size.Y <= 0f) return;
         float y = canvasHeight - MapFooterBottomInset - bar.Size.Y;
-        // The Back ribbon's shown top is the floor for the bar: at 9:16 (no safe cap) the chart is taller and the two
-        // would otherwise overlap. Position.Y is the bar's unscaled origin, so its drawn bottom is Position.Y + Size.Y.
-        float backTop = MapBackTop(map, frame, canvasHeight);
-        if (backTop - MapToolGap - bar.Size.Y < y) y = backTop - MapToolGap - bar.Size.Y;
         if (!Mathf.IsEqualApprox(bar.Position.Y, y)) bar.Position = new Vector2(bar.Position.X, y);
+    }
+
+    /// <summary>
+    /// The canvas y the map's Back must stay above so nothing it draws reaches the drawing bar on the canvas bottom: the
+    /// bar's drawn top less <see cref="MapToolGap"/>. Null until the bar has a size. The Back's placement and tween stay
+    /// <see cref="PortraitNavigationPads"/>'s; it asks this only to lift the Back when the game's own footer gap would put
+    /// its art into the bar.
+    /// </summary>
+    internal static float? MapBackFooterLimit(Control map)
+    {
+        Control? tools = map.GetNodeOrNull<Control>("%DrawingTools") ?? map.GetNodeOrNull<Control>("DrawingTools");
+        if (tools is not { } bar || !GodotObject.IsInstanceValid(bar) || bar.Size.Y <= 0f || bar.Scale.Y <= 0f)
+            return null;
+        Transform2D transform = bar.GetGlobalTransformWithCanvas();
+        Vector2 corner = transform * Vector2.Zero;
+        Vector2 end = transform * bar.Size;
+        return Math.Min(corner.Y, end.Y) - MapToolGap;
     }
 
     /// <summary>The shown top of the Back ribbon in canvas units (the native show position, or the reserve fallback).</summary>
@@ -478,8 +495,8 @@ internal sealed partial class PortraitBetweenLayout
 
     /// <summary>
     /// Places the Share confirmation toast through the button's own <c>_toastPosition</c>, so the game's show tween drives it
-    /// from there. It sits centred just above the footer tools, inside the safe frame; it is only moved while hidden so the
-    /// native rise-and-fade animation is never fought.
+    /// from there. It sits centred just above the chart's clipped bottom, inside the safe frame; it is only moved while
+    /// hidden so the native rise-and-fade animation is never fought.
     /// </summary>
     private void PlaceMapToast(Control map, MapFrame frame, Vector2 canvas, float clipBottom)
     {
@@ -508,12 +525,13 @@ internal sealed partial class PortraitBetweenLayout
         float cap = PortraitLayout.ComputeCapHeight(root);
         float clipTop = PortraitBands.HeaderBottom(cap);
         MapFrame? probe = _mapFrames.TryGetValue(map.GetInstanceId(), out MapFrame? current) ? current : null;
-        PlaceMapTools(map, probe?.Tools, probe, canvas.Y);
+        Control? tools = map.GetNodeOrNull<Control>("%DrawingTools");
+        PlaceMapTools(tools, canvas.Y);
         float clipBottom = MapClipBottom(map, probe, canvas.Y);
         MapFrame? frame = EnsureMapFrame(map, canvas, clipTop, clipBottom);
         if (frame != null && frame.Tools == null)
-            frame.Tools = map.GetNodeOrNull<Control>("%DrawingTools");
-        PlaceMapTools(map, frame?.Tools, frame, canvas.Y);
+            frame.Tools = tools;
+        PlaceMapTools(frame?.Tools ?? tools, canvas.Y);
         clipBottom = MapClipBottom(map, frame, canvas.Y);
         // The game's scroll limits (-600..1800) were made for a 1080-tall canvas; keep its target inside the portrait range.
         MapScrollRange range = MapScrollLimits(map, root, clipBottom, frame?.Map);
