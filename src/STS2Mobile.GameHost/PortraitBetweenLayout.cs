@@ -72,9 +72,6 @@ internal sealed partial class PortraitBetweenLayout
     internal const float BannerBottomOffset = 172f;
     internal const float BannerContentGap = 16f;
 
-    private static readonly Color PillFillColor = new(24f / 255f, 37f / 255f, 45f / 255f, 0.94f);
-    private static readonly Color PillBorderColor = new(118f / 255f, 146f / 255f, 162f / 255f, 0.9f);
-    private static readonly Color PillTextColor = new(239f / 255f, 200f / 255f, 81f / 255f, 1f);
 
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
     private readonly HashSet<ulong> _proceedButtons = new();
