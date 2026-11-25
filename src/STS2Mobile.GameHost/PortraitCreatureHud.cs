@@ -106,7 +106,7 @@ internal sealed class PortraitCreatureHud
     /// Sets a label's font size up to <paramref name="fontSize"/>, keeping the size it had so landscape gets it back.
     /// For labels the game does not size itself (auto size off): it would put its own size back on the next text change.
     /// </summary>
-    public void EnlargeLabelFont(Label? label, int fontSize)
+    private void EnlargeLabelFont(Label? label, int fontSize)
     {
         if (label == null || !GodotObject.IsInstanceValid(label)) return;
         int current = label.GetThemeFontSize("font_size");

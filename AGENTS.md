@@ -18,7 +18,7 @@ Use the existing owner instead of adding a second path. Split large classes by i
 
 [`PortraitCombatRail`](src/STS2Mobile.GameHost/PortraitCombatRail.cs) owns the combat action controls, pile entrance and visibility handling, and their desktop restore values. `PortraitCombatLayout` passes the shared HUD geometry and keeps the stage → rail → hand → Proceed restore order.
 
-[`PortraitCombatStage`](src/STS2Mobile.GameHost/PortraitCombatStage.cs) owns the frozen encounter plan, backdrop, creature roots and hitboxes, world-effect anchors, and Osty’s position gate. The combat coordinator still batches creature HUD work after placement and dispatches the orb refit before draw. Keep that order when moving those owners.
+[`PortraitCombatStage`](src/STS2Mobile.GameHost/PortraitCombatStage.cs) owns the frozen encounter plan, backdrop, creature roots and hitboxes, world-effect anchors, and Osty’s position gate. [`PortraitCreatureHud`](src/STS2Mobile.GameHost/PortraitCreatureHud.cs) owns creature health displays, intents, and powers; it batches after placement. [`PortraitCombatOrbs`](src/STS2Mobile.GameHost/PortraitCombatOrbs.cs) uses the stage hitboxes to fit the queue before draw, after native tweens. The coordinator keeps that order and the per-creature native restore sequence.
 
 ## Developing safely
 
