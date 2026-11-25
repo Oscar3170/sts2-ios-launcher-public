@@ -11,7 +11,7 @@ namespace STS2Mobile.GameHost;
 /// <summary>Owns the encounter formation, background, body placement, and world-effect anchors.</summary>
 internal sealed class PortraitCombatStage
 {
-    private const float IntentBandHeight = 64f * PortraitCombatLayout.IntentCanvasScale + 12f;
+    private const float IntentBandHeight = 64f * PortraitCreatureHud.IntentCanvasScale + 12f;
     // Measured from the compact Ovicopter fight: the egg and flyer intents have different top clearance.
     private const float EnemyHudBoxHeight = 41.23f;
     private const float EggIntentRise = 54.4f;
@@ -63,6 +63,9 @@ internal sealed class PortraitCombatStage
     public bool HasOrbs { get; private set; }
     public ReadOnlySpan<Control> Enemies => CollectionsMarshal.AsSpan(_stageEnemies);
 
+    public Control? HitboxOf(Control creature) =>
+        _creatures.TryGetValue(creature.GetInstanceId(), out var placement) ? placement.Hitbox : null;
+
     public void Attach() => OstyPositionGate.OwnsPosition = OwnsCreaturePosition;
     public void Detach() => OstyPositionGate.OwnsPosition = null;
 
@@ -82,6 +85,12 @@ internal sealed class PortraitCombatStage
     {
         CreaturePlacement state = _creatures[creature.GetInstanceId()];
         state.RestoreRoot(creature);
+    }
+
+    public void RestoreCreatureBounds(Control creature, CombatReflection refl)
+    {
+        RemoveMeta(creature, "portrait_feet_y");
+        refl.InvokeUpdateBounds(creature);
     }
 
     public void EndSession()
@@ -591,7 +600,7 @@ internal sealed class PortraitCombatStage
                     // those intents. Stand the flyer high enough that the box's bottom clears the row by 4; maxH below
                     // keeps its own intent row under the header floor, and the frame it leaves decides its scale.
                     float eggIntentTop = bands.FrontFeetY - PortraitBands.MinTarget - EggIntentRise;
-                    float hudDrop = PortraitCombatLayout.BarBandClearance + EnemyHudBoxHeight;
+                    float hudDrop = PortraitCreatureHud.BarBandClearance + EnemyHudBoxHeight;
                     oviFeet = Math.Min(oviFeet, eggIntentTop - 4f - hudDrop);
                 }
                 float oviX = (bands.Compact ? 0.76f : 0.70f) * SafeAreaCanvas.PortraitWidth;
