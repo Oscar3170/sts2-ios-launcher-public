@@ -3061,7 +3061,12 @@ internal sealed class PortraitCombatLayout
             PortraitCombatMath.PortraitRowFit row = PortraitCombatMath.FitSingleRow(capacity, bodies, bands, rowLeft,
                 heroRoomScale, bands.Compact ? 0f : IntentBandHeight);
             float formationScale = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
-            if (PortraitCombatMath.PrefersSingleRow(bodies, formationScale, row.RoomScale))
+            // Short trios read as one group rather than two tiers if the lineup keeps most of their current size.
+            // Require space for a phone-sized target per enemy even before the crowded row grows a small hitbox.
+            bool shortTrioFits = capacity == 3 && !crowded && row.CellWidth >= PortraitBands.MinTarget &&
+                row.RoomScale >= Math.Max(PortraitCombatMath.PeerScaleFloor, Math.Min(formationScale, heroRoomScale) * 0.85f) &&
+                Array.TrueForAll(bodies, body => body.Height <= body.Width);
+            if (shortTrioFits || PortraitCombatMath.PrefersSingleRow(bodies, formationScale, row.RoomScale))
             {
                 plan.SingleRow = true;
                 plan.TallFormation = Array.Empty<PortraitCreatureSlot>();
