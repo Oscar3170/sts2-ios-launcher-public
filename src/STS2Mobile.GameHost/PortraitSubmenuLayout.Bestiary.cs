@@ -294,15 +294,13 @@ internal static partial class PortraitSubmenuLayout
     }
 
     /// <summary>
-    /// The back button's top in the screen's units: the game shows it at <c>_showPos</c>, a place on the canvas taken from
-    /// the window's height, whatever the screen's scale; <paramref name="fallback"/> when it cannot be read.
+    /// Converts the navigation owner's parent-local show endpoint into the Bestiary's local coordinates.
     /// </summary>
     private static float BestiaryBackButtonTop(Control screen, float fallback)
     {
         if (screen.GetNodeOrNull<Control>("BackButton") is not { } back || Get<Vector2>(back, "_showPos") is not Vector2 show) return fallback;
-        float scale = screen.GetGlobalTransformWithCanvas().Scale.Y;
-        if (scale <= 0f) return fallback;
-        return (show.Y - screen.GetGlobalTransformWithCanvas().Origin.Y) / scale;
+        Vector2 canvas = back.GetParent() is CanvasItem parent ? parent.GetGlobalTransformWithCanvas() * show : show;
+        return (screen.GetGlobalTransformWithCanvas().AffineInverse() * canvas).Y;
     }
 
     private static bool BestiaryTweenRunning(Control screen, string field) =>
