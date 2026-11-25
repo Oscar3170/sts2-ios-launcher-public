@@ -42,6 +42,7 @@ internal sealed partial class PortraitBetweenLayout
     private sealed class MapFrame
     {
         public Control? Clip;
+        public Control? FooterInput;
         public Control? Shift;
         public Control? Map;
         public Control? Points;
@@ -267,8 +268,7 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>
-    /// The graph clips under the stone header and at the top of the drawing bar. The native Back ribbon stays in
-    /// front of the parchment as a sibling of the chart, without reserving a separate row.
+    /// Bottom of the interactive chart. The native parchment continues behind the footer controls.
     /// </summary>
     private static float MapClipBottom(Control map, MapFrame? frame, float canvasHeight)
     {
@@ -310,14 +310,24 @@ internal sealed partial class PortraitBetweenLayout
         };
         clip.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
         clip.Position = new Vector2(0f, clipTop);
-        clip.Size = new Vector2(canvas.X, Math.Max(0f, clipBottom - clipTop));
+        clip.Size = new Vector2(canvas.X, Math.Max(0f, canvas.Y - clipTop));
         map.AddChild(clip);
         map.MoveChild(clip, mapIndex);
         clip.AddChild(shift);
+        // Draw the parchment behind the controls without letting touches in the footer gaps reach its nodes.
+        var footerInput = new Control
+        {
+            Name = "PortraitMapFooterInput",
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            FocusMode = Control.FocusModeEnum.None,
+        };
+        map.AddChild(footerInput);
+        map.MoveChild(footerInput, clip.GetIndex() + 1);
 
         var frame = new MapFrame
         {
             Clip = clip,
+            FooterInput = footerInput,
             Shift = shift,
             Map = theMap,
             MapIndex = mapIndex,
@@ -358,9 +368,16 @@ internal sealed partial class PortraitBetweenLayout
     {
         if (frame.Clip is { } clip && GodotObject.IsInstanceValid(clip))
         {
-            Vector2 size = new(canvas.X, Math.Max(0f, clipBottom - clipTop));
+            Vector2 size = new(canvas.X, Math.Max(0f, canvas.Y - clipTop));
             if (clip.Position.Y != clipTop) clip.Position = new Vector2(0f, clipTop);
             if (clip.Size != size) clip.Size = size;
+        }
+        if (frame.FooterInput is { } footer && GodotObject.IsInstanceValid(footer))
+        {
+            Vector2 position = new(0f, clipBottom);
+            Vector2 size = new(canvas.X, Math.Max(0f, canvas.Y - clipBottom));
+            if (footer.Position != position) footer.Position = position;
+            if (footer.Size != size) footer.Size = size;
         }
         if (frame.Shift is { } shift && GodotObject.IsInstanceValid(shift))
         {
@@ -704,6 +721,11 @@ internal sealed partial class PortraitBetweenLayout
         {
             clip.GetParent()?.RemoveChild(clip);
             clip.QueueFree();
+        }
+        if (frame.FooterInput is { } footer && GodotObject.IsInstanceValid(footer))
+        {
+            footer.GetParent()?.RemoveChild(footer);
+            footer.QueueFree();
         }
         frame.Clip = null;
         frame.Shift = null;
