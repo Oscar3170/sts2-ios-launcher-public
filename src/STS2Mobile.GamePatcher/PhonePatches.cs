@@ -22,6 +22,7 @@ internal static class PhonePatches
         // neighbours and card numbers, and clears a returning holder's ZIndex; only the targets it would animate to are
         // skipped. A build whose two methods do not match the tested shape keeps its fan rather than losing the hand.
         new("The phone lays out the hand's cards itself", false, HandLayoutPatches.SuppressNativeTargets, CanSkipOnTestedBuild: true),
+        new("Osty grows without leaving his portrait slot", false, OstyPositionPatch.SuppressNativePosition, CanSkipOnTestedBuild: true),
     ];
 
     // The game looks for release_info.json beside its executable. On the phone that is the app, which holds no game file and

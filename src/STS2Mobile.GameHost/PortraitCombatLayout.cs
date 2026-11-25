@@ -108,6 +108,7 @@ internal sealed class PortraitCombatLayout
     public void Attach()
     {
         _hand.Attach();
+        OstyPositionGate.OwnsPosition = OwnsCreaturePosition;
         RenderingServer.FramePreDraw += OnFramePreDraw;
     }
 
@@ -115,7 +116,12 @@ internal sealed class PortraitCombatLayout
     {
         RenderingServer.FramePreDraw -= OnFramePreDraw;
         _hand.Detach();
+        OstyPositionGate.OwnsPosition = null;
     }
+
+    private bool OwnsCreaturePosition(object node) =>
+        node is Control creature && _creatures.TryGetValue(creature.GetInstanceId(), out var state) &&
+        state.PlacementApplied;
 
     public const string CombatRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom";
     private static CombatReflection? _activityReflection;
