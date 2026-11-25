@@ -340,9 +340,7 @@ public static class PortraitCombatMath
     /// Two rules for a card's drawn transform, in one place.
     /// <para>Always: no drawn frame draws a card further than one step of the game's own animation toward its portrait slot —
     /// <c>clamp(frameSeconds·7)</c> of the distance it had left at the last pass, plus a unit — and no frame draws it
-    /// larger than its resting scale. This is what keeps the game's own retargets off the screen until the next pass
-    /// applies the portrait slot: the synchronous first step of a press's desktop hover target, a re-layout on an add, a
-    /// card put back. A card that is gliding normally is never touched.</para>
+    /// larger than its resting scale. This bounds arrival and return motion; a card gliding normally is never touched.</para>
     /// <para>While a turn draw's batch is open, for a card the player is not holding: the step may only go along the line
     /// to the slot (the frame's displacement is projected on <c>slot − previous</c> and clamped to the same one-step
     /// share), so a native step in another direction is never drawn; a card within 2 units of its slot is settled exactly
@@ -358,8 +356,7 @@ public static class PortraitCombatMath
     /// <param name="slotX">The card's portrait slot.</param>
     /// <param name="slotY">The card's portrait slot.</param>
     /// <param name="slotScale">The resting scale of the card's slot.</param>
-    /// <param name="slotAngleDegrees">The tilt the slot gives an unfocused card.</param>
-    /// <param name="restingAngleDegrees">The angle the card rests at (0 when focused).</param>
+    /// <param name="slotAngleDegrees">The resting angle of the holder.</param>
     /// <param name="previousRotationDegrees">The angle the last pass drew the card at.</param>
     /// <param name="interactive">The card is under a finger or focused: the always-on rule applies, never the direction lock.</param>
     /// <param name="turnDrawBatch">A turn draw with a known size is arriving: the direction lock applies.</param>
@@ -367,7 +364,7 @@ public static class PortraitCombatMath
     public static PortraitCardMotion CapCardArrival(
         float currentX, float currentY, float previousX, float previousY,
         float currentScale, float currentRotationDegrees,
-        float slotX, float slotY, float slotScale, float slotAngleDegrees, float restingAngleDegrees,
+        float slotX, float slotY, float slotScale, float slotAngleDegrees,
         float previousRotationDegrees, bool interactive, bool turnDrawBatch, float frameSeconds)
     {
         float weight = Math.Clamp(frameSeconds * 7f, 0f, 1f);
@@ -379,12 +376,8 @@ public static class PortraitCombatMath
         float lengthY = slotY - previousY;
         float length = MathF.Sqrt(lengthX * lengthX + lengthY * lengthY);
         if (length <= 2f)
-            // The card has arrived: settle it exactly onto its slot and hold it there, whatever the game wrote this frame.
-            // The native position loop stops within a unit of its target, so a card that arrived a fraction short and was
-            // only held at its previous place could stay short for ever, and the stall detector kept restarting the loop
-            // for it. A 2-unit move is invisible. This is also the settled card a release, an add or a focus nudges with
-            // the first step of a native retarget.
-            return new PortraitCardMotion(slotX, slotY, restingAngleDegrees, slotScale, scaleCapped, Settled: true);
+            // The native position loop stops within a unit. Settle exactly once the holder reaches the slot.
+            return new PortraitCardMotion(slotX, slotY, slotAngleDegrees, slotScale, scaleCapped, Settled: true);
 
         float step = MathF.Sqrt(stepX * stepX + stepY * stepY);
         float allowed = length * weight + 1f;
@@ -422,15 +415,10 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// The card's place in its row, as a local offset from the bottom-centre holder container: the upper row fills first,
-    /// rows are centred, and the focused card only grows in place (same centre and row; an edge card is straightened as
-    /// it grows, as the native hover does) by its own resting scale × <see cref="HeldCardGrowth"/>.
-    /// Off (<paramref name="flat"/> false) fans every shape like the launcher's compact hand; on, it uses flat rows at
-    /// every shape. Both keep the full shape card size, fill the upper row first, and let cards overlap
-    /// rather than leave the canvas; the focused card grows in place.
+    /// The resting holder's local slot in the permanent, top-first two-row hand. Reserve side clearance for its
+    /// separately scaled visual, so focus never needs to move the holder or resize its hitbox.
     /// </summary>
-    public static PortraitCardSlot ComputeHandCardSlot(int count, int index, int focusedIndex, PortraitCombatBands bands,
-        bool flat = false)
+    public static PortraitCardSlot ComputeHandCardSlot(int count, int index, PortraitCombatBands bands, bool flat = false)
     {
         int clamped = Math.Max(0, count);
         HandRowFit fit = ComputeHandRowFit(bands, clamped);
@@ -444,8 +432,6 @@ public static class PortraitCombatMath
         int rowCount = inUpperRow ? fit.UpperCount : fit.LowerCount;
         float heldScale = fit.Scale * HeldCardGrowth;
         float rowY = HandRowCenterLocalY(bands, rowIndex);
-        bool focused = focusedIndex == safeIndex;
-        float scale = focused ? heldScale : fit.Scale;
 
         if (flat)
         {
@@ -456,17 +442,15 @@ public static class PortraitCombatMath
             if (rowCount > 1)
                 step = Math.Min(step, 2f * limit / (rowCount - 1));
             float x = (col - (rowCount - 1) * 0.5f) * step;
-            return new PortraitCardSlot(x, rowY, scale, 0f, rowIndex);
+            return new PortraitCardSlot(x, rowY, fit.Scale, 0f, rowIndex);
         }
 
-        // The launcher's fan, at every shape. The half-span uses the held card's margin so pressing an edge card grows
-        // it in place without moving the row; the focused card is straightened as the native hover does.
+        // Keep the full fan angle while reserving clearance for the enlarged card visual.
         float t = rowCount <= 1 ? 0f : (col - (rowCount - 1) * 0.5f) / ((rowCount - 1) * 0.5f);
         float fanLimit = MaxHandCenterOffset(heldScale, HandRowAngle);
         float halfSpan = Math.Min((rowCount - 1) * 99f, fanLimit);
         float fanX = t * halfSpan;
-        float fanAngle = focused ? 0f : t * HandRowAngle;
-        return new PortraitCardSlot(Math.Clamp(fanX, -fanLimit, fanLimit), rowY, scale, fanAngle, rowIndex);
+        return new PortraitCardSlot(Math.Clamp(fanX, -fanLimit, fanLimit), rowY, fit.Scale, t * HandRowAngle, rowIndex);
     }
 
     /// <summary>

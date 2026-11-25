@@ -44,6 +44,7 @@ internal sealed class PortraitCombatLayout
             {
                 // The room, its UI or the hand went away while a card was still losing its glow or shadow: put back anything
                 // the passes took away. The card pool does not reset these, so the card would draw them on its next use.
+                ClearHandFocus();
                 RestoreCardEffectsWithoutPass(refl);
                 return;
             }
@@ -272,15 +273,35 @@ internal sealed class PortraitCombatLayout
         }
     }
 
-    public PortraitCombatLayout()
+    public void Attach()
     {
-        // The last chance before a frame is drawn: native AnimIn/target steps for End Turn, energy and the piles can
-        // run after the normal process pass, so the per-draw rail correction belongs here.
+        HandLayoutGate.TryOwnTargets = TryOwnNativeHandTargets;
         RenderingServer.FramePreDraw += OnFramePreDraw;
     }
 
-    /// <summary>Takes the pre-draw correction out of the rendering server when the phone host is detached.</summary>
-    public void Detach() => RenderingServer.FramePreDraw -= OnFramePreDraw;
+    public void Detach()
+    {
+        HandLayoutGate.TryOwnTargets = null;
+        RenderingServer.FramePreDraw -= OnFramePreDraw;
+        ClearHandFocus();
+    }
+
+    private bool TryOwnNativeHandTargets(object nativeHand)
+    {
+        if (nativeHand is not Control hand || !hand.IsInsideTree()) return false;
+        ulong id = hand.GetInstanceId();
+        if (_nativeLayoutHandId != id)
+        {
+            CombatReflection refl = EnsureReflection();
+            if (refl.HolderSetTargetPosMethod == null || refl.HolderSetTargetScaleMethod == null ||
+                refl.HolderSetTargetAngleMethod == null || refl.HolderTargetPosField == null ||
+                refl.HolderTargetScaleField == null || refl.HolderTargetAngleField == null)
+                return false;
+            _nativeLayoutHandId = id;
+        }
+        _handDirty = true;
+        return true;
+    }
 
     public const string CombatRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NCombatRoom";
     private const string ConfirmButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NConfirmButton";
@@ -453,7 +474,6 @@ internal sealed class PortraitCombatLayout
     // The hand's own decision for those entries: opened by a card arriving from the draw pile, closed on one frame once
     // the hand has settled (see HandEffectsWindow). A card that merely re-spaces never opens it.
     private HandEffectsWindow _effectsWindow;
-    private readonly HashSet<ulong> _wiredHolders = new();
     private readonly HashSet<ulong> _wiredSelectionHands = new();
     private readonly HashSet<ulong> _wiredSelectionContainers = new();
     private readonly HashSet<ulong> _wiredSelectedHolders = new();
@@ -476,7 +496,12 @@ internal sealed class PortraitCombatLayout
     private bool _handDirty;
     private long _handLastPassFrame;
     private bool _lastInCardPlay;
-    private ulong _lastPressedHolder;
+    private ulong _lastFocusedHolderId;
+    private ulong _lastDraggedHolderId;
+    private ulong _nativeLayoutHandId;
+    private ulong _requestedNativeHandId;
+    private Control? _focusedHandVisual;
+    private Vector2 _focusedHandVisualScale;
     private PortraitCombatBands? _lastHandBands;
     private bool _lastHandFlat;
     // The open draw batch is a turn's draw with a known size (set by the turn-number block): only such a draw is
@@ -687,6 +712,8 @@ internal sealed class PortraitCombatLayout
         // The rail and hand bookkeeping belongs to the fight that just ended: a later portrait session in the same room
         // must force the piles' entrance and place every pile again, and a returning card must start from the draw pile
         // rather than be capped against where it stood before the leave.
+        ClearHandFocus();
+        _nativeLayoutHandId = _requestedNativeHandId = 0;
         _railEntranceRooms.Clear();
         _railVisiblePiles.Clear();
         ResetHandSession();
@@ -713,7 +740,7 @@ internal sealed class PortraitCombatLayout
         _lastHandBands = null;
         _lastHandFlat = _flatHand;
         _lastInCardPlay = false;
-        _lastPressedHolder = 0;
+        _lastFocusedHolderId = _lastDraggedHolderId = 0;
         _lastReduceEffects = false;
         _effectsWindow.Reset();
         _handDirty = true;
@@ -739,11 +766,6 @@ internal sealed class PortraitCombatLayout
         foreach (ulong id in _dimmedCardChildren.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
         foreach (ulong id in dead) _dimmedCardChildren.Remove(id);
-
-        dead.Clear();
-        foreach (ulong id in _wiredHolders)
-            if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
-        foreach (ulong id in dead) _wiredHolders.Remove(id);
 
         dead.Clear();
         foreach (ulong id in _boostedHighlights)
@@ -993,9 +1015,8 @@ internal sealed class PortraitCombatLayout
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY);
         _lastBands = bands;
         _lastCanvasHeight = canvasHeight;
-        // The hand is laid out once per frame, in the pre-draw pass: that is after every native write of the frame (the
-        // Add's two layout passes, focus snaps) and before the frame is drawn, so a drawn frame is always the corrected
-        // one, and the motion cap gets exactly one allowance per frame.
+        // Native layout still updates input and navigation. Its geometry is disabled before any desktop target is set;
+        // the portrait writer applies its targets before draw, after the hand's membership and touch state settle.
         PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvasHeight, bands);
 
         if (ui != null)
@@ -1155,6 +1176,20 @@ internal sealed class PortraitCombatLayout
         if (container == null)
             return;
 
+        ulong handId = hand.GetInstanceId();
+        if (_nativeLayoutHandId != handId)
+        {
+            // An existing fight may enter portrait with an unchanged hand. Give the native hook one chance to claim it.
+            if (_requestedNativeHandId != handId && container.GetChildCount() > 0)
+            {
+                _requestedNativeHandId = handId;
+                refl.HandForceRefreshMethod?.Invoke(hand, null);
+                if (_nativeLayoutHandId != handId)
+                    GD.PrintErr("Portrait hand: native layout hook unavailable; keeping the game's card targets.");
+            }
+            if (_nativeLayoutHandId != handId) return;
+        }
+
         bool combatInProgress = refl.IsCombatInProgress();
         bool inCardPlay = (bool)(refl.HandInCardPlayProp?.GetValue(hand) ?? false);
         object? focusedObj = refl.HandFocusedHolderProp?.GetValue(hand);
@@ -1196,18 +1231,15 @@ internal sealed class PortraitCombatLayout
         int effectiveCount = PortraitCombatMath.EffectiveCardCount(activeHolders.Count, holding);
         int heldIndex = holding && refl.HandDraggedIndexField?.GetValue(hand) is int dragged ? Math.Clamp(dragged, 0, activeHolders.Count) : -1;
 
-        // The card under a finger is the one that grows. The pickup gate suppresses the native hover/focus on a touch
-        // press, so the touch pass's pressed holder comes first and the native focus is only the fallback (mouse,
-        // controller or a game-driven focus). While the hover itself belongs to a touch it is not a fallback at all: the
-        // engine parks its emulated mouse under the released finger, so the game reports the card there as focused for a
-        // frame after a cancel and lays the whole hand out around it, which is the one-frame snapshot when a card is
-        // released on top of another.
+        // The emulated mouse can focus the card beneath a lifted finger. That is not a new press or a real pointer.
         int focusedIndex = -1;
         if (PhoneTouchCards.PressedHolder is { } pressedHolder)
             focusedIndex = activeHolders.IndexOf(pressedHolder);
         if (focusedIndex < 0 && !PhoneTouchCards.HoverFromTouch && focusedObj is Control focusedControl)
             focusedIndex = activeHolders.IndexOf(focusedControl);
-        int focusedSlotIndex = focusedIndex >= 0 ? PortraitCombatMath.SlotIndexBesideHeldCard(focusedIndex, heldIndex) : -1;
+        ulong focusedId = focusedIndex >= 0 ? activeHolders[focusedIndex].GetInstanceId() : 0;
+        ulong draggedId = draggedHolder?.GetInstanceId() ?? 0;
+        ulong returningId = draggedId == 0 ? _lastDraggedHolderId : 0;
 
         // The draw's clock runs on process time, the same clock the pile tween uses, so a slow device stretches the gap
         // between cards and the wait with it; one load hitch is capped so it cannot end the draw early.
@@ -1293,7 +1325,6 @@ internal sealed class PortraitCombatLayout
         // selection or a card-play change, all of which are signals or one cheap field. So the pass runs when one of those
         // is dirty, while the hand moves (a draw's cap and the settle need every frame), and at least every
         // HandIdlePassFrames.
-        ulong pressed = PhoneTouchCards.PressedHolder?.GetInstanceId() ?? 0UL;
         bool needsPass = _handDirty
             || _handDrawBatch
             || handMovedBeforePass
@@ -1303,7 +1334,7 @@ internal sealed class PortraitCombatLayout
             || FlatHand != _lastHandFlat
             || ReduceEffects != _lastReduceEffects
             || inCardPlay != _lastInCardPlay
-            || pressed != _lastPressedHolder
+            || focusedId != _lastFocusedHolderId || draggedId != _lastDraggedHolderId
             || _lastHandBands is not { } lastBands || !lastBands.Equals(bands)
             || frame - _handLastPassFrame >= HandIdlePassFrames;
         PortraitFrameTiming.SetCards(activeHolders.Count);
@@ -1313,7 +1344,8 @@ internal sealed class PortraitCombatLayout
         _handDirty = false;
         _handLastPassFrame = frame;
         _lastInCardPlay = inCardPlay;
-        _lastPressedHolder = pressed;
+        _lastFocusedHolderId = focusedId;
+        _lastDraggedHolderId = draggedId;
         _lastHandBands = bands;
         _lastHandFlat = FlatHand;
         _lastReduceEffects = ReduceEffects;
@@ -1333,10 +1365,10 @@ internal sealed class PortraitCombatLayout
         bool actionsDisabled = refl.PlayerActionsDisabled();
 
         WireSelectionUi(hand);
+        UpdateHandFocus(focusedIndex >= 0 ? refl.CardHolderCardNodeProp?.GetValue(activeHolders[focusedIndex]) as Control : null);
         WireHandHolderContainer(container, hand.GetInstanceId());
         foreach (Control holder in allHoldersInHand)
         {
-            WireHolderFocus(holder, hand);
             WireHolderRemoval(holder, hand.GetInstanceId());
             // The card's number in the hand: 32 units are 11 points at the smallest tall hand scale, so the label is 44.
             EnlargeLabelFont(HandIndexLabel(holder), HandIndexFontSize);
@@ -1353,17 +1385,14 @@ internal sealed class PortraitCombatLayout
                 combatInProgress);
 
             int slotIndex = PortraitCombatMath.SlotIndexBesideHeldCard(i, heldIndex);
-            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(handCount, slotIndex, focusedSlotIndex, bands, FlatHand);
+            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(handCount, slotIndex, bands, FlatHand);
 
             bool isFocused = focusedIndex == i;
             bool interactive = isFocused || PhoneTouchCards.CardIsBeingDragged ||
                 PhoneTouchCards.PressedHolder == holder;
             var slotPosition = new Vector2(slot.LocalX, slot.LocalY);
 
-            // A card's first pass is its arrival: the game has just created the holder at the draw pile and stepped it once
-            // toward its desktop target. Put it back at the pile, at its resting size, so the first drawn frame is the card
-            // it is; every later pass only ever caps what one frame may do. A holder that has been through a pass belongs
-            // to a card that is already in the hand and can only re-space, which is what keeps its effects.
+            // A newly drawn card starts at the portrait pile before its first target starts moving it.
             bool arrived = !_stillness.HasRecord(holder);
             if (arrived)
             {
@@ -1373,34 +1402,17 @@ internal sealed class PortraitCombatLayout
                 holder.RotationDegrees = slot.AngleDegrees;
             }
 
-            // The game's own focus branch snaps the focused card's Y and scale, and nudges its neighbours, before this pass
-            // runs; put every card back where the last pass left it, so none of those instant writes is ever drawn. The
-            // focused card then only grows in place: its centre, row, angle and neighbours do not move.
             Vector2 currentTargetPos = (Vector2)(refl.HolderTargetPosField?.GetValue(holder) ?? holder.Position);
             Vector2 currentTargetScale = (Vector2)(refl.HolderTargetScaleField?.GetValue(holder) ?? holder.Scale);
             float currentTargetAngle = (float)(refl.HolderTargetAngleField?.GetValue(holder) ?? holder.RotationDegrees);
-            _stillness.RestoreIfRetargeted(holder, slotPosition, currentTargetPos, currentTargetScale, currentTargetAngle);
-            ApplyHolderTargets(holder, refl, slot, isFocused, currentTargetPos, currentTargetScale, currentTargetAngle);
-            // A holder the game stopped short of its slot (a native target cancelled by a layout pass leaves it where it
-            // was) has no animation left to carry it; restart the one step it needs. A card that is simply travelling is
-            // never touched: it moved since the last pass.
-            if (_stillness.IsStalled(holder, slotPosition) && refl.HolderSetTargetPosMethod is { } setTargetPos)
-            {
-                _oneArg[0] = slotPosition;
-                setTargetPos.Invoke(holder, _oneArg);
-            }
-            // The transform a card rests at in this slot: the focused card grows straight (0°), every other card takes the
-            // slot's tilt. The settled pin below holds exactly this, and the record stores it.
-            float restingAngle = isFocused ? 0f : slot.AngleDegrees;
-            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive, restingAngle);
-            // Position only: what an observer watching the hand sees travel (a native step, the pin above, a press), read
-            // before the record below, which then stores where the frame drew it. Scale and angle do not count. The layout's
-            // own pin counts too, which is why the governor's motion and the effects window's settle count follow these,
-            // not the pre-pass state only.
+            // On return a native drag may have stopped the old animations even when the stored targets match the slot.
+            ApplyHolderTargets(holder, refl, slot, isFocused, arrived || holder.GetInstanceId() == returningId,
+                currentTargetPos, currentTargetScale, currentTargetAngle);
+            CapArrivalMotion(holder, slot, slotPosition, hand, refl, interactive);
             bool holderShifted = _stillness.MovedOnScreen(holder);
             anyShiftedThisFrame |= holderShifted;
             anyArrivalThisFrame |= arrived;
-            _stillness.Record(holder, slotPosition, new Vector2(slot.Scale, slot.Scale), restingAngle);
+            _stillness.Record(holder);
 
             if (cardNode != null)
             {
@@ -1530,13 +1542,13 @@ internal sealed class PortraitCombatLayout
     /// only what differs is written (a set on the same float still dirties the transform and re-pins the card).
     /// </summary>
     private void CapArrivalMotion(Control holder, PortraitCardSlot slot, Vector2 slotPosition, Control hand,
-        CombatReflection refl, bool interactive, float restingAngle)
+        CombatReflection refl, bool interactive)
     {
         Vector2 previous = _stillness.PreviousPosition(holder, holder.Position);
         PortraitCombatMath.PortraitCardMotion motion = PortraitCombatMath.CapCardArrival(
             holder.Position.X, holder.Position.Y, previous.X, previous.Y,
             MathF.Max(holder.Scale.X, holder.Scale.Y), holder.RotationDegrees,
-            slotPosition.X, slotPosition.Y, slot.Scale, slot.AngleDegrees, restingAngle,
+            slotPosition.X, slotPosition.Y, slot.Scale, slot.AngleDegrees,
             _stillness.PreviousRotation(holder, holder.RotationDegrees),
             interactive, _turnDrawBatch, (float)hand.GetProcessDeltaTime());
         if (motion.ScaleCapped || motion.Settled)
@@ -2016,19 +2028,24 @@ internal sealed class PortraitCombatLayout
         public Vector2? ConfirmShowPos, ConfirmHidePos;
     }
 
-    /// <summary>
-    /// Under a finger the hover and the press come in one event. Hovering a card runs the game's desktop hand
-    /// layout at once (<c>NPlayerHand.RefreshLayout</c>): its focus branch snaps the card's Y and scale, and nudges its
-    /// neighbours by up to 100 units, before the press is delivered. Connected after the hand's own handler, this puts the
-    /// portrait layout back in the same event, so none of those instant writes is ever drawn.
-    /// </summary>
-    private void WireHolderFocus(Control holder, Control hand)
+    private void UpdateHandFocus(Control? card)
     {
-        if (!_wiredHolders.Add(holder.GetInstanceId())) return;
-        ulong handId = hand.GetInstanceId();
-        Callable relayout = Callable.From((Control _) => RelayoutHandNow(handId));
-        if (holder.HasSignal("HolderFocused")) holder.Connect("HolderFocused", relayout);
-        if (holder.HasSignal("HolderUnfocused")) holder.Connect("HolderUnfocused", relayout);
+        if (ReferenceEquals(card, _focusedHandVisual)) return;
+        ClearHandFocus();
+        if (card == null || !card.IsInsideTree()) return;
+        _focusedHandVisual = card;
+        _focusedHandVisualScale = card.Scale;
+        card.TreeExiting += ClearHandFocus;
+        card.Scale = _focusedHandVisualScale * PortraitCombatMath.HeldCardGrowth;
+    }
+
+    private void ClearHandFocus()
+    {
+        if (_focusedHandVisual is not { } card) return;
+        _focusedHandVisual = null;
+        if (!GodotObject.IsInstanceValid(card)) return;
+        card.TreeExiting -= ClearHandFocus;
+        card.Scale = _focusedHandVisualScale;
     }
 
     /// <summary>
@@ -2075,25 +2092,6 @@ internal sealed class PortraitCombatLayout
         if (tween.IsRunning())
             tween.Kill();
         refl.HandSelectedCardTweenField.SetValue(hand, null);
-    }
-
-    private void RelayoutHandNow(ulong handId)
-    {
-        if (!SafeAreaCanvas.IsPortrait || GodotObject.InstanceFromId(handId) is not Control hand || !GodotObject.IsInstanceValid(hand))
-            return;
-        // Focus or hover moved the native layout under us; the pass runs now, and once more on the next frame in case a
-        // native write lands after this one.
-        try
-        {
-            if (_lastBands is not { } bands)
-                return;
-            SyncHandAndPlayabilityPortrait(hand, EnsureReflection(), bands);
-            _handDirty = true;
-        }
-        catch (Exception error)
-        {
-            GD.PrintErr("Portrait hand relayout on focus failed: ", error.Message);
-        }
     }
 
     /// <summary>
@@ -2164,75 +2162,29 @@ internal sealed class PortraitCombatLayout
     }
 
     private void ApplyHolderTargets(Control holder, CombatReflection refl, PortraitCardSlot slot, bool isFocused,
-        Vector2 currentTargetPos, Vector2 currentTargetScale, float currentTargetAngle)
+        bool startMotion, Vector2 currentTargetPos, Vector2 currentTargetScale, float currentTargetAngle)
     {
         var targetPos = new Vector2(slot.LocalX, slot.LocalY);
         var targetScale = new Vector2(slot.Scale, slot.Scale);
 
-        // Positions and angles are only ever set as targets, so the game's animation moves the card from where it is and
-        // the press never shows a discontinuity. The card under the finger grows at once, as the game's own hover does;
-        // the other cards keep animating back to rest when a press ends.
-        //
-        // While the holder is already easing toward that axis' old target its animation loop is running and re-reads the
-        // target fields every frame, so writing the field gives the same motion without cancelling and starting a
-        // CancellationTokenSource, a Task and the loop (that restart, once per holder per layout write, is what made a
-        // draw hitch). The loops snap and stop exactly at the game's own thresholds, so "further from the old target than
-        // that" means the loop is alive; otherwise the real setter is called, which is also what restarts a stopped one.
-        bool movingPosition = (holder.Position - currentTargetPos).LengthSquared() > 1f;
-        bool movingScale = MathF.Abs(holder.Scale.X - currentTargetScale.X) > 0.002f;
-        bool movingAngle = MathF.Abs(holder.RotationDegrees - currentTargetAngle) > 0.1f;
-
-        if ((currentTargetPos - targetPos).LengthSquared() > 0.25f)
+        // Native setters start the interpolation immediately. Don't restart it when only focus has changed.
+        if ((currentTargetPos - targetPos).LengthSquared() > 0.25f ||
+            (startMotion && (holder.Position - targetPos).LengthSquared() > 1f))
         {
-            if (movingPosition)
-                refl.HolderTargetPosField?.SetValue(holder, targetPos);
-            else if (refl.HolderSetTargetPosMethod is { } setPosition)
-            {
-                _oneArg[0] = targetPos;
-                setPosition.Invoke(holder, _oneArg);
-            }
+            _oneArg[0] = targetPos;
+            refl.HolderSetTargetPosMethod!.Invoke(holder, _oneArg);
         }
-        if (MathF.Abs(currentTargetScale.X - targetScale.X) > 0.002f)
+        if (!currentTargetScale.IsEqualApprox(targetScale) ||
+            (startMotion && !holder.Scale.IsEqualApprox(targetScale)))
         {
-            if (isFocused)
-            {
-                refl.HolderTargetScaleField?.SetValue(holder, targetScale);
-                if (refl.HolderSetScaleInstantlyMethod is { } setScaleInstantly)
-                {
-                    _oneArg[0] = targetScale;
-                    setScaleInstantly.Invoke(holder, _oneArg);
-                }
-            }
-            else if (movingScale)
-            {
-                refl.HolderTargetScaleField?.SetValue(holder, targetScale);
-            }
-            else if (refl.HolderSetTargetScaleMethod is { } setScale)
-            {
-                _oneArg[0] = targetScale;
-                setScale.Invoke(holder, _oneArg);
-            }
+            _oneArg[0] = targetScale;
+            refl.HolderSetTargetScaleMethod!.Invoke(holder, _oneArg);
         }
-        if (isFocused)
+        if (MathF.Abs(currentTargetAngle - slot.AngleDegrees) > 0.05f ||
+            (startMotion && MathF.Abs(holder.RotationDegrees - slot.AngleDegrees) > 0.1f))
         {
-            // Straight at once, as the game's own hover does: rotation is about the holder's origin, but a rotated card's
-            // axis-aligned rect centre is offset, and rotating while it grows made that measured centre drift.
-            refl.HolderTargetAngleField?.SetValue(holder, 0f);
-            if (refl.HolderSetAngleInstantlyMethod is { } setAngleInstantly)
-            {
-                _oneArg[0] = 0f;
-                setAngleInstantly.Invoke(holder, _oneArg);
-            }
-        }
-        else if (MathF.Abs(currentTargetAngle - slot.AngleDegrees) > 0.05f)
-        {
-            if (movingAngle)
-                refl.HolderTargetAngleField?.SetValue(holder, slot.AngleDegrees);
-            else if (refl.HolderSetTargetAngleMethod is { } setAngle)
-            {
-                _oneArg[0] = slot.AngleDegrees;
-                setAngle.Invoke(holder, _oneArg);
-            }
+            _oneArg[0] = slot.AngleDegrees;
+            refl.HolderSetTargetAngleMethod!.Invoke(holder, _oneArg);
         }
 
         if (isFocused)
@@ -6911,8 +6863,6 @@ internal sealed class PortraitCombatLayout
         public readonly MethodInfo? HolderSetTargetPosMethod;
         public readonly MethodInfo? HolderSetTargetScaleMethod;
         public readonly MethodInfo? HolderSetTargetAngleMethod;
-        public readonly MethodInfo? HolderSetScaleInstantlyMethod;
-        public readonly MethodInfo? HolderSetAngleInstantlyMethod;
         public readonly PropertyInfo? HolderGlowGoldProp;
         public readonly PropertyInfo? HolderGlowRedProp;
         public readonly FieldInfo? SelectedHolderTweenField;
@@ -7065,8 +7015,6 @@ internal sealed class PortraitCombatLayout
             HolderSetTargetPosMethod = handHolderType?.GetMethod("SetTargetPosition", InstAll);
             HolderSetTargetScaleMethod = handHolderType?.GetMethod("SetTargetScale", InstAll);
             HolderSetTargetAngleMethod = handHolderType?.GetMethod("SetTargetAngle", InstAll);
-            HolderSetScaleInstantlyMethod = handHolderType?.GetMethod("SetScaleInstantly", InstAll);
-            HolderSetAngleInstantlyMethod = handHolderType?.GetMethod("SetAngleInstantly", InstAll);
             HolderGlowGoldProp = FindProperty(handHolderType, "ShouldGlowGold");
             HolderGlowRedProp = FindProperty(handHolderType, "ShouldGlowRed");
             Type? selectedHolderType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Cards.Holders.NSelectedHandCardHolder");

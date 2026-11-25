@@ -7,8 +7,9 @@ namespace STS2Mobile.GamePatcher;
 /// comfort on a phone, and a build they do not fit plays without them.
 /// </summary>
 /// <param name="Name">What it does, in the player's words. The report and the record use it.</param>
+/// <param name="CanSkipOnTestedBuild">Allows a preflight rejection to keep native behavior even on an older tested profile.</param>
 /// <remarks>Each step finds everything it changes before it changes anything, so a step that does not fit leaves the game as it was.</remarks>
-internal sealed record PatchStep(string Name, bool Required, Action<GamePatch> Apply);
+internal sealed record PatchStep(string Name, bool Required, Action<GamePatch> Apply, bool CanSkipOnTestedBuild = false);
 
 /// <summary>A required patch does not fit this build, so it cannot be prepared.</summary>
 public sealed class GamePatchRefusedException(string patch, string reason)

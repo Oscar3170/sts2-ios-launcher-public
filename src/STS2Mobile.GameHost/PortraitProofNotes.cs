@@ -11,7 +11,7 @@ namespace STS2Mobile.GameHost;
 /// <summary>
 /// <c>phone-notes</c>: notes from playing on a phone, each shown in portrait. A run as The Fool
 /// with thirty relics (two rows in the relic strip): Orobas and the Touch of Orobas tip; the hand's motion at a fight's start and
-/// after a card is played, measured with the earlier rule and with the new one; End Turn under a held card; the
+/// after a card is played; End Turn under a held card; the
 /// Waterfall Giant with Wah Cho Ki aimed, the Kaiser Crab, two other bosses and two elites; a scroll that starts on a card of the
 /// upgrade screen; and the shop under the relic strip. Every step logs <c>result=</c> and waits for the host's screenshot.
 /// </summary>
@@ -36,28 +36,20 @@ internal static partial class PortraitProof
 
         await NotesOrobasAsync(tree, game, player, results);
 
-        // The hand at a fight's start and after a card is played: first with the earlier rule, then with the new one.
-        foreach (bool oldRule in new[] { true, false })
-        {
-            HandStillness.ProofOldRule = oldRule;
-            string rule = oldRule ? "old" : "new";
-            Task<string> start = SampleHandAsync(tree, 150);
-            await EnterEncounterAsync(Sts2, tree, player, "NIBBITS_NORMAL", 42UL);
-            string atStart = await start;
-            DismissFtues(tree, Sts2);
-            await TrimHandToAsync(Sts2, player, ["STRIKE_IRONCLAD", "DEFEND_IRONCLAD", "STRIKE_IRONCLAD", "DEFEND_IRONCLAD", "STRIKE_IRONCLAD", "DEFEND_IRONCLAD"]);
-            await SetPlayerEnergyAsync(Sts2, player, 9m);
-            await WaitFramesAsync(tree, 60);
-            Task<string> afterPlay = SampleHandAsync(tree, 110);
-            string played = await DragStrikeOntoEnemyAsync(tree, 0, cardIndex: 0);
-            string afterPlayMotion = await afterPlay;
-            await TouchStepAsync(tree, $"notes-hand-{rule}", $"rule={rule} start[{atStart}] play[{afterPlayMotion}] {played}", results);
-            await RunConsoleCmdAsync(Sts2, "WinConsoleCmd", player, []);
-            await WaitFramesAsync(tree, 90);
-            Call(StaticProp(GameType(ScreensNs + "Overlays.NOverlayStack"), "Instance")!, "Clear");
-            await WaitFramesAsync(tree, 20);
-        }
-        HandStillness.ProofOldRule = false;
+        Task<string> start = SampleHandAsync(tree, 150);
+        await EnterEncounterAsync(Sts2, tree, player, "NIBBITS_NORMAL", 42UL);
+        string atStart = await start;
+        DismissFtues(tree, Sts2);
+        await TrimHandToAsync(Sts2, player, ["STRIKE_IRONCLAD", "DEFEND_IRONCLAD", "STRIKE_IRONCLAD", "DEFEND_IRONCLAD", "STRIKE_IRONCLAD", "DEFEND_IRONCLAD"]);
+        await SetPlayerEnergyAsync(Sts2, player, 9m);
+        await WaitFramesAsync(tree, 60);
+        Task<string> afterPlay = SampleHandAsync(tree, 110);
+        string played = await DragStrikeOntoEnemyAsync(tree, 0, cardIndex: 0);
+        await TouchStepAsync(tree, "notes-hand", $"start[{atStart}] play[{await afterPlay}] {played}", results);
+        await RunConsoleCmdAsync(Sts2, "WinConsoleCmd", player, []);
+        await WaitFramesAsync(tree, 90);
+        Call(StaticProp(GameType(ScreensNs + "Overlays.NOverlayStack"), "Instance")!, "Clear");
+        await WaitFramesAsync(tree, 20);
 
         foreach (string fight in NotesFights)
         {

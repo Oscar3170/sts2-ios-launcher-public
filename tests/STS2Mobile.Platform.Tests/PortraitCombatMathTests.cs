@@ -34,12 +34,12 @@ public class PortraitCombatMathTests
             PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
             for (int i = 0; i < count; i++)
             {
-                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, bands);
                 Assert.Equal(0, slot.RowIndex);
             }
             Assert.Equal(
-                PortraitCombatMath.ComputeHandCardSlot(3, 0, focusedIndex: -1, bands).LocalY,
-                PortraitCombatMath.ComputeHandCardSlot(1, 0, focusedIndex: -1, bands).LocalY);
+                PortraitCombatMath.ComputeHandCardSlot(3, 0, bands).LocalY,
+                PortraitCombatMath.ComputeHandCardSlot(1, 0, bands).LocalY);
         }
     }
 
@@ -58,7 +58,7 @@ public class PortraitCombatMathTests
             bool hasLeader = false;
             for (int i = 0; i < count; i++)
             {
-                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, bands);
                 if (slot.RowIndex == 0)
                 {
                     if (upper is { } expectedUpper)
@@ -135,7 +135,7 @@ public class PortraitCombatMathTests
             HandRowFit fit = PortraitCombatMath.ComputeHandRowFit(bands, count);
             for (int i = 0; i < count; i++)
             {
-                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands);
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, bands);
                 Assert.Equal(fit.Scale, slot.Scale, 4);
                 Assert.InRange(slot.AngleDegrees, -2.401f, 2.401f);
                 float radians = MathF.Abs(slot.AngleDegrees) * MathF.PI / 180f;
@@ -177,7 +177,7 @@ public class PortraitCombatMathTests
                 bool flat = mode == 1;
                 for (int i = 0; i < count; i++)
                 {
-                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat);
+                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, bands, flat);
                     Assert.Equal(expectedScale, slot.Scale, 4);
                     Assert.Equal(expectedScale, PortraitCombatMath.HandCardScaleFor(bands, count), 4);
                     Assert.Equal(expectedScale * 1.08f, PortraitCombatMath.HeldCardScaleFor(bands, count), 4);
@@ -226,8 +226,8 @@ public class PortraitCombatMathTests
         {
             for (int i = 0; i < count; i++)
             {
-                PortraitCardSlot fan = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat: false);
-                PortraitCardSlot flat = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat: true);
+                PortraitCardSlot fan = PortraitCombatMath.ComputeHandCardSlot(count, i, bands, flat: false);
+                PortraitCardSlot flat = PortraitCombatMath.ComputeHandCardSlot(count, i, bands, flat: true);
                 Assert.Equal(fan.RowIndex, flat.RowIndex);
                 Assert.Equal(fan.LocalY, flat.LocalY, 4);
                 Assert.Equal(fan.Scale, flat.Scale, 4);
@@ -260,7 +260,7 @@ public class PortraitCombatMathTests
             {
                 for (int i = 0; i < count; i++)
                 {
-                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands, flat);
+                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, bands, flat);
                     float radians = MathF.Abs(slot.AngleDegrees) * MathF.PI / 180f;
                     float halfHeight = (PortraitCombatMath.CardDefaultHeight * MathF.Cos(radians) +
                         PortraitCombatMath.CardDefaultWidth * MathF.Sin(radians)) * 0.5f * slot.Scale;
@@ -281,68 +281,19 @@ public class PortraitCombatMathTests
     [InlineData(8)]
     [InlineData(10)]
     [InlineData(12)]
-    public void EveryHandCardStaysInsideTheSideEdgesWithItsBadgeAndRotationWhateverIsFocused(int count)
+    public void EveryGrownHandCardKeepsItsBadgeInsideTheSideEdgesAtItsRestingAngle(int count)
     {
         foreach (float canvasHeight in new[] { 1920f, 2340f })
         {
             PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
-            for (int focused = -1; focused < count; focused++)
+            for (int i = 0; i < count; i++)
             {
-                for (int i = 0; i < count; i++)
-                {
-                    PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, focused, bands);
-                    float extent = PortraitCombatMath.HandSlotHalfExtent(slot.Scale, slot.AngleDegrees);
-                    float left = 540f + slot.LocalX - extent;
-                    float right = 540f + slot.LocalX + extent;
-                    if (focused < 0)
-                    {
-                        Assert.True(left >= PortraitCombatMath.HandEdgeMargin - 0.01f, $"Card {i}/{count} (focused {focused}) left edge {left}.");
-                        Assert.True(right <= 1080f - PortraitCombatMath.HandEdgeMargin + 0.01f, $"Card {i}/{count} (focused {focused}) right edge {right}.");
-                    }
-                    else
-                    {
-                        // A pressed card grows about its centre without moving; near the edge that may use the last few
-                        // units of the margin, but it must stay on the canvas (compact clamps to the margin exactly).
-                        Assert.True(left >= -0.01f, $"Card {i}/{count} (focused {focused}) left edge {left}.");
-                        Assert.True(right <= 1080f + 0.01f, $"Card {i}/{count} (focused {focused}) right edge {right}.");
-                    }
-                }
-            }
-        }
-    }
-
-    [Theory]
-    [InlineData(5)]
-    [InlineData(8)]
-    [InlineData(10)]
-    public void FocusingAGrowsTheCardInPlaceWithoutMovingItOrItsNeighbours(int count)
-    {
-        // A touch focuses the card under the finger: it grows about its own centre by 1.08 of its own resting scale,
-        // keeping its slot, row and angle, and the rest of the hand does not move at all.
-        foreach (float canvasHeight in new[] { 1920f, 2340f })
-        {
-            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, 612f);
-            for (int focused = 0; focused < count; focused++)
-            {
-                PortraitCardSlot rest = PortraitCombatMath.ComputeHandCardSlot(count, focused, focusedIndex: -1, bands);
-                PortraitCardSlot grown = PortraitCombatMath.ComputeHandCardSlot(count, focused, focused, bands);
-
-                Assert.Equal(PortraitCombatMath.HandCardScaleFor(bands, count) * 1.08f, grown.Scale, 4);
-                Assert.True(grown.Scale > rest.Scale);
-                Assert.Equal(rest.LocalX, grown.LocalX);
-                Assert.Equal(rest.LocalY, grown.LocalY);
-                // Straightened as it grows, as the native hover does; the holder turns about its own centre, so the card's
-                // visual centre stays under the finger and its axis-aligned rect centre no longer drifts with rotation.
-                Assert.Equal(0f, grown.AngleDegrees);
-                Assert.Equal(rest.RowIndex, grown.RowIndex);
-
-                for (int i = 0; i < count; i++)
-                {
-                    if (i == focused) continue;
-                    Assert.Equal(
-                        PortraitCombatMath.ComputeHandCardSlot(count, i, focusedIndex: -1, bands),
-                        PortraitCombatMath.ComputeHandCardSlot(count, i, focused, bands));
-                }
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, bands);
+                float extent = PortraitCombatMath.HandSlotHalfExtent(slot.Scale * PortraitCombatMath.HeldCardGrowth, slot.AngleDegrees);
+                float left = 540f + slot.LocalX - extent;
+                float right = 540f + slot.LocalX + extent;
+                Assert.True(left >= -0.01f, $"Grown card {i}/{count} left edge {left}.");
+                Assert.True(right <= 1080f + 0.01f, $"Grown card {i}/{count} right edge {right}.");
             }
         }
     }
@@ -364,8 +315,8 @@ public class PortraitCombatMathTests
                     int original = i < held ? i : i + 1;
                     Assert.Equal(original, slot);
                     Assert.Equal(
-                        PortraitCombatMath.ComputeHandCardSlot(count, original, focusedIndex: -1, bands),
-                        PortraitCombatMath.ComputeHandCardSlot(count, slot, focusedIndex: -1, bands));
+                        PortraitCombatMath.ComputeHandCardSlot(count, original, bands),
+                        PortraitCombatMath.ComputeHandCardSlot(count, slot, bands));
                 }
             }
         }
@@ -376,11 +327,11 @@ public class PortraitCombatMathTests
     public void FiveCardsFillThreeUpperSlotsAndTwoLowerOnes()
     {
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(1920f, 612f);
-        PortraitCardSlot upperLeft = PortraitCombatMath.ComputeHandCardSlot(5, 0, focusedIndex: -1, bands);
-        PortraitCardSlot upperMiddle = PortraitCombatMath.ComputeHandCardSlot(5, 1, focusedIndex: -1, bands);
-        PortraitCardSlot upperRight = PortraitCombatMath.ComputeHandCardSlot(5, 2, focusedIndex: -1, bands);
-        PortraitCardSlot lowerLeft = PortraitCombatMath.ComputeHandCardSlot(5, 3, focusedIndex: -1, bands);
-        PortraitCardSlot lowerRight = PortraitCombatMath.ComputeHandCardSlot(5, 4, focusedIndex: -1, bands);
+        PortraitCardSlot upperLeft = PortraitCombatMath.ComputeHandCardSlot(5, 0, bands);
+        PortraitCardSlot upperMiddle = PortraitCombatMath.ComputeHandCardSlot(5, 1, bands);
+        PortraitCardSlot upperRight = PortraitCombatMath.ComputeHandCardSlot(5, 2, bands);
+        PortraitCardSlot lowerLeft = PortraitCombatMath.ComputeHandCardSlot(5, 3, bands);
+        PortraitCardSlot lowerRight = PortraitCombatMath.ComputeHandCardSlot(5, 4, bands);
 
         Assert.All(new[] { upperLeft, upperMiddle, upperRight }, slot => Assert.Equal(0, slot.RowIndex));
         Assert.All(new[] { lowerLeft, lowerRight }, slot => Assert.Equal(1, slot.RowIndex));
@@ -394,8 +345,8 @@ public class PortraitCombatMathTests
     public void TenCardsFillBothRowsAndKeepTheUpperRowCardsReadable()
     {
         PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(1920f, 612f);
-        PortraitCardSlot upperCenter = PortraitCombatMath.ComputeHandCardSlot(10, 2, focusedIndex: -1, bands);
-        PortraitCardSlot lowerCenter = PortraitCombatMath.ComputeHandCardSlot(10, 7, focusedIndex: -1, bands);
+        PortraitCardSlot upperCenter = PortraitCombatMath.ComputeHandCardSlot(10, 2, bands);
+        PortraitCardSlot lowerCenter = PortraitCombatMath.ComputeHandCardSlot(10, 7, bands);
 
         Assert.Equal(0, upperCenter.RowIndex);
         Assert.Equal(1, lowerCenter.RowIndex);
@@ -1212,7 +1163,7 @@ public class PortraitCombatMathTests
         PortraitCombatMath.PortraitCardMotion motion = PortraitCombatMath.CapCardArrival(
             currentX: 200f, currentY: 100f, previousX: 199f, previousY: 99f,
             currentScale: 0.9f, currentRotationDegrees: 3f,
-            slotX: 200f, slotY: 100.5f, slotScale: 0.87f, slotAngleDegrees: 2f, restingAngleDegrees: 2f,
+            slotX: 200f, slotY: 100.5f, slotScale: 0.87f, slotAngleDegrees: 2f,
             previousRotationDegrees: 3f, interactive: false, turnDrawBatch: false, frameSeconds: 1f / 60f);
         Assert.Equal(200f, motion.X);
         Assert.Equal(100.5f, motion.Y);
@@ -1225,7 +1176,7 @@ public class PortraitCombatMathTests
         PortraitCombatMath.PortraitCardMotion shrinking = PortraitCombatMath.CapCardArrival(
             currentX: 200f, currentY: 100f, previousX: 199f, previousY: 99f,
             currentScale: 0.70f, currentRotationDegrees: 3f,
-            slotX: 200f, slotY: 100.5f, slotScale: 0.87f, slotAngleDegrees: 2f, restingAngleDegrees: 2f,
+            slotX: 200f, slotY: 100.5f, slotScale: 0.87f, slotAngleDegrees: 2f,
             previousRotationDegrees: 3f, interactive: false, turnDrawBatch: false, frameSeconds: 1f / 60f);
         Assert.False(shrinking.ScaleCapped);
         Assert.True(shrinking.Settled);
@@ -1241,7 +1192,7 @@ public class PortraitCombatMathTests
         PortraitCombatMath.PortraitCardMotion motion = PortraitCombatMath.CapCardArrival(
             currentX: 500f, currentY: 0f, previousX: 0f, previousY: 0f,
             currentScale: 0.8f, currentRotationDegrees: 4f,
-            slotX: 1000f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 2.4f, restingAngleDegrees: 2.4f,
+            slotX: 1000f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 2.4f,
             previousRotationDegrees: 4f, interactive: true, turnDrawBatch: true, frameSeconds: frameSeconds);
         Assert.Equal(allowed, motion.X, 0.01f);
         Assert.Equal(0f, motion.Y);
@@ -1257,7 +1208,7 @@ public class PortraitCombatMathTests
         PortraitCombatMath.PortraitCardMotion sideways = PortraitCombatMath.CapCardArrival(
             currentX: 0f, currentY: 50f, previousX: 0f, previousY: 0f,
             currentScale: 0.8f, currentRotationDegrees: 0f,
-            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 0f, restingAngleDegrees: 0f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 0f,
             previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
         Assert.Equal(0f, sideways.X, 0.01f);
         Assert.Equal(0f, sideways.Y, 0.01f);
@@ -1265,7 +1216,7 @@ public class PortraitCombatMathTests
         PortraitCombatMath.PortraitCardMotion diagonal = PortraitCombatMath.CapCardArrival(
             currentX: 100f, currentY: 100f, previousX: 0f, previousY: 0f,
             currentScale: 0.8f, currentRotationDegrees: 0f,
-            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 0f, restingAngleDegrees: 0f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 0f,
             previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
         // The projection is 100 of the 100-unit line, clamped to 100 * 0.7 + 1 = 71.
         Assert.Equal(71f, diagonal.X, 0.01f);
@@ -1280,14 +1231,14 @@ public class PortraitCombatMathTests
         PortraitCombatMath.PortraitCardMotion toward = PortraitCombatMath.CapCardArrival(
             currentX: 90f, currentY: 0f, previousX: 0f, previousY: 0f,
             currentScale: 0.8f, currentRotationDegrees: 20f,
-            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 5f, restingAngleDegrees: 5f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 5f,
             previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
         Assert.Equal(3.6f, toward.RotationDegrees, 0.001f);
 
         PortraitCombatMath.PortraitCardMotion away = PortraitCombatMath.CapCardArrival(
             currentX: 90f, currentY: 0f, previousX: 0f, previousY: 0f,
             currentScale: 0.8f, currentRotationDegrees: -20f,
-            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 5f, restingAngleDegrees: 5f,
+            slotX: 100f, slotY: 0f, slotScale: 0.8f, slotAngleDegrees: 5f,
             previousRotationDegrees: 0f, interactive: false, turnDrawBatch: true, frameSeconds: 0.1f);
         Assert.Equal(0f, away.RotationDegrees);
     }

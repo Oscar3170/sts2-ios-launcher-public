@@ -53,11 +53,8 @@ internal sealed class PhoneTouchCards
     public static bool CardIsBeingDragged { get; private set; }
 
     /// <summary>
-    /// Whether the pointer's hover is a touch's: true from a finger's press until two frames after its release. The engine
-    /// leaves its emulated mouse where the finger was, so after a release the card under that point is hovered, and the game
-    /// reports it as its focused holder for a frame, with a full hand re-layout around it (the cancel snapshot: released over
-    /// another card, the row re-spaces and grows, then snaps back). The hand therefore ignores the game's focused holder
-    /// while this is set; the finger's own card still grows, through <see cref="PressedHolder"/>.
+    /// The emulated pointer still belongs to the finger after release; a parked mouse must not enlarge a neighbour.
+    /// Only new real pointer or controller input takes ownership back.
     /// </summary>
     public static bool HoverFromTouch { get; private set; }
 
@@ -228,11 +225,9 @@ internal sealed class PhoneTouchCards
                 EndGesture(touch);
             }
         }
-        else if (input is InputEventMouseMotion { Device: >= 0 })
+        else if (input is InputEventMouseMotion { Device: >= 0 } or InputEventMouseButton { Device: >= 0, Pressed: true }
+            or InputEventJoypadButton { Pressed: true } || input is InputEventJoypadMotion axis && MathF.Abs(axis.AxisValue) > 0.5f)
         {
-            // A real mouse moving is proof the hover belongs to a pointer again: the engine's emulated mouse, which a touch
-            // drives, carries device -1, a real one does not. It also covers a touch release lost to backgrounding, which
-            // would otherwise leave the game's focus ignored until the next gesture.
             HoverFromTouch = false;
         }
         else if (input is InputEventScreenDrag drag && drag.Index == 0 && _down)
@@ -333,11 +328,6 @@ internal sealed class PhoneTouchCards
             return;
         }
 
-        // Two frames after a release the engine's emulated mouse has settled on whatever sits under it; from then on a
-        // real pointer (desktop, or a mouse on a tablet) owns the hover again.
-        if (HoverFromTouch && !_down && Engine.GetProcessFrames() > _releaseFrame + 2)
-            HoverFromTouch = false;
-
         bool overlays = r.OverlayCount() > 0;
         bool playInProgress = r.CurrentCardPlay(hand) != null;
         bool playMode = r.InPlayMode(hand);
@@ -405,7 +395,7 @@ internal sealed class PhoneTouchCards
         _gestureDecided = true;
         // The card is about to be reparented to the hand and the game's BeginDrag raises the holder to 1. Keep the size it
         // has under the finger now (the pressed growth) so the pickup does not pop larger.
-        float pressedCanvasScale = MathF.Abs(holder.GetGlobalTransformWithCanvas().Scale.Y);
+        float pressedCanvasScale = MathF.Abs((r.CardVisual(holder) ?? holder).GetGlobalTransformWithCanvas().Scale.Y);
         try
         {
             r.PressHandHolder(hand, holder);
@@ -891,6 +881,7 @@ internal sealed class PhoneTouchCards
         private readonly MethodInfo? _finishTargeting;
         private readonly MethodInfo? _cancelTargeting;
         private readonly PropertyInfo? _holderCardModel;
+        private readonly PropertyInfo? _holderCardVisual;
         private readonly PropertyInfo? _targetType;
         private readonly PropertyInfo? _overlayInstance;
         private readonly PropertyInfo? _overlayCount;
@@ -920,6 +911,7 @@ internal sealed class PhoneTouchCards
             _dragStartY = _mouseCardPlayType?.GetField("_dragStartYPosition", InstAll);
             Type? holderType = sts2.GetType(HandHolderTypeName);
             _holderCardModel = holderType?.GetProperty("CardModel", InstAll);
+            _holderCardVisual = holderType?.GetProperty("CardNode", InstAll);
             _setTargetPosition = holderType?.GetMethod("SetTargetPosition", InstAll, [typeof(Vector2)]);
             _setTargetScale = holderType?.GetMethod("SetTargetScale", InstAll, [typeof(Vector2)]);
             Type? targetType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Combat.NTargetManager");
@@ -999,6 +991,8 @@ internal sealed class PhoneTouchCards
         public IList? ActiveHolders(Control hand) => _activeHolders!.GetValue(hand) as IList;
 
         public Control? FocusedHolder(Control hand) => _focusedHolder?.GetValue(hand) as Control;
+
+        public Control? CardVisual(Control holder) => _holderCardVisual?.GetValue(holder) as Control;
 
         public object? HolderCardModel(Control holder) => _holderCardModel!.GetValue(holder);
 

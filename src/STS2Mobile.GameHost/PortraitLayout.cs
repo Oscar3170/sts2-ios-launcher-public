@@ -120,6 +120,7 @@ internal sealed class PortraitLayout
         tree.Root.SizeChanged += OnRootSizeChanged;
         tree.NodeAdded += OnNodeAdded;
         tree.ProcessFrame += OnProcessFrame;
+        _combat.Attach();
         RenderingServer.FramePreDraw += OnHeaderPreDraw;
         _headerSwipe.Attach(tree);
         _navPads.Attach();

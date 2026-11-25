@@ -81,7 +81,7 @@ public static class GameAssemblyBuilder
         foreach (var step in Steps(gameAdapters))
         {
             patch.Note = null;
-            if (!tolerant)
+            if (!tolerant && !step.CanSkipOnTestedBuild)
             {
                 step.Apply(patch);
                 outcomes.Add(new PatchOutcome(step.Name, step.Required, Applied: true));

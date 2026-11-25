@@ -18,6 +18,10 @@ internal static class PhonePatches
         new("The game fills the screen", false, FillScreen),
         new("The game keeps clear of the notch and the island", false, KeepClearOfTheNotch),
         new("The game's version read from its folder", false, ReadReleaseInfoFromGameFolder),
+        // The portrait host writes where each hand card goes. The game's own fan still runs for its hitboxes, focus
+        // neighbours and card numbers, and clears a returning holder's ZIndex; only the targets it would animate to are
+        // skipped. A build whose two methods do not match the tested shape keeps its fan rather than losing the hand.
+        new("The phone lays out the hand's cards itself", false, HandLayoutPatches.SuppressNativeTargets, CanSkipOnTestedBuild: true),
     ];
 
     // The game looks for release_info.json beside its executable. On the phone that is the app, which holds no game file and
