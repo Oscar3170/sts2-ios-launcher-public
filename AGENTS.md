@@ -1,5 +1,35 @@
 # Launcher development guidance
 
+This repository builds an iOS launcher and Godot/.NET host for Slay the Spire 2. The IPA contains the launcher, not the game: an owning Steam account downloads the game at runtime. Start with [README.md](README.md) for product behavior, [BUILDING.md](BUILDING.md) for commands and version upgrades, and [TODO.md](TODO.md) for current issues. The source and current test results take precedence over old project notes.
+
+## Where changes belong
+
+| Area | Owner |
+| --- | --- |
+| Sign-in, download and preparation screens, app flow | [`STS2Mobile.Launcher`](src/STS2Mobile.Launcher) |
+| App entry point, iOS/Godot packaging and native integration | [`STS2Mobile.FullGame`](src/STS2Mobile.FullGame), [`scripts/`](scripts), [`tools/mono/`](tools/mono) |
+| In-game input, screen layout, node lifetimes, and animation | [`STS2Mobile.GameHost`](src/STS2Mobile.GameHost) |
+| Game-independent layout math, policies, and patch gates | [`STS2Mobile.Platform`](src/STS2Mobile.Platform); keep it free of Godot and game types |
+| Calls from rewritten game code into platform implementations | [`STS2Mobile.GameAdapters`](src/STS2Mobile.GameAdapters); [`GameStub`](src/STS2Mobile.GameStub) supplies build-time game signatures, not implementations or compatibility evidence |
+| Assembly patching and mod weaving; resource pack conversion | [`STS2Mobile.GamePatcher`](src/STS2Mobile.GamePatcher) and [`STS2Mobile.GamePack`](src/STS2Mobile.GamePack), respectively |
+| Steam account, downloads, Cloud and networking; wire serialization | [`STS2Mobile.Steam`](src/STS2Mobile.Steam) and [`STS2Mobile.SteamWire`](src/STS2Mobile.SteamWire); see [NETWORK.md](NETWORK.md) |
+
+Use the existing owner instead of adding a second path. Split large classes by independent state and lifetime, not just line count: e.g. combat room staging, hand, and action rail should not all move because a card gained focus. Put pure geometry in the existing `Platform` math files and keep native node access and cleanup in `GameHost`. Keep behavioral fixes and file moves in separate commits when practical.
+
+## Developing safely
+
+- Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.
+- Preserve native art, animation, hit testing, accessibility of controls, and gameplay. For portrait, use the applied canvas and safe area, not device names. Keep 9:16, taller phones, and landscape usable. Own each property in one place; restore only what portrait changed and disconnect callbacks or cancel stale deferred work on exit. Do not casually reparent initialized or pooled Godot nodes.
+- Keep game assemblies, extracted assets, generated Xcode projects and IPAs, credentials, and local Steam or signing state out of source control. Use the ignored locations in [BUILDING.md](BUILDING.md#local-state); deliver changes to the scripts or source inputs, not generated outputs. Keep test fixtures out of the app.
+- Treat profile changes as compatibility work, not a string bump. Follow [Updating inputs](BUILDING.md#updating-inputs) for the exact macOS depot, retained profiles, patch reports, game-facing references, asset conversion, and mod compatibility. Do not replace an expected hash with a mismatched file's hash merely to make preparation pass.
+
+## Testing and delivery
+
+1. Start with the narrowest check that exercises the change. Run `dotnet test tests/<project>` for isolated .NET logic; use `STS2Mobile.Platform.Tests` for pure layout and input policy and `GamePatcher.Tests` for assembly preparation. Use [BUILDING.md](BUILDING.md#changing-the-app) for setup, `scripts/test.sh`, and the relevant installed-game prerequisites. A skipped installed-game test is not a compatibility pass.
+2. For UI, exercise the real input and its effect, including screen transitions. Inspect phone-sized captures at compact and tall portrait; use landscape as a control. For animation or flicker, observe successive drawn frames. For orientation changes, test portrait → landscape → portrait while the affected screen is active, not just separate launches.
+3. If working with the sibling TouchSpireUI Linux adapter, run the focused launcher-host scenario (for example, `touchspire-test run menus --touch --window=720x1280 --host=launcher` when the broker is available). The broker builds committed `HEAD` in both checkouts. Inspect `RESULTS.json`, the logs, and captures; record the launcher revision and game version. This covers desktop behavior, not the iOS build or device runtime.
+4. For iOS-specific changes or a profile bump, follow the [build and device workflow](BUILDING.md#signing-and-installing). A Mac or the repository's [Build IPA workflow](BUILDING.md#releases-for-people-with-no-mac) can produce the build; a simulator does not substitute for device checks of touch, safe areas, performance, or memory. Report which checks ran, what was skipped, and where the evidence is.
+
 ## Use Cecil when native code owns the transition
 
 - If a portrait change is static and the native game does not rewrite it, use the screen's layout owner. Apply on open, rebuild, or resize; do not add an IL hook or a per-frame writer just to place a control.
