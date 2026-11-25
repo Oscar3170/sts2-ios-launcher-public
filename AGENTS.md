@@ -16,6 +16,8 @@ This repository builds an iOS launcher and Godot/.NET host for Slay the Spire 2.
 
 Use the existing owner instead of adding a second path. Split large classes by independent state and lifetime, not just line count: e.g. combat room staging, hand, and action rail should not all move because a card gained focus. Put pure geometry in the existing `Platform` math files and keep native node access and cleanup in `GameHost`. Keep behavioral fixes and file moves in separate commits when practical.
 
+[`PortraitCombatRail`](src/STS2Mobile.GameHost/PortraitCombatRail.cs) owns the combat action controls, pile entrance and visibility handling, and their desktop restore values. `PortraitCombatLayout` passes the shared HUD geometry and keeps the stage → rail → hand → Proceed restore order.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.
