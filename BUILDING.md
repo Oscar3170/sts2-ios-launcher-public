@@ -89,6 +89,8 @@ For game UI changes, see [AGENTS.md](AGENTS.md) for when to use a Cecil hook, ho
 - `tools/python/bin/python3 tools/scan_no_game_files.py analysis/full-game-mono/FullGame.ipa`: the scan for game files. The build already runs it.
 - `git status --porcelain -uall` must never show a game file (`.dll`, `.pck`, extracted resources) as untracked or staged. They belong only in the gitignored folders.
 
+Manual branch runs of [Build IPA](.github/workflows/build-ipa.yml) cache the installed .NET/iOS and Godot tools and the locked NuGet packages. The tool cache is keyed by platform, Xcode build, and pinned provisioning inputs. Tagged releases provision from scratch. Every run still executes tests and produces and scans a fresh IPA; neither game files nor compiled app outputs belong in the cache.
+
 ### Test switches
 
 Each is an environment variable, passed to `scripts/simulator-run.sh` as `ENV=VALUE` (or to `xcrun devicectl device process launch --environment-variables` on a phone). They only change what the app does when set.
