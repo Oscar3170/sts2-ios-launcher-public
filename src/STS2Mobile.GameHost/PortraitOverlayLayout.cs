@@ -1116,7 +1116,7 @@ internal sealed class PortraitOverlayLayout
         ScrollContainer? row = null;
         for (Node? node = parent; node != null; node = node.GetParent())
         {
-            if (node is ScrollContainer clip && clip.Name == PortraitLayout.PotionRowScrollName)
+            if (node is ScrollContainer clip && clip.Name == PortraitRunHeader.PotionRowScrollName)
             {
                 row = clip;
                 break;
