@@ -138,6 +138,7 @@ internal sealed class PortraitHandLayout
     private ulong _lastDraggedHolderId;
     private ulong _nativeLayoutHandId;
     private ulong _requestedNativeHandId;
+    private ulong _layoutSessionHandId;
     private Control? _focusedHandVisual;
     private Vector2 _focusedHandVisualScale;
     private PortraitCombatBands? _lastHandBands;
@@ -283,7 +284,7 @@ internal sealed class PortraitHandLayout
     public void EndSession()
     {
         ClearHandFocus();
-        _nativeLayoutHandId = _requestedNativeHandId = 0;
+        _nativeLayoutHandId = _requestedNativeHandId = _layoutSessionHandId = 0;
         ResetHandSession();
         _stillness.Clear();
     }
@@ -447,6 +448,14 @@ internal sealed class PortraitHandLayout
                     GD.PrintErr("Portrait hand: native layout hook unavailable; keeping the game's card targets.");
             }
             if (_nativeLayoutHandId != handId) return;
+        }
+        if (_layoutSessionHandId != handId)
+        {
+            // A new fight can replace the hand without leaving portrait. Don't let the previous hand consume turn one.
+            _layoutSessionHandId = handId;
+            ResetHandSession();
+            _stillness.Clear();
+            _drawPileNode = null;
         }
 
         bool combatInProgress = refl.IsCombatInProgress();
