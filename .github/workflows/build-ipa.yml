@@ -52,7 +52,11 @@ jobs:
           cat .local/signing.json
 
       - name: Check Xcode
-        run: ./setup.sh --check 2>&1 | tee .work/logs/ci-check.log
+        id: xcode
+        run: |
+          ./setup.sh --check 2>&1 | tee .work/logs/ci-check.log
+          build="$(xcodebuild -version | sed -e 's/[^A-Za-z0-9._-]/-/g' | tr '\n' '-')"
+          echo "build=${build%-}" >> "$GITHUB_OUTPUT"
 
       # A clean build peaks at about 15.5 GB in the checkout, and the docs give these runners 14 GB.
       # Only hosted runners: never delete a self-hosted machine's Xcode or Android SDK.
@@ -63,6 +67,24 @@ jobs:
           sudo rm -rf /Applications/Xcode_27.app /Applications/Xcode_27.2_Release_Candidate.app
           rm -rf "$ANDROID_HOME"
           df -h .
+
+      # Installed tools contain executables. Use an exact key and keep tag releases on a cold setup.
+      # There is deliberately no pull-request trigger or fallback restore key.
+      - name: Cache the installed tools
+        if: runner.environment == 'github-hosted' && github.event_name == 'workflow_dispatch' && github.ref_type == 'branch'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            tools/ios-dotnet
+            .tools/godot
+          key: ${{ runner.os }}-${{ runner.arch }}-installed-tools-v1-${{ steps.xcode.outputs.build }}-${{ hashFiles('tools/dependencies.json', 'setup.sh', 'global.json', 'tools/setup_ios.py', 'tools/dotnet_environment.py', 'tools/hashing.py') }}
+
+      - name: Cache NuGet packages
+        if: runner.environment == 'github-hosted' && github.event_name == 'workflow_dispatch' && github.ref_type == 'branch'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .tools/nuget/packages
+          key: ${{ runner.os }}-${{ runner.arch }}-nuget-v1-${{ hashFiles('**/packages*.lock.json', 'global.json', 'Directory.Build.props', 'tools/Directory.Build.props', 'tools/dependencies.json') }}
 
       - name: Prepare the toolchain and the host export
         run: ./setup.sh --prepare-only 2>&1 | tee .work/logs/ci-prepare.log
