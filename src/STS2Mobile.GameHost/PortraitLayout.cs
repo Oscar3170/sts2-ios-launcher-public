@@ -125,14 +125,14 @@ internal sealed class PortraitLayout
         _headerSwipe.Attach(tree);
         _navPads.Attach();
         _settings.Attach(tree);
-        PortraitCombatLayout.SetFlatHandListener(ApplyImmediate);
+        PortraitHandLayout.SetFlatHandListener(ApplyImmediate);
         QueueApply();
     }
 
     public void Detach()
     {
         if (_tree == null) return;
-        PortraitCombatLayout.SetFlatHandListener(null);
+        PortraitHandLayout.SetFlatHandListener(null);
         _combat.Detach();
         RenderingServer.FramePreDraw -= OnHeaderPreDraw;
         _headerSwipe.Detach();

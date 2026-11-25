@@ -58,8 +58,8 @@ public sealed partial class PhoneGraphics : Node
             // Landscape is locked initially unless both Portrait Mode and Set Portrait as Default were chosen.
             if (!_settings.StartInPortrait && _settings.PortraitMode)
                 _settings = _settings.WithPortraitMode(false);
-            PortraitCombatLayout.FlatHand = _settings.FlatHand;
-            PortraitCombatLayout.ReduceEffects = _settings.ReduceEffects;
+            PortraitHandLayout.FlatHand = _settings.FlatHand;
+            PortraitHandLayout.ReduceEffects = _settings.ReduceEffects;
             PortraitFrameTiming.SetEnabled(_settings.PerformanceLog);
             _appliedFactor = DevicePower.RenderScale();
             GD.Print("Phone graphics: ", _settings.Describe(_appliedFactor));
@@ -253,7 +253,7 @@ public sealed partial class PhoneGraphics : Node
                 choice =>
                 {
                     Store(_settings.WithFlatHand(choice == 1));
-                    PortraitCombatLayout.FlatHand = _settings.FlatHand;
+                    PortraitHandLayout.FlatHand = _settings.FlatHand;
                     _portraitLayout.ApplyImmediate();
                 },
                 out _, out _, out _, subtitle: "Fan the hand, or lay it out in flat rows.");
@@ -381,7 +381,7 @@ public sealed partial class PhoneGraphics : Node
     {
         if (settings == _settings) return;
         _settings = settings;
-        PortraitCombatLayout.ReduceEffects = _settings.ReduceEffects;
+        PortraitHandLayout.ReduceEffects = _settings.ReduceEffects;
         try
         {
             _settings.Save(_path);
