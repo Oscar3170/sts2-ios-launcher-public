@@ -203,7 +203,8 @@ internal static partial class PortraitSubmenuLayout
         float width = BestiaryLeftColumn - 2f * BestiaryInset;
         Vector2 min = panel.GetCombinedMinimumSize();
         float room = Math.Max(100f, bottom - top);
-        if (fixedScale && panel.CustomMinimumSize.Y >= 100f)
+        // Clipping denotes a scrollable moves panel even when its local viewport is under 100 units.
+        if (fixedScale && panel.ClipContents)
         {
             float keep = Math.Min(room / BestiaryPanelScale, panel.CustomMinimumSize.Y);
             PlaceBestiarySliding(panel, BestiaryPanelRestX, BestiaryInset, top, width / BestiaryPanelScale, keep,
