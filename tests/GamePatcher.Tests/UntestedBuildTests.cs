@@ -122,6 +122,7 @@ public sealed class UntestedBuildTests : IDisposable
             "No JIT warmup", "No Steam invite dialog", "Mods from the app's own folder", "Mods screen opens Files", "Fewer background loads at once, to bound memory",
             "No mouse cursor", "A card let go below the play zone goes back", "A hand card is picked up when the finger moves", "The game fills the screen",
             "The game keeps clear of the notch and the island", "The game's version read from its folder",
+            "The phone lays out the hand's cards itself",
         ], steps.Where(step => !step.Required).Select(step => step.Name));
     }
 }
