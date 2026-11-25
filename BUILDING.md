@@ -79,6 +79,8 @@ Under a minute when the extracted stages are reused. `--check` only verifies the
 
 ## Changing the app
 
+For game UI changes, see [AGENTS.md](AGENTS.md) for when to use a Cecil hook, how to preserve native behavior, and what to verify.
+
 - After changing anything under `src/`, `tools/` (apart from `tools/mono/`) or `scripts/`, run `./setup.sh --prepare-only` (about 35 s once the tools are there) before `scripts/build-mono.sh`, or the build stops at its inputs check. Then `./setup.sh --install`, or `scripts/build-mono.sh` and `tools/python/bin/python3 tools/install_app.py`.
 - `scripts/test.sh`: the Python and .NET tests and the Steam wire checks, about 30 s, after `./setup.sh --prepare-only`. Without a Steam install, the tests on the real game and on Steam's cached manifest report as skipped. The game pack tests also need `scripts/prepare-game-files.sh`.
 - `scripts/simulator.sh` makes a simulator app from the device build and installs it on the "iPhone 11 Pro" simulator, or "iPhone 18 Pro" when there is none (one of them must exist; `STS2_SIMULATOR=<name>` picks another, such as `STS2_SIMULATOR="iPad Pro 13-inch (M5)"`); `scripts/simulator-run.sh` launches it on that simulator and presses the launcher's buttons for you: `scripts/simulator-run.sh <name> <labels|to|press> <regex> <timeout> [ENV=VALUE ...]`, with its log in `.work/simlogs`. It finds the simulator and the app's bundle id itself (`tools/mono/simulator_app.py --print-target`). The switches are listed below. The simulator shares the phone's code, not its speed, memory or heat.
