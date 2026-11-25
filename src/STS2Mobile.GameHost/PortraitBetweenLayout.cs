@@ -15,7 +15,6 @@ namespace STS2Mobile.GameHost;
 /// </summary>
 internal sealed partial class PortraitBetweenLayout
 {
-    public const string MapScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen";
     public const string ProceedButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NProceedButton";
     public const string RewardsScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen";
     public const string CardRewardTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NCardRewardSelectionScreen";
@@ -35,7 +34,7 @@ internal sealed partial class PortraitBetweenLayout
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
-        MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
+        PortraitMapLayout.MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
         MerchantInventoryTypeName, FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
         BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, TreasureRoomTypeName, AncientDialogueLineTypeName,
         MerchantRoomTypeName, BlitzMerchantRoomTypeName, FakeMerchantRoomTypeName,
@@ -155,6 +154,7 @@ internal sealed partial class PortraitBetweenLayout
     // ---- entry points from PortraitLayout -------------------------------------------------------------------------------
 
     private readonly HashSet<ulong> _loggedNodes = new();
+    private readonly PortraitMapLayout _map = new();
 
     public void ApplyNode(Control control, string typeName, float capHeight, float canvasHeight, float canvasWidth)
     {
@@ -162,9 +162,8 @@ internal sealed partial class PortraitBetweenLayout
             GD.Print($"Portrait between layout: {control.GetType().Name} {control.GetPath()}");
         switch (typeName)
         {
-            case MapScreenTypeName:
-                LayoutMapPortrait(control, capHeight, canvasHeight, canvasWidth);
-                _maps.Add(control.GetInstanceId());
+            case PortraitMapLayout.MapScreenTypeName:
+                _map.Apply(control, capHeight, canvasHeight, canvasWidth);
                 break;
             case ProceedButtonTypeName:
                 _proceedButtons.Add(control.GetInstanceId());
@@ -262,9 +261,7 @@ internal sealed partial class PortraitBetweenLayout
     public void OnProcessFrame(Window root, float capHeight)
     {
         Vector2 canvas = root.GetVisibleRect().Size;
-        foreach (ulong id in _maps)
-            if (GodotObject.InstanceFromId(id) is Control map && GodotObject.IsInstanceValid(map) && map.IsVisibleInTree())
-                UpdateMapPortrait(map, root, canvas);
+        _map.OnProcessFrame(root, canvas);
         KeepLootSkipsClearOfCardReward(CardRewardShown());
         foreach (ulong id in _proceedButtons)
             if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button) && button.IsVisibleInTree())
@@ -337,7 +334,7 @@ internal sealed partial class PortraitBetweenLayout
         RestoreTreasureLandscape();
         RestoreRestLandscape();
 
-        RestoreMapLandscape();
+        _map.RestoreLandscape();
 
         foreach (ulong id in _proceedButtons)
             if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button))
@@ -397,7 +394,7 @@ internal sealed partial class PortraitBetweenLayout
     public void PruneDead()
     {
         foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
-        PruneMapInstances();
+        _map.PruneDead();
         _proceedButtons.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _cardRewards.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _mapFtues.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));

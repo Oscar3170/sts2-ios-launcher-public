@@ -280,7 +280,7 @@ internal sealed class PortraitNavigationPads
         // that gap already leaves the Back's art clear of the bar; where it would not, lift the Back just enough to keep
         // everything it draws above the bar's drawn top, with the hover growth about the top-left it scales from. The bar
         // and the chart clip above it stay the map layout's.
-        if (MapScreenOf(control) is { } mapScreen && PortraitBetweenLayout.MapBackFooterLimit(mapScreen) is float limit)
+        if (MapScreenOf(control) is { } mapScreen && PortraitMapLayout.MapBackFooterLimit(mapScreen) is float limit)
             top = Math.Min(top, limit - drawnDepth * HoverHeadroom);
         float highest = Math.Max(canvas.Position.Y + FooterBottomMargin, canvas.End.Y - height - FooterBottomMargin);
         top = Math.Min(Math.Max(top, canvas.Position.Y + FooterBottomMargin), highest);
@@ -389,7 +389,7 @@ internal sealed class PortraitNavigationPads
 
     /// <summary>The act map a Back belongs to, whose drawing bar is pinned to the canvas bottom.</summary>
     private static Control? MapScreenOf(Control control) =>
-        control.GetParent() is Control screen && screen.GetType().FullName == PortraitBetweenLayout.MapScreenTypeName
+        control.GetParent() is Control screen && screen.GetType().FullName == PortraitMapLayout.MapScreenTypeName
             ? screen
             : null;
 

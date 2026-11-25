@@ -277,13 +277,13 @@ internal static partial class PortraitProof
             }
             SendMouseButton(to, pressed: false);
             await WaitFramesAsync(tree, 60);
-            GD.Print($"Portrait proof map drag: mapYBefore={before:F0} mapYAfter={theMap.Position.Y:F0} limits={PortraitBetweenLayout.MapScrollLimits(mapControl, tree.Root)}");
+            GD.Print($"Portrait proof map drag: mapYBefore={before:F0} mapYAfter={theMap.Position.Y:F0} limits={PortraitMapLayout.MapScrollLimits(mapControl, tree.Root)}");
             await BetweenStepAsync(tree, "map-dragged");
         }
         if (map != null)
         {
             FieldInfo? target = map.GetType().GetField("_targetDragPos", BindingFlags.Instance | BindingFlags.NonPublic);
-            float top = PortraitBetweenLayout.MapScrollLimits((Control)map, tree.Root).Max;
+            float top = PortraitMapLayout.MapScrollLimits((Control)map, tree.Root).Max;
             target?.SetValue(map, new Vector2(0f, top));
             await WaitFramesAsync(tree, 60);
             await BetweenStepAsync(tree, "map-boss");

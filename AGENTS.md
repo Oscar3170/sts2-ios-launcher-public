@@ -22,6 +22,8 @@ Use the existing owner instead of adding a second path. Split large classes by i
 
 [`PortraitRunHeader`](src/STS2Mobile.GameHost/PortraitRunHeader.cs) owns the stone header, potion and relic rows, native holder input, and their desktop restore values. The coordinator discovers those nodes and passes canvas geometry; the header owns its pre-draw and swipe callbacks.
 
+[`PortraitMapLayout`](src/STS2Mobile.GameHost/PortraitMapLayout.cs) owns the map graph, drawing footer, legend, map-point touch targets, and their restore state. It tells navigation where the footer starts; [`PortraitNavigationPads`](src/STS2Mobile.GameHost/PortraitNavigationPads.cs) still places Back.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.

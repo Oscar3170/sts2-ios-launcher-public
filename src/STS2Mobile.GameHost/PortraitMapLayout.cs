@@ -12,8 +12,10 @@ namespace STS2Mobile.GameHost;
 /// The Back ribbon overlays it and the drawing tools and Share sit at the canvas bottom. Every edit is captured
 /// first so leaving portrait puts the game's own map and footer back.
 /// </summary>
-internal sealed partial class PortraitBetweenLayout
+internal sealed class PortraitMapLayout
 {
+    public const string MapScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen";
+
     private const string LegendPillName = "PortraitLegendPill";
     private const string MapViewportName = "PortraitMapViewport";
     private const string MapShiftName = "PortraitMapShift";
@@ -82,6 +84,24 @@ internal sealed partial class PortraitBetweenLayout
     private readonly Dictionary<ulong, TextureRect.StretchModeEnum> _stretchModes = new();
     private readonly Dictionary<ulong, bool> _mapHintVisibility = new();
     private bool _legendOpen;
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
+
+    public void OnProcessFrame(Window root, Vector2 canvas)
+    {
+        foreach (ulong id in _maps)
+            if (GodotObject.InstanceFromId(id) is Control map && GodotObject.IsInstanceValid(map) && map.IsVisibleInTree())
+                UpdateMapPortrait(map, root, canvas);
+    }
+
+    private PortraitControlSnapshot Capture(Control control, bool captureVisible)
+    {
+        ulong id = control.GetInstanceId();
+        if (_snapshots.TryGetValue(id, out var snapshot))
+            return snapshot;
+        snapshot = new PortraitControlSnapshot(control, captureVisible);
+        _snapshots.Add(id, snapshot);
+        return snapshot;
+    }
 
     private Control? MapGraph(Control map)
     {
@@ -91,7 +111,7 @@ internal sealed partial class PortraitBetweenLayout
         return map.GetNodeOrNull<Control>("TheMap") ?? map.FindChild("TheMap", true, false) as Control;
     }
 
-    private void LayoutMapPortrait(Control map, float capHeight, float canvasHeight, float canvasWidth)
+    public void Apply(Control map, float capHeight, float canvasHeight, float canvasWidth)
     {
         float shiftY = PortraitBetweenMath.MapBackgroundShift(canvasHeight);
         Control? graph = MapGraph(map);
@@ -168,6 +188,7 @@ internal sealed partial class PortraitBetweenLayout
             if (frame.Map is { } theMap) UpdateMapGraph(theMap, frame, canvasWidth);
             UpdateMapFrame(map, frame, canvas, clipTop, MapClipBottom(map, frame, canvasHeight));
         }
+        _maps.Add(map.GetInstanceId());
     }
 
     /// <summary>
@@ -564,9 +585,13 @@ internal sealed partial class PortraitBetweenLayout
         {
             point.Scale = new Vector2(MapPointScale, MapPointScale);
             _scaledMapPoints.Add(point.GetInstanceId());
-            // EnsureHitPad's target is in canvas units and divides by the node's global scale, so the 127-unit pad stays
-            // 127 units after the graph transform (the icon picture itself is scaled with the graph).
-            EnsureHitPad(point, PortraitBands.MinTarget, PortraitBands.MinTarget);
+            Vector2 scale = point.GetGlobalTransformWithCanvas().Scale.Abs();
+            if (point.IsInsideTree() && scale.X >= 0.01f && scale.Y >= 0.01f)
+            {
+                float x = Math.Max(0f, PortraitBands.MinTarget / scale.X - point.Size.X) * 0.5f;
+                float y = Math.Max(0f, PortraitBands.MinTarget / scale.Y - point.Size.Y) * 0.5f;
+                PhoneHitArea.Grow(point, x, y, x, y);
+            }
         }
     }
 
@@ -623,8 +648,11 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>Back to the game's own map: remove the clip, shift, Share mount and point sizing.</summary>
-    private void RestoreMapLandscape()
+    public void RestoreLandscape()
     {
+        foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                snapshot.Restore(control);
         foreach ((ulong id, MapFrame frame) in _mapFrames.ToList())
         {
             if (GodotObject.InstanceFromId(id) is Control map && GodotObject.IsInstanceValid(map))
@@ -669,7 +697,10 @@ internal sealed partial class PortraitBetweenLayout
 
         foreach (ulong id in _scaledMapPoints)
             if (GodotObject.InstanceFromId(id) is Control point && GodotObject.IsInstanceValid(point))
+            {
                 point.Scale = Vector2.One;
+                PhoneHitArea.Remove(point);
+            }
         _scaledMapPoints.Clear();
         _mapPointLayouts.Clear();
     }
@@ -732,8 +763,9 @@ internal sealed partial class PortraitBetweenLayout
         frame.ShareMount = null;
     }
 
-    private void PruneMapInstances()
+    public void PruneDead()
     {
+        foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
         _maps.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _mapFrames.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapFrames.Remove(id);
         foreach (ulong id in _mapBgSnapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _mapBgSnapshots.Remove(id);

@@ -254,7 +254,7 @@ internal static partial class PortraitProof
 
     private static string DescribeMapTop(SceneTree tree, Control map)
     {
-        (float bandTop, float bandBottom) = PortraitBetweenLayout.VisibleBand(tree.Root);
+        (float bandTop, float bandBottom) = PortraitMapLayout.VisibleBand(tree.Root);
         string Boss(string field) => map.GetType().GetField(field, AnyInstance)?.GetValue(map) is Control node && GodotObject.IsInstanceValid(node)
             ? $"{(node.IsVisibleInTree() ? "" : "hidden ")}{CanvasRect(node)} scale={node.Scale.X:F2} size={node.Size.X:F0}x{node.Size.Y:F0}"
             : "none";
@@ -289,7 +289,7 @@ internal static partial class PortraitProof
         string frame = clip == null
             ? "clip=none"
             : $"clip=[{CanvasRect(clip)}] share={(map.GetNodeOrNull<Control>("PortraitMapShare") is { } mount ? CanvasRect(mount) : "none")}";
-        return $"map-visible={map.IsVisibleInTree()} mapX={mapPos.X:F1} mapY={mapPos.Y:F0} points[{points}] limits={PortraitBetweenLayout.MapScrollLimits(map, tree.Root)} band={bandTop:F0}..{bandBottom:F0} {frame} boss[{Boss("_bossPointNode")}] second[{Boss("_secondBossPointNode")}] top-bar[{bar}]";
+        return $"map-visible={map.IsVisibleInTree()} mapX={mapPos.X:F1} mapY={mapPos.Y:F0} points[{points}] limits={PortraitMapLayout.MapScrollLimits(map, tree.Root)} band={bandTop:F0}..{bandBottom:F0} {frame} boss[{Boss("_bossPointNode")}] second[{Boss("_secondBossPointNode")}] top-bar[{bar}]";
     }
 
     private static async Task<Control?> WaitForRewardsAsync(SceneTree tree)
