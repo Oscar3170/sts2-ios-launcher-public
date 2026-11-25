@@ -266,7 +266,7 @@ internal sealed class PortraitCombatLayout
         dead.Clear();
         foreach (ulong id in _orbDesktopScales.Keys)
             if (!GodotObject.IsInstanceIdValid(id)) dead.Add(id);
-        foreach (ulong id in dead) _creatures.Remove(id);
+        foreach (ulong id in dead) _orbDesktopScales.Remove(id);
 
         _hand.PruneDead(dead);
 
@@ -658,7 +658,7 @@ internal sealed class PortraitCombatLayout
                 if (labels.GetChild(c) is not Label label || !label.Visible || string.IsNullOrWhiteSpace(label.Text))
                     continue;
                 float drawnScale = MathF.Max(0.01f, label.GetGlobalTransform().Scale.Y);
-                EnlargeLabelFont(label,
+                _creatureHud.EnlargeLabelFont(label,
                     (int)MathF.Ceiling(PortraitOrbMath.ValueWorldHeight / drawnScale));
                 widest = MathF.Max(widest, label.GetMinimumSize().X * label.GetGlobalTransform().Scale.X);
             }
