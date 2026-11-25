@@ -133,8 +133,6 @@ internal sealed class PortraitCombatStage
         Control? sceneContainer = room.GetNodeOrNull<Control>("%CombatSceneContainer") ?? room.GetNodeOrNull<Control>("CombatSceneContainer");
         if (sceneContainer == null)
             return;
-        CombatRoomState state = _rooms[room.GetInstanceId()];
-        state.IgnoreBackVfxInput(sceneContainer);
 
         sceneContainer.Scale = Vector2.One;
         sceneContainer.PivotOffset = sceneContainer.Size * 0.5f;
@@ -2599,8 +2597,6 @@ internal sealed class PortraitCombatStage
         private readonly float _bgOffLeft, _bgOffTop, _bgOffRight, _bgOffBottom;
         private readonly Vector2 _layer00Scale, _layer00Pos;
         private readonly Vector2 _fgPos;
-        private Control? _backVfx;
-        private Control.MouseFilterEnum _backVfxMouseFilter;
 
         private CombatRoomState(
             Vector2 sceneScale,
@@ -2626,18 +2622,6 @@ internal sealed class PortraitCombatStage
             _layer00Scale = layer00Scale;
             _layer00Pos = layer00Pos;
             _fgPos = fgPos;
-        }
-
-        public void IgnoreBackVfxInput(Control scene)
-        {
-            if (_backVfx is not null ||
-                (scene.GetNodeOrNull<Control>("%BackCombatVfxContainer") ??
-                 scene.GetNodeOrNull<Control>("BackCombatVfxContainer")) is not { } backVfx)
-                return;
-            // The arena-wide effects layer is visual only; it must not intercept native orb inspection.
-            _backVfx = backVfx;
-            _backVfxMouseFilter = backVfx.MouseFilter;
-            backVfx.MouseFilter = Control.MouseFilterEnum.Ignore;
         }
 
         public static CombatRoomState Capture(Control room)
@@ -2671,8 +2655,6 @@ internal sealed class PortraitCombatStage
 
         public void Restore(Control room, CombatReflection refl)
         {
-            if (_backVfx is { } backVfx && GodotObject.IsInstanceValid(backVfx))
-                backVfx.MouseFilter = _backVfxMouseFilter;
             if (Stage is { } plan)
             {
                 RestoreStageBackground(room, plan);
