@@ -13,8 +13,13 @@ namespace STS2Mobile.GameHost;
 /// room's full-bleed backdrop with the merchant and the player seated as the room's own scene has them. Every control keeps
 /// its game layout for landscape; the stock groups are never reparented, only placed and shown or hidden by page.
 /// </summary>
-internal sealed partial class PortraitBetweenLayout
+internal sealed class PortraitShopLayout
 {
+    public const string MerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantInventory";
+    public const string FakeMerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NFakeMerchantInventory";
+    public const string MerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom";
+    public const string BlitzMerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom";
+    public const string FakeMerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Events.Custom.NFakeMerchant";
     public const string ShopClothName = "PhoneShopCloth";
     public const string ShopCardsTabName = "PhoneShopCardsTab";
     public const string ShopItemsTabName = "PhoneShopItemsTab";
@@ -1227,5 +1232,175 @@ internal sealed partial class PortraitBetweenLayout
             }
         }
         _shopRoomStates.Clear();
+    }
+    private readonly HashSet<ulong> _shops = new();
+    private const string HitPadHolderName = PhoneHitArea.HolderName;
+    private static readonly string[] RichFontSizeNames =
+        ["normal_font_size", "bold_font_size", "bold_italics_font_size", "italics_font_size", "mono_font_size"];
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
+    private readonly HashSet<ulong> _hitAreaTargets = new();
+    private readonly HashSet<ulong> _hitPadHolders = new();
+    private readonly Dictionary<ulong, int> _labelMaxFontSizes = new();
+    private readonly Dictionary<ulong, int> _labelMinFontSizes = new();
+    private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
+    private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
+
+    public void Apply(Control control, string typeName, float capHeight, float canvasWidth, float canvasHeight)
+    {
+        if (typeName is MerchantInventoryTypeName or FakeMerchantInventoryTypeName)
+        {
+            _shops.Add(control.GetInstanceId());
+            UpdateShopPortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
+        }
+        else
+            ApplyShopRoom(control, typeName, canvasWidth, canvasHeight);
+    }
+
+    public void OnProcessFrame(float capHeight, Vector2 canvas)
+    {
+        foreach (ulong id in _shops)
+            if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop) && shop.IsVisibleInTree())
+                UpdateShopPortrait(shop, capHeight, canvas);
+    }
+
+    public void RestoreLandscape()
+    {
+
+        foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                snapshot.Restore(control);
+        foreach (ulong id in _hitAreaTargets)
+            if (GodotObject.InstanceFromId(id) is Control target && GodotObject.IsInstanceValid(target))
+                PhoneHitArea.Remove(target);
+        _hitAreaTargets.Clear();
+        RestoreShopRoomsLandscape();
+        foreach (ulong id in _shops)
+            if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop))
+                RestoreShopLandscape(shop);
+        foreach (ulong id in _hitPadHolders)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control holder || !GodotObject.IsInstanceValid(holder)) continue;
+            holder.GetParent()?.RemoveChild(holder);
+            holder.QueueFree();
+        }
+        _hitPadHolders.Clear();
+        foreach ((ulong id, int size) in _labelMaxFontSizes)
+            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
+                label.Set("MaxFontSize", size);
+        _labelMaxFontSizes.Clear();
+        foreach ((ulong id, int size) in _labelMinFontSizes)
+            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
+                label.Set("MinFontSize", size);
+        _labelMinFontSizes.Clear();
+        foreach ((ulong id, (bool had, int size)) in _labelFontSizes)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
+            if (had) label.AddThemeFontSizeOverride("font_size", size);
+            else label.RemoveThemeFontSizeOverride("font_size");
+        }
+        _labelFontSizes.Clear();
+        foreach ((ulong id, (bool Had, int Size)[] sizes) in _richFontSizes)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
+            for (int i = 0; i < RichFontSizeNames.Length; i++)
+            {
+                if (sizes[i].Had) label.AddThemeFontSizeOverride(RichFontSizeNames[i], sizes[i].Size);
+                else label.RemoveThemeFontSizeOverride(RichFontSizeNames[i]);
+            }
+        }
+        _richFontSizes.Clear();
+    }
+
+    public void PruneDead()
+    {
+        foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
+        _hitAreaTargets.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        _shops.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        PruneShopInstances();
+        _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _labelMaxFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMaxFontSizes.Remove(id);
+        foreach (ulong id in _labelMinFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMinFontSizes.Remove(id);
+        foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
+        foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
+    }
+
+    /// <summary>Sets a label's font size in portrait, keeping the game's own to put back in landscape.</summary>
+    private void SetLabelFontSize(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        if (!_labelFontSizes.ContainsKey(id))
+            _labelFontSizes[id] = (label.HasThemeFontSizeOverride("font_size"), label.GetThemeFontSize("font_size"));
+        if (label.GetThemeFontSize("font_size") != size) label.AddThemeFontSizeOverride("font_size", size);
+    }
+
+    private int GameLabelFontSize(Control label) =>
+        _labelFontSizes.TryGetValue(label.GetInstanceId(), out (bool Had, int Size) kept) ? kept.Size : label.GetThemeFontSize("font_size");
+    private PortraitControlSnapshot Capture(Control control, bool captureVisible)
+    {
+        ulong id = control.GetInstanceId();
+        if (_snapshots.TryGetValue(id, out PortraitControlSnapshot? existing))
+        {
+            if (captureVisible && !existing.CaptureVisible) existing.RecordInitialVisibility(control.Visible);
+            return existing;
+        }
+        var created = new PortraitControlSnapshot(control, captureVisible);
+        _snapshots[id] = created;
+        return created;
+    }
+
+    /// <summary>
+    /// Gives a control a hit area of at least this size on the canvas, centred on it, without changing its picture (row
+    /// 21h; PhoneHitArea). A container would lay the area out as one of its own children, so there it hangs from a child
+    /// the container may size as it likes. Taken away again in landscape.
+    /// </summary>
+    private void EnsureHitPad(Control target, float canvasWidth, float canvasHeight)
+    {
+        if (!target.IsInsideTree()) return;
+        Vector2 scale = target.GetGlobalTransformWithCanvas().Scale.Abs();
+        if (scale.X < 0.01f || scale.Y < 0.01f) return;
+        float growX = Math.Max(0f, canvasWidth / scale.X - target.Size.X) / 2f;
+        float growY = Math.Max(0f, canvasHeight / scale.Y - target.Size.Y) / 2f;
+        if (!PhoneHitArea.IsContainer(target))
+        {
+            PhoneHitArea.Grow(target, growX, growY, growX, growY);
+            _hitAreaTargets.Add(target.GetInstanceId());
+            return;
+        }
+
+        Control? holder = target.GetNodeOrNull<Control>(HitPadHolderName);
+        if (holder == null)
+        {
+            holder = new Control { Name = HitPadHolderName, MouseFilter = Control.MouseFilterEnum.Ignore };
+            var pad = new Control
+            {
+                Name = PhoneHitArea.NodeName,
+                MouseFilter = Control.MouseFilterEnum.Pass,
+                FocusMode = Control.FocusModeEnum.None,
+            };
+            pad.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+            holder.AddChild(pad);
+            target.AddChild(holder);
+            _hitPadHolders.Add(holder.GetInstanceId());
+        }
+        if (holder.GetNodeOrNull<Control>(PhoneHitArea.NodeName) is { } area)
+        {
+            area.OffsetLeft = -growX;
+            area.OffsetTop = -growY;
+            area.OffsetRight = growX;
+            area.OffsetBottom = growY;
+        }
+    }
+
+    /// <summary>Sets every font size of a rich text label that does not size itself, keeping what it had for landscape.</summary>
+    private void SetRichFontSize(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        if (!_richFontSizes.ContainsKey(id))
+            _richFontSizes[id] = RichFontSizeNames
+                .Select(name => (label.HasThemeFontSizeOverride(name), label.HasThemeFontSizeOverride(name) ? label.GetThemeFontSize(name) : 0))
+                .ToArray();
+        foreach (string name in RichFontSizeNames)
+            if (!label.HasThemeFontSizeOverride(name) || label.GetThemeFontSize(name) != size)
+                label.AddThemeFontSizeOverride(name, size);
     }
 }

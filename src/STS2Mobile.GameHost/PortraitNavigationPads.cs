@@ -381,8 +381,8 @@ internal sealed class PortraitNavigationPads
     private static bool InShopInventory(Control control)
     {
         for (Node? node = control.GetParent(); node is not null && node is not Window; node = node.GetParent())
-            if (node.GetType().FullName is PortraitBetweenLayout.MerchantInventoryTypeName
-                or PortraitBetweenLayout.FakeMerchantInventoryTypeName)
+            if (node.GetType().FullName is PortraitShopLayout.MerchantInventoryTypeName
+                or PortraitShopLayout.FakeMerchantInventoryTypeName)
                 return true;
         return false;
     }

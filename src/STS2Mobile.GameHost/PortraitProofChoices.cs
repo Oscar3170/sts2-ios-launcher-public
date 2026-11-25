@@ -287,19 +287,19 @@ internal static partial class PortraitProof
 
     /// <summary>
     /// Switches the portrait shop's Cards/Items page with a real tap on its native tab, waiting for
-    /// <see cref="PortraitBetweenLayout.ShopPage" /> to follow; true when the page asked for is shown (false when the shop has
+    /// <see cref="PortraitShopLayout.ShopPage" /> to follow; true when the page asked for is shown (false when the shop has
     /// no pages, as the weird and Blitz shops do not).
     /// </summary>
     private static async Task<bool> TapShopPageAsync(SceneTree tree, bool items)
     {
-        string name = items ? PortraitBetweenLayout.ShopItemsTabName : PortraitBetweenLayout.ShopCardsTabName;
+        string name = items ? PortraitShopLayout.ShopItemsTabName : PortraitShopLayout.ShopCardsTabName;
         Control? tab = Descendants(tree.Root).OfType<Control>().FirstOrDefault(c => c.Name == name && c.IsVisibleInTree());
         if (tab == null) return false;
         int page = items ? 1 : 0;
         await TapAsync(tree, CentreOf(tab));
-        for (int frame = 0; frame < 90 && PortraitBetweenLayout.ShopPage != page; frame++) await WaitFramesAsync(tree, 1);
+        for (int frame = 0; frame < 90 && PortraitShopLayout.ShopPage != page; frame++) await WaitFramesAsync(tree, 1);
         await WaitFramesAsync(tree, 20);
-        return PortraitBetweenLayout.ShopPage == page;
+        return PortraitShopLayout.ShopPage == page;
     }
 
     private static Control? ConfirmOf(Control screen) =>
@@ -361,7 +361,7 @@ internal static partial class PortraitProof
     {
         Control? selected = PhoneSelectConfirm.SelectedOwner;
         string kinds = string.Join(",", slots.GroupBy(s => s.GetType().Name).Select(g => $"{g.Key}x{g.Count()}"));
-        string page = PortraitBetweenLayout.ShopPage switch { 0 => "cards", 1 => "items", _ => "none" };
+        string page = PortraitShopLayout.ShopPage switch { 0 => "cards", 1 => "items", _ => "none" };
         return $"page={page} slots=[{kinds}] selected={selected?.GetType().Name ?? "none"} gold={Prop(player, "Gold")} deck={DeckCards(player).Count} " +
             $"relics={RelicCount(player)} confirms={PhoneSelectConfirm.Confirms} inspects={PhoneSelectConfirm.HoldInspects} clears={PhoneSelectConfirm.Clears}";
     }

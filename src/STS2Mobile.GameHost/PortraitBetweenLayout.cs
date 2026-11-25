@@ -19,11 +19,6 @@ internal sealed partial class PortraitBetweenLayout
     public const string RewardsScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen";
     public const string CardRewardTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NCardRewardSelectionScreen";
     public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
-    public const string MerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantInventory";
-    public const string FakeMerchantInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NFakeMerchantInventory";
-    public const string MerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NStandardMerchantRoom";
-    public const string BlitzMerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NBlitzMerchantRoom";
-    public const string FakeMerchantRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Events.Custom.NFakeMerchant";
     public const string EventLayoutTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NEventLayout";
     public const string MapFtueTypeName = "MegaCrit.Sts2.Core.Nodes.Ftue.NMapSelectFtue";
     public const string AncientLayoutTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NAncientEventLayout";
@@ -35,9 +30,9 @@ internal sealed partial class PortraitBetweenLayout
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
         PortraitMapLayout.MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
-        MerchantInventoryTypeName, FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
+        PortraitShopLayout.MerchantInventoryTypeName, PortraitShopLayout.FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
         BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, TreasureRoomTypeName, AncientDialogueLineTypeName,
-        MerchantRoomTypeName, BlitzMerchantRoomTypeName, FakeMerchantRoomTypeName,
+        PortraitShopLayout.MerchantRoomTypeName, PortraitShopLayout.BlitzMerchantRoomTypeName, PortraitShopLayout.FakeMerchantRoomTypeName,
         EventRoomTypeName, CombatEventLayoutTypeName,
     };
 
@@ -80,7 +75,7 @@ internal sealed partial class PortraitBetweenLayout
     private readonly HashSet<ulong> _mapFtues = new();
     private readonly HashSet<ulong> _hitAreaTargets = new();
     private readonly HashSet<ulong> _liftedBanners = new();
-    private readonly HashSet<ulong> _shops = new();
+    private readonly PortraitShopLayout _shop = new();
     private readonly HashSet<ulong> _hitPadHolders = new();
     private readonly HashSet<ulong> _events = new();
     private readonly HashSet<ulong> _restSites = new();
@@ -194,18 +189,12 @@ internal sealed partial class PortraitBetweenLayout
             case AncientLayoutTypeName:
                 LayoutAncientPortrait(control, capHeight, canvasWidth, canvasHeight);
                 break;
-            case MerchantInventoryTypeName:
-                _shops.Add(control.GetInstanceId());
-                UpdateShopPortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
-                break;
-            case FakeMerchantInventoryTypeName:
-                _shops.Add(control.GetInstanceId());
-                UpdateShopPortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
-                break;
-            case MerchantRoomTypeName:
-            case BlitzMerchantRoomTypeName:
-            case FakeMerchantRoomTypeName:
-                ApplyShopRoom(control, typeName, canvasWidth, canvasHeight);
+            case PortraitShopLayout.MerchantInventoryTypeName:
+            case PortraitShopLayout.FakeMerchantInventoryTypeName:
+            case PortraitShopLayout.MerchantRoomTypeName:
+            case PortraitShopLayout.BlitzMerchantRoomTypeName:
+            case PortraitShopLayout.FakeMerchantRoomTypeName:
+                _shop.Apply(control, typeName, capHeight, canvasWidth, canvasHeight);
                 break;
             case EventLayoutTypeName:
                 LayoutEventPortrait(control, capHeight, canvasHeight, canvasWidth);
@@ -291,9 +280,7 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
                 UpdateTreasurePortrait(room, capHeight, canvas);
         UpdateAncientPortraits(capHeight, canvas);
-        foreach (ulong id in _shops)
-            if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop) && shop.IsVisibleInTree())
-                UpdateShopPortrait(shop, capHeight, canvas);
+        _shop.OnProcessFrame(capHeight, canvas);
     }
 
     public void RestoreLandscape()
@@ -343,10 +330,7 @@ internal sealed partial class PortraitBetweenLayout
                 PhoneHitArea.Remove(target);
         _hitAreaTargets.Clear();
         RestoreBanners(_liftedBanners);
-        RestoreShopRoomsLandscape();
-        foreach (ulong id in _shops)
-            if (GodotObject.InstanceFromId(id) is Control shop && GodotObject.IsInstanceValid(shop))
-                RestoreShopLandscape(shop);
+        _shop.RestoreLandscape();
         foreach (ulong id in _hitPadHolders)
         {
             if (GodotObject.InstanceFromId(id) is not Control holder || !GodotObject.IsInstanceValid(holder)) continue;
@@ -400,8 +384,7 @@ internal sealed partial class PortraitBetweenLayout
             _laidOutRewardHolders.Remove(id);
         _hitAreaTargets.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _liftedBanners.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _shops.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        PruneShopInstances();
+        _shop.PruneDead();
         _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _events.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _restSites.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -440,7 +423,7 @@ internal sealed partial class PortraitBetweenLayout
             string? parentType = proceed.GetParent()?.GetType().FullName;
             _proceedLanes[id] = lane = new ProceedLaneState
             {
-                Blitz = parentType == BlitzMerchantRoomTypeName ||
+                Blitz = parentType == PortraitShopLayout.BlitzMerchantRoomTypeName ||
                         (parentType == RewardsScreenTypeName && IsBlitzRun()),
                 Footer = parentType == TreasureRoomTypeName,
             };
