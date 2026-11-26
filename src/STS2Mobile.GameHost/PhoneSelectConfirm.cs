@@ -20,13 +20,13 @@ namespace STS2Mobile.GameHost;
 /// <item>Card rewards (<see cref="PhoneCardRewardChoice"/>, which also answers the reward), choose-a-card, relic choice and
 /// the treasure chest's relics: the release of a second tap takes the item through the screen's own commit method.</item>
 /// </list>
-/// A hold (still for <see cref="SelectConfirmMath.HoldSeconds"/>) opens the item's native inspection and never confirms; moving
-/// past <see cref="SelectConfirmMath.ConfirmSlop"/> cancels the confirmation, so a swipe never buys or takes. The release is
-/// read from the window's own touch and mouse events, not the game's release signals, which need a hover that touch does not
-/// always set on the simulator. Every press in portrait also lets go of the game's record of it through
+/// <para>The press itself — the tap, the hold and the swipe that cancels a confirmation — belongs to
+/// <see cref="PhoneSelectGesture"/>: a hold (still for <see cref="SelectConfirmMath.HoldSeconds"/>) opens the item's native
+/// inspection and never confirms, and moving past <see cref="SelectConfirmMath.ConfirmSlop"/> cancels the confirmation, so a
+/// swipe never buys or takes. The gesture asks each screen's adapter to let go of the game's record of the press through
 /// <see cref="PhoneSwipeRelease"/> (<c>_ignoreMouseRelease</c>, <c>_currentPressedAction</c>, <c>_isPressed</c>), so the game
 /// cannot take the item on its own; the slot's ignore flag is put back when the selection goes, and the game writes the
-/// other two again on the next press.
+/// other two again on the next press.</para>
 /// <para>The selection remembers the item and its current model (a shop entry's card, relic or potion, a card, a relic): a
 /// Courier restock, a reroll or a rebuilt choice swaps the model, which clears the selection instead of confirming a
 /// replacement. Each screen only supplies where its items are, how to read and take one, and how to show its tip.</para>
@@ -60,8 +60,9 @@ internal sealed class PhoneSelectConfirm
     // ---- The per-screen adapters -----------------------------------------------------------------------------------------
 
     /// <summary>
-    /// What one screen's items are and what confirming, inspecting and tipping one means. The policy owns the selection,
-    /// reticle, tip lifetime, press tracking and thresholds; an adapter only answers for its items.
+    /// What one screen's items are and what confirming, inspecting and tipping one means. This owner keeps the selection,
+    /// reticle and tip lifetime; <see cref="PhoneSelectGesture"/> tracks presses and thresholds; an adapter only answers for
+    /// its items.
     /// </summary>
     internal abstract class SelectAdapter(PhoneSelectConfirm owner)
     {
@@ -152,7 +153,11 @@ internal sealed class PhoneSelectConfirm
         internal bool Attached;
     }
 
-    private sealed class Selection
+    /// <summary>
+    /// The selection in force: its screen, item and model, and the reticle it put on the item. The press gesture holds one only
+    /// as the restore point of a press that may become a swipe and passes it back; its fields are this owner's.
+    /// </summary>
+    internal sealed class Selection
     {
         internal Control Screen = null!;
         internal ulong ScreenId;
@@ -191,6 +196,8 @@ internal sealed class PhoneSelectConfirm
     private readonly TreasureAdapter _treasure;
     private readonly RestAdapter _rest;
 
+    private readonly PhoneSelectGesture _gesture;
+
     private Selection? _selected;
 
     // The selected item's hover-exit guard: the exact signal after which the game clears its native tip.
@@ -198,31 +205,13 @@ internal sealed class PhoneSelectConfirm
     private Control? _tipGuardHitbox;
     private Callable? _tipGuardExit;
 
-    // The press being tracked: where it began, on what, and how far it has wandered since.
-    private bool _pressed;
-    private bool _pressOnSelected;
-    private bool _holdDone;
-    private Control? _pressScreen;
-    private Control? _pressItem;
-    private SelectAdapter? _pressAdapter;
-    private Vector2 _pressCanvas;
-    private Vector2 _lastCanvas;
-    private Vector2 _windowPressCanvas;
-    private float _maxMove;
-    private ulong _pressMsec;
-    private int _pressTouch = -1;
-    private bool _pressSeen;
-    private bool _itemPressed;
-
-    // A press that makes a selection owns it only while it stays a tap: a swipe lets it go again and puts back what stood
-    // there before (a second tap on the selected item only ever confirms, so it owns nothing).
-    private bool _pressMadeSelection;
-    private bool _pressSwiped;
-    private Selection? _pressPrevious;
-
-    private static int _confirms;
-    private static int _holdInspects;
     private static int _clears;
+
+    /// <summary>The selection in force, or null; the gesture carries it as the restore point of a press that may swipe.</summary>
+    internal Selection? CurrentSelection => _selected;
+
+    /// <summary>Whether an error has turned this owner off (the gesture stops with it).</summary>
+    internal bool Failed => _failed;
 
     internal static PhoneSelectConfirm? Instance { get; private set; }
 
@@ -250,10 +239,10 @@ internal sealed class PhoneSelectConfirm
     }
 
     /// <summary>How many items the second tap has confirmed (for the tests and the proofs).</summary>
-    public static int Confirms => _confirms;
+    public static int Confirms => PhoneSelectGesture.Confirms;
 
     /// <summary>How many holds have opened an item's inspection (for the tests and the proofs).</summary>
-    public static int HoldInspects => _holdInspects;
+    public static int HoldInspects => PhoneSelectGesture.HoldInspects;
 
     /// <summary>How many selections have been let go without a confirm (for the tests and the proofs).</summary>
     public static int Clears => _clears;
@@ -275,6 +264,7 @@ internal sealed class PhoneSelectConfirm
     public PhoneSelectConfirm()
     {
         Instance = this;
+        _gesture = new PhoneSelectGesture(this);
         Assembly sts2 = typeof(NGame).Assembly;
         _merchantSlotType = sts2.GetType(MerchantSlotTypeName);
         Type? cardHolderType = sts2.GetType(CardHolderTypeName);
@@ -398,49 +388,8 @@ internal sealed class PhoneSelectConfirm
         if (_selected != null && _selected.ScreenId == screenId) Drop("screen closed", counted: true);
     }
 
-    /// <summary>Every press and release of the window's own input, before the game's controls see it.</summary>
-    public void OnWindowInput(InputEvent input)
-    {
-        if (_failed) return;
-        try
-        {
-            HandleWindowInput(input);
-        }
-        catch (Exception error)
-        {
-            Fail(error);
-        }
-    }
-
-    private void HandleWindowInput(InputEvent input)
-    {
-        switch (input)
-        {
-            case InputEventScreenTouch { Pressed: true } touch:
-                _pressSeen = true;
-                _pressTouch = touch.Index;
-                _windowPressCanvas = ToCanvas(touch.Position);
-                break;
-            case InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } press:
-                _pressSeen = true;
-                _pressTouch = -1;
-                _windowPressCanvas = ToCanvas(press.Position);
-                break;
-            case InputEventScreenTouch { Pressed: false } release when _pressed && (_pressTouch < 0 || release.Index == _pressTouch):
-                Release(release.Position);
-                break;
-            case InputEventMouseButton { Pressed: false, ButtonIndex: MouseButton.Left } release when _pressed:
-                // A touch's release is also delivered as this; the first release has already ended the press.
-                Release(release.Position);
-                break;
-            case InputEventScreenDrag drag when _pressed:
-                Moved(drag.Position);
-                break;
-            case InputEventMouseMotion motion when _pressed && (motion.ButtonMask & MouseButtonMask.Left) != 0:
-                Moved(motion.Position);
-                break;
-        }
-    }
+    /// <summary>Every press and release of the window's own input, before the game's controls see it (the gesture's press).</summary>
+    public void OnWindowInput(InputEvent input) => _gesture.OnWindowInput(input);
 
     public void OnProcessFrame()
     {
@@ -456,12 +405,10 @@ internal sealed class PhoneSelectConfirm
             {
                 if (_selected != null) Drop("landscape", counted: true);
                 DetachAll();
-                ResetPress();
+                _gesture.Reset();
                 return;
             }
-            // A press that lands on no item lets the selection go.
-            if (_pressSeen && !_itemPressed) Drop("elsewhere", counted: true);
-            _pressSeen = _itemPressed = false;
+            _gesture.BeginFrame();
 
             for (int i = _screens.Count - 1; i >= 0; i--)
             {
@@ -474,7 +421,7 @@ internal sealed class PhoneSelectConfirm
                 WireItems(tracked.Screen, tracked.Adapter);
             }
             if (_selected is { } kept && !StillSelected(kept, out string why)) Drop($"item changed ({why})", counted: true);
-            StepHold();
+            _gesture.Step();
         }
         catch (Exception error)
         {
@@ -482,160 +429,12 @@ internal sealed class PhoneSelectConfirm
         }
     }
 
-    private void Fail(Exception error)
+    internal void Fail(Exception error)
     {
         _failed = true;
         GD.PrintErr("Phone select confirm: turned off after an error: ", error);
         if (_selected != null) Drop("turned off", counted: false);
         DetachAll();
-    }
-
-    // ---- Press, hold, release ---------------------------------------------------------------------------------------------
-
-    private void OnItemPressed(Control screen, Control item, SelectAdapter adapter, InputEvent e)
-    {
-        if (_failed || !SafeAreaCanvas.IsPortrait) return;
-        if (e is not InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } press) return;
-        if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(item)) return;
-        if (!adapter.Confirms(screen)) return;
-        BeginPress(screen, item, adapter, press.Position);
-    }
-
-    /// <summary>
-    /// Starts tracking a press. <paramref name="guiPosition" /> is the press point the item's own signal carries (the canvas's
-    /// coordinates); the window's own press point is used instead when there was one, so that it is measured in the same space
-    /// as the window's drag and release points.
-    /// </summary>
-    private void BeginPress(Control screen, Control item, SelectAdapter adapter, Vector2 guiPosition)
-    {
-        try
-        {
-            _itemPressed = true;
-            // The game takes these items on the release of a press; never here.
-            adapter.Suppress(screen, item);
-            bool second = IsSelected(screen, item, adapter);
-            Selection? previous = _selected;
-            if (second)
-            {
-                if (adapter.IsCard) HoverOnly(item);
-                GD.Print($"Phone select confirm: {adapter.Label} {item.Name} tapped again; releasing confirms.");
-            }
-            else
-            {
-                Drop("other item", counted: true);
-                Select(screen, item, adapter);
-            }
-            _pressed = true;
-            _pressOnSelected = second;
-            _pressMadeSelection = !second;
-            _pressSwiped = false;
-            _pressPrevious = previous;
-            _holdDone = false;
-            _pressScreen = screen;
-            _pressItem = item;
-            _pressAdapter = adapter;
-            _pressCanvas = _lastCanvas = _pressSeen ? _windowPressCanvas : guiPosition;
-            _maxMove = 0f;
-            _pressMsec = Time.GetTicksMsec();
-        }
-        catch (Exception error)
-        {
-            Fail(error);
-        }
-    }
-
-    private void Moved(Vector2 windowPosition)
-    {
-        _lastCanvas = ToCanvas(windowPosition);
-        _maxMove = Math.Max(_maxMove, _pressCanvas.DistanceTo(_lastCanvas));
-        CancelSwipedSelection();
-    }
-
-    /// <summary>
-    /// A press that has become a swipe never made a selection: it lets go of the one the press made and puts back the one
-    /// that stood before, so scrolling a card grid or a shop page never moves the reticle, and the next tap selects afresh.
-    /// A second tap on the selected item owns nothing, so a swipe from it only cancels its confirmation (the selection stays).
-    /// </summary>
-    private void CancelSwipedSelection()
-    {
-        if (!_pressed || _pressSwiped || !_pressMadeSelection || SelectConfirmMath.WithinSlop(_maxMove)) return;
-        _pressSwiped = true;
-        _holdDone = true;
-        // The press's own release is still on its way: keep the item's release suppression until it has gone (a shop slot's
-        // ignore flag is cleared by its next press), or the swipe itself would buy.
-        Drop("swipe", counted: true, restore: false);
-        Selection? previous = _pressPrevious;
-        _pressPrevious = null;
-        if (previous == null) return;
-        if (!GodotObject.IsInstanceValid(previous.Screen) || !GodotObject.IsInstanceValid(previous.Item)) return;
-        if (!previous.Screen.IsInsideTree() || !previous.Item.IsInsideTree() || previous.Item.IsQueuedForDeletion()) return;
-        if (!previous.Adapter.StillShown(previous.Screen, previous.Item)) return;
-        Select(previous.Screen, previous.Item, previous.Adapter);
-    }
-
-    private void StepHold()
-    {
-        if (!_pressed || _holdDone || _pressItem == null || _pressAdapter == null) return;
-        double elapsed = SelectConfirmMath.SecondsSince(_pressMsec, Time.GetTicksMsec());
-        if (elapsed < SelectConfirmMath.HoldSeconds) return;
-        SelectPress action = SelectConfirmMath.Decide(_maxMove, elapsed, released: false);
-        if (action != SelectPress.Inspect)
-        {
-            if (action == SelectPress.Cancel) _holdDone = true;
-            return;
-        }
-        _holdDone = true;
-        if (_selected == null || !ReferenceEquals(_selected.Item, _pressItem)) return;
-        if (_pressScreen == null) return;
-        try
-        {
-            _pressAdapter.Inspect(_pressScreen, _pressItem);
-            _holdInspects++;
-            GD.Print($"Phone select confirm: {_pressAdapter.Label} {_pressItem.Name} held; its inspection opened.");
-        }
-        catch (Exception error)
-        {
-            // A tip or an inspection that cannot open leaves the item under the two taps as it was.
-            GD.PrintErr("Phone select confirm: the item's inspection could not open: ", error.Message);
-        }
-    }
-
-    private void Release(Vector2 windowPosition)
-    {
-        Control? item = _pressItem;
-        Control? screen = _pressScreen;
-        SelectAdapter? adapter = _pressAdapter;
-        bool second = _pressOnSelected;
-        bool held = _holdDone;
-        double elapsed = SelectConfirmMath.SecondsSince(_pressMsec, Time.GetTicksMsec());
-        Moved(windowPosition);
-        float moved = _maxMove;
-        ResetPress();
-        if (!second || held || item == null || screen == null || adapter == null) return;
-        if (SelectConfirmMath.Decide(moved, elapsed, released: true) != SelectPress.Confirm) return;
-        if (_selected == null || !ReferenceEquals(_selected.Item, item)) return;
-        if (!StillSelected(_selected, out string changed))
-        {
-            Drop($"item changed ({changed})", counted: true);
-            return;
-        }
-        if (!adapter.HitRect(screen, item).HasPoint(_lastCanvas)) return;
-        if (!adapter.CanConfirm(screen, item)) return;
-        Confirm(screen, item, adapter);
-    }
-
-    private void ResetPress()
-    {
-        _pressed = false;
-        _pressOnSelected = false;
-        _pressMadeSelection = false;
-        _pressSwiped = false;
-        _pressPrevious = null;
-        _holdDone = false;
-        _pressScreen = null;
-        _pressItem = null;
-        _pressAdapter = null;
-        _maxMove = 0f;
     }
 
     /// <summary>
@@ -701,13 +500,13 @@ internal sealed class PhoneSelectConfirm
 
     // ---- The selection ----------------------------------------------------------------------------------------------------
 
-    private bool IsSelected(Control screen, Control item, SelectAdapter adapter) =>
+    internal bool IsSelected(Control screen, Control item, SelectAdapter adapter) =>
         _selected is { } selection && ReferenceEquals(selection.Item, item) && ReferenceEquals(selection.Screen, screen) &&
         (adapter.ModelCanChange
             ? SelectConfirmMath.IsSameItem(item.GetInstanceId(), adapter.Model(item), selection.Item.GetInstanceId(), selection.Model)
             : item.GetInstanceId() == selection.Item.GetInstanceId());
 
-    private void Select(Control screen, Control item, SelectAdapter adapter)
+    internal void Select(Control screen, Control item, SelectAdapter adapter)
     {
         Control reticle = adapter.AttachReticle(item);
         object? model = adapter.Model(item);
@@ -726,6 +525,18 @@ internal sealed class PhoneSelectConfirm
         }
         if (adapter.TipFollowsHover) HookSelectedTip(screen, item, adapter);
         GD.Print($"Phone select confirm: {adapter.Label} {item.Name} selected; a second tap confirms it.");
+    }
+
+    /// <summary>
+    /// Puts back the selection that stood before a press that became a swipe, when its screen and item still stand (the press
+    /// itself owns that restore point; see <see cref="PhoneSelectGesture"/>).
+    /// </summary>
+    internal void RestoreSelection(Selection previous)
+    {
+        if (!GodotObject.IsInstanceValid(previous.Screen) || !GodotObject.IsInstanceValid(previous.Item)) return;
+        if (!previous.Screen.IsInsideTree() || !previous.Item.IsInsideTree() || previous.Item.IsQueuedForDeletion()) return;
+        if (!previous.Adapter.StillShown(previous.Screen, previous.Item)) return;
+        Select(previous.Screen, previous.Item, previous.Adapter);
     }
 
     /// <summary>Selects an item without a press (the card reward turns an answer from elsewhere into a selection).</summary>
@@ -747,18 +558,9 @@ internal sealed class PhoneSelectConfirm
         if (Instance?._selected is { } selection && ReferenceEquals(selection.Screen, screen)) Clear(reason);
     }
 
-    private void Confirm(Control screen, Control item, SelectAdapter adapter)
-    {
-        // The game's own release of this press is still on its way: the item keeps suppressing it until the next press.
-        Drop("confirmed", counted: false, restore: false);
-        _confirms++;
-        GD.Print($"Phone select confirm: {adapter.Label} {item.Name} confirmed.");
-        adapter.Commit(screen, item);
-    }
+    internal void Drop(string reason, bool counted) => Drop(reason, counted, restore: true);
 
-    private void Drop(string reason, bool counted) => Drop(reason, counted, restore: true);
-
-    private void Drop(string reason, bool counted, bool restore)
+    internal void Drop(string reason, bool counted, bool restore)
     {
         Selection? selection = _selected;
         if (selection == null) return;
@@ -786,7 +588,7 @@ internal sealed class PhoneSelectConfirm
     /// A screen that has gone, a hidden item and, where the adapter allows it, a swapped model end the selection; screen
     /// state that changes during an animation (a holder's mouse filter) does not.
     /// </summary>
-    private bool StillSelected(Selection selection, out string why)
+    internal bool StillSelected(Selection selection, out string why)
     {
         Control item = selection.Item, screen = selection.Screen;
         if (!GodotObject.IsInstanceValid(item)) { why = "item gone"; return false; }
@@ -815,7 +617,7 @@ internal sealed class PhoneSelectConfirm
             if (press == null || !GodotObject.IsInstanceValid(press)) continue;
             ulong id = press.GetInstanceId();
             if (!_wired.Add(id)) continue;
-            press.Connect("MousePressed", Callable.From((InputEvent e) => OnItemPressed(screen, item, adapter, e)));
+            press.Connect("MousePressed", Callable.From((InputEvent e) => _gesture.ItemPressed(screen, item, adapter, e)));
             item.TreeExiting += () => _wired.Remove(id);
         }
     }
@@ -838,7 +640,7 @@ internal sealed class PhoneSelectConfirm
         if (!GodotObject.IsInstanceValid(slot)) return;
         Control? inventory = InventoryOf(slot);
         if (inventory == null) return;
-        BeginPress(inventory, slot, _shop, press.Position);
+        _gesture.Begin(inventory, slot, _shop, press.Position);
     }
 
     /// <summary>The merchant inventory a slot stands in (its <c>IsOpen</c> says whether the shop still shows).</summary>
@@ -1355,13 +1157,6 @@ internal sealed class PhoneSelectConfirm
     }
 
     // ---- Placement helpers ------------------------------------------------------------------------------------------------
-
-    /// <summary>The touch's point on the portrait canvas (the finger is the authority, not the engine's emulated mouse).</summary>
-    private static Vector2 ToCanvas(Vector2 windowPosition)
-    {
-        if (Engine.GetMainLoop() is not SceneTree tree || !GodotObject.IsInstanceValid(tree.Root)) return windowPosition;
-        return tree.Root.GetFinalTransform().AffineInverse() * windowPosition;
-    }
 
     /// <summary>
     /// Adds the game's own selection reticle (<c>selection_reticle.tscn</c>: four gold corners and their shadow) as a child of

@@ -46,6 +46,8 @@ Live combat events keep their native fight scene and description reveal. In port
 
 [`PortraitCharacterArtLayout`](src/STS2Mobile.GameHost/PortraitCharacterArtLayout.cs) owns the character art behind those screens: the backdrop cover, the split single-Spine figure and its slot mask, the ambient emitters, and their desktop restore values. It frames once per art container, not per frame.
 
+[`PhoneSelectConfirm`](src/STS2Mobile.GameHost/PhoneSelectConfirm.cs) owns the selection, reticle and tips on the screens whose items wait for a second tap, with the per-screen adapters that inspect and commit each item; [`PhoneSelectGesture`](src/STS2Mobile.GameHost/PhoneSelectGesture.cs) owns their shared tap, hold and swipe-cancel policy and the press in flight. `PhoneRewardTapGuard` stays the reward screen's own guard.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.
