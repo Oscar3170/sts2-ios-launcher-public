@@ -12,15 +12,15 @@ public class PortraitHeaderMathTests
         HeaderBox row = PortraitHeaderMath.PotionRow(1080f, Cap, TopBarRow, PotionRow, MapDeck, Margin, Gap);
         HeaderBox buttons = PortraitHeaderMath.MapDeckRow(1080f, Cap, TopBarRow, PotionRow, MapDeck, 127f, Margin);
         Assert.Equal(Margin, row.Left, 3);
-        Assert.Equal(Cap + TopBarRow, row.Top, 3);
+        Assert.Equal(Cap + TopBarRow - PortraitHeaderMath.SecondRowRise, row.Top, 3);
         Assert.Equal(PotionRow, row.Height, 3);
         Assert.Equal(790f, row.Width, 3);
         Assert.Equal(row.Right + Gap, buttons.Left, 3);
         Assert.Equal(1080f - Margin, buttons.Right, 3);
         // Both rows share the second row's middle, so the tray and the buttons line up.
         Assert.Equal(row.Top + row.Height / 2f, buttons.Top + buttons.Height / 2f, 3);
-        // The potion row ends exactly at the stone's bottom edge: no potion sits on the torn edge.
-        Assert.Equal(Cap + TopBar, row.Bottom, 3);
+        // The tray's dark box (131 units, 2 below the row's top) ends on the stone, above its 20 unit torn edge.
+        Assert.True(row.Top + 2f + 131f <= Cap + TopBar - 20f);
     }
 
     [Fact]

@@ -56,19 +56,26 @@ public static class PortraitHeaderMath
     }
 
     /// <summary>
+    /// How far the second header row (potion tray, map and deck) sits above its band. The stone's last 20 units are its torn
+    /// edge (the dark rim and the tear the stage shows through), not stone, and the tray's dark box (131 units, 2 below the
+    /// row's top, in a 140 unit row) ended over it. Lifted by 17, the tray ends 4 units above the torn edge, on the stone.
+    /// </summary>
+    public const float SecondRowRise = 17f;
+
+    /// <summary>
     /// The potion row, left of the map and deck buttons in the second header row. Its height is the row's own; what potions
     /// do not use shows the stone behind the tray.
     /// </summary>
     public static HeaderBox PotionRow(float canvasWidth, float capHeight, float topBarRowHeight, float potionRowHeight,
         float mapDeckWidth, float margin, float gap) =>
-        new(margin, capHeight + topBarRowHeight,
+        new(margin, capHeight + topBarRowHeight - SecondRowRise,
             Math.Max(0f, canvasWidth - 2f * margin - gap - mapDeckWidth), Math.Max(0f, potionRowHeight));
 
     /// <summary>The map and deck buttons, right of the potion row and centred on it.</summary>
     public static HeaderBox MapDeckRow(float canvasWidth, float capHeight, float topBarRowHeight, float potionRowHeight,
         float mapDeckWidth, float buttonHeight, float margin) =>
         new(canvasWidth - margin - mapDeckWidth,
-            capHeight + topBarRowHeight + (potionRowHeight - buttonHeight) / 2f,
+            capHeight + topBarRowHeight - SecondRowRise + (potionRowHeight - buttonHeight) / 2f,
             Math.Max(0f, mapDeckWidth), Math.Max(0f, buttonHeight));
 
     /// <summary>The relic band's scroll clip: fixed under the stone, inside the band the stage was tuned around.</summary>
