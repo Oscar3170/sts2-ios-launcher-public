@@ -328,6 +328,10 @@ internal sealed class CombatAssetWarmup
         }
         if (constructor == null)
             return false;
+        // The game's own sessions load every atlas on the main thread first (PreloadManager.EnsureAtlasesLoaded): a scene that
+        // references an atlas sprite otherwise makes the C# atlas loader load the atlas synchronously on a loader thread, and
+        // that nested load crashed the phone. The same order here.
+        preloadType!.GetMethod("EnsureAtlasesLoaded", StaticAll)?.Invoke(null, null);
         _session = constructor.Invoke(["CombatWarmup", _paths, cache, assetCache]);
         _process = sessionType.GetMethod("Process", InstAll);
         _completed = sessionType.GetProperty("IsCompleted", InstAll);
