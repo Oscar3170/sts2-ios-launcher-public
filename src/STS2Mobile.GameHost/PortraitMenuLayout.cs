@@ -149,21 +149,31 @@ internal sealed class PortraitMenuLayout
     {
         // The per-screen plans and callbacks go first, then the art, then the focus links; each owner restores what it
         // wrote at the same points the menu always has.
+        SwitchTrace.Note("menus mode reset");
         _modeCards.ResetPortrait();
+        SwitchTrace.Note("menus character reset");
         _characterSelect.ResetPortrait();
+        SwitchTrace.Note("menus art");
         _art.RestoreLandscape();
+        SwitchTrace.Note("menus focus");
         _modeCards.RestoreFocus();
         _characterSelect.RestoreFocus();
+        SwitchTrace.Note("menus pads");
         PortraitTargetPads.ReleaseAll();
+        SwitchTrace.Note("menus text");
         PortraitMenuText.Release();
+        SwitchTrace.Note("menus snapshots");
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
+        SwitchTrace.Note("menus controls");
         _modeCards.RestoreControls();
         _characterSelect.RestoreControls();
         _art.RestoreControls();
+        SwitchTrace.Note("menus resting");
         // The info panel may slide again from wherever it is: give the game's own resting place back.
         _characterSelect.RestoreRestingPlaces();
+        SwitchTrace.Note("menus done");
     }
 
     public void PruneDead()
