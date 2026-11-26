@@ -45,6 +45,8 @@ internal sealed class PortraitShopLayout
     private const float ShopItemPadWidth = 127f;
     private const float ShopItemPadHeight = 127f;
     private const float ShopBackFallbackY = 355f;
+    /// <summary>The Back's drawn width on the canvas (<see cref="PortraitNavigationPads"/>'s reference size).</summary>
+    private const float ShopBackDrawnWidth = 230f;
     private const float ShopTabMargin = 16f;
 
     // The shop room's authored composition, in the room scene's own units (measured from the native art).
@@ -778,13 +780,17 @@ internal sealed class PortraitShopLayout
         if (!tab.Position.IsEqualApprox(at)) tab.Position = at;
     }
 
+    /// <summary>
+    /// Where the Back stands when shown: the left end of the stock's bottom row at its 230-unit drawn width (the place and
+    /// size <see cref="PortraitNavigationPads"/> gives it). Not the button's live rect: it slides in from off the left edge
+    /// when the shop opens, and tabs measured from it would slide along with it.
+    /// </summary>
     private static Rect2 ShopBackRect(ShopState state, Vector2 canvas)
     {
-        if (state.BackButton is { } back && GodotObject.IsInstanceValid(back))
+        if (state.BackButton is { } back && GodotObject.IsInstanceValid(back) && back.Size.X > 1f && back.Size.Y > 1f)
         {
-            Rect2 rect = back.GetGlobalRect();
-            if (rect.Size.X > 1f && rect.Size.Y > 1f && rect.Position.Y < canvas.Y - 20f && rect.End.Y > 0f)
-                return rect;
+            var size = new Vector2(ShopBackDrawnWidth, back.Size.Y * ShopBackDrawnWidth / back.Size.X);
+            return new Rect2(0f, PortraitShopMath.TabRowTop(canvas.Y, back.Size.Y), size);
         }
         return new Rect2(20f, canvas.Y - ShopBackFallbackY, 198f, 109f);
     }

@@ -304,7 +304,12 @@ internal sealed partial class PortraitBetweenLayout
                 return;
             }
             // The game slides the ribbon to its desktop place on enable; take the slide over so it ends in the phone's lane.
+            // A ribbon coming in from the game's hidden place (only just past the right edge, at its desktop height) enters
+            // from beyond the right edge on the lane's own line, as the game's horizontal slide does, not diagonally. One
+            // already in its lane (a Skip/Proceed re-enable) stays where it is.
             native.Kill();
+            if (proceed.Position.X > target.X + 1f && Math.Abs(proceed.Position.Y - target.Y) > 1f)
+                proceed.Position = new Vector2(Math.Max(proceed.Position.X, canvas.X + width), target.Y);
             Tween owned = proceed.CreateTween().SetParallel(true);
             owned.TweenProperty(proceed, "position", target, 0.5).SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Expo);
             if (_proceedImage?.GetValue(proceed) is CanvasItem image)

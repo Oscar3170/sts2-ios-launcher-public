@@ -295,8 +295,8 @@ internal sealed class PortraitNavigationPads
         // Cached places are parent-local, for the game's Position = _showPos path; the button itself moves in canvas space.
         var show = LocalPoint(control, showCanvas);
         var hide = LocalPoint(control, hideCanvas);
-        bool changed = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed)
-            || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
+        bool first = !_placedTargets.TryGetValue(id, out (Vector2 Show, Vector2 Hide) placed);
+        bool changed = first || placed.Show.DistanceTo(show) > 0.5f || placed.Hide.DistanceTo(hide) > 0.5f;
         bool enabled = fields.Enabled?.GetValue(control) is true;
         Vector2 target = enabled ? showCanvas : hideCanvas;
         Tween? tween = fields.MoveTween?.GetValue(control) as Tween;
@@ -311,7 +311,16 @@ internal sealed class PortraitNavigationPads
             fields.HidePos?.SetValue(control, hide);
             if (tween is not null && tween.IsValid()) tween.Kill();
             fields.MoveTween?.SetValue(control, null);
-            if (control.GlobalPosition.DistanceTo(target) > 2f) SlideBack(control, fields, target);
+            if (first)
+            {
+                // The game's own place for the button is a local point on a landscape canvas (mid-screen in portrait, or
+                // moved with a merchant inventory): the Back is never seen there. It starts parked off the left edge and,
+                // when shown, enters along its row as the game's slide does.
+                control.GlobalPosition = hideCanvas;
+                if (enabled) SlideBack(control, fields, showCanvas, entering: true);
+                return;
+            }
+            if (control.GlobalPosition.DistanceTo(target) > 2f) SlideBack(control, fields, target, entering: enabled);
             else control.GlobalPosition = target;
             return;
         }
@@ -324,19 +333,22 @@ internal sealed class PortraitNavigationPads
             && (!_slides.TryGetValue(id, out Tween? owned) || owned != tween))
         {
             tween.Kill();
-            SlideBack(control, fields, target);
+            SlideBack(control, fields, target, entering: enabled);
             return;
         }
         if (tween is not null && tween.IsValid() && tween.IsRunning()) return;
         if (control.GlobalPosition.DistanceTo(target) > 0.5f) control.GlobalPosition = target;
     }
 
-    /// <summary>The native Back slide's easing and duration, moving the button to a canvas point.</summary>
-    private void SlideBack(Control control, Fields fields, Vector2 target)
+    /// <summary>
+    /// The native Back slide (0.35 s; <c>Back</c> easing in, <c>Expo</c> out, as <c>NBackButton.OnEnable/OnDisable</c>), moving
+    /// the button to a canvas point.
+    /// </summary>
+    private void SlideBack(Control control, Fields fields, Vector2 target, bool entering)
     {
         Tween slide = control.CreateTween();
         slide.TweenProperty(control, "global_position", target, 0.35)
-            .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+            .SetEase(Tween.EaseType.Out).SetTrans(entering ? Tween.TransitionType.Back : Tween.TransitionType.Expo);
         fields.MoveTween?.SetValue(control, slide);
         _slides[control.GetInstanceId()] = slide;
     }
