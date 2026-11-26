@@ -303,7 +303,7 @@ internal sealed class PortraitNavigationPads
         // The game's enable/disable slide tweens global_position to the cached places, which are parent-local. Where the
         // parent offsets them (a merchant inventory), that slide heads away from the row; the same slide is run in canvas
         // space instead, so the Back keeps its entrance and exit and stays on its row's line.
-        bool offset = show.DistanceTo(showCanvas) > 0.5f || hide.DistanceTo(hideCanvas) > 0.5f;
+        bool localPlaces = show.DistanceTo(showCanvas) > 0.5f || hide.DistanceTo(hideCanvas) > 0.5f;
         if (changed)
         {
             _placedTargets[id] = (show, hide);
@@ -320,7 +320,7 @@ internal sealed class PortraitNavigationPads
         if (storedShow.DistanceTo(show) > 0.5f) fields.ShowPos.SetValue(control, show);
         if (fields.HidePos is not null && fields.HidePos.GetValue(control) is Vector2 storedHide && storedHide.DistanceTo(hide) > 0.5f)
             fields.HidePos.SetValue(control, hide);
-        if (offset && tween is not null && tween.IsValid() && tween.IsRunning()
+        if (localPlaces && tween is not null && tween.IsValid() && tween.IsRunning()
             && (!_slides.TryGetValue(id, out Tween? owned) || owned != tween))
         {
             tween.Kill();
