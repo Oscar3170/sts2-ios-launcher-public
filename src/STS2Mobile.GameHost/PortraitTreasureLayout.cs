@@ -22,6 +22,8 @@ internal sealed class PortraitTreasureLayout
     public const string TreasureArtName = "PortraitTreasureArt";
 
     private static readonly Color TreasureArtTint = new(0.68f, 0.66f, 0.72f);
+    /// <summary>The floor-collision shader's box (left, top, right, bottom) in the gold emitter's own coordinates.</summary>
+    private const string FloorRectParameter = "floor_rect";
 
     /// <summary>One treasure room's composition, its cached nodes and the game's own values to put back.</summary>
     private sealed class TreasureState
@@ -40,10 +42,18 @@ internal sealed class PortraitTreasureLayout
         public Color ChestModulate;
         public Material? GoldMaterial;
         public Vector2 GoldPosition, FloorPosition;
+        /// <summary>The game's own floor box, when the burst collides through the shader instead of an occluder.</summary>
+        public Vector4? FloorRect;
     }
 
     private readonly HashSet<ulong> _treasures = new();
     private readonly Dictionary<ulong, TreasureState> _treasureStates = new();
+
+    private static void ScaleShaderParameter(ShaderMaterial shader, string name, float factor)
+    {
+        Variant value = shader.GetShaderParameter(name);
+        if (value.VariantType == Variant.Type.Float) shader.SetShaderParameter(name, value.AsSingle() * factor);
+    }
 
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
 
@@ -170,7 +180,7 @@ internal sealed class PortraitTreasureLayout
         if (!CaptureTreasureNatives(room, state)) return false;
         if (GodotObject.InstanceFromId(state.Chest) is not Control chest ||
             GodotObject.InstanceFromId(state.Gold) is not GpuParticles2D gold ||
-            GodotObject.InstanceFromId(state.Floor) is not Node2D floor ||
+            (state.Floor != 0 && GodotObject.InstanceFromId(state.Floor) is not Node2D) ||
             GodotObject.InstanceFromId(state.Banner) is not Control banner ||
             GodotObject.InstanceFromId(state.Collection) is not Control collection ||
             GodotObject.InstanceFromId(state.Empty) is not Control empty ||
@@ -190,7 +200,7 @@ internal sealed class PortraitTreasureLayout
         chest.Modulate = new Color(
             PortraitTreasureMath.ChestTint, PortraitTreasureMath.ChestTint, PortraitTreasureMath.ChestTint, chest.Modulate.A);
         gold.Position = new Vector2(scene.GoldX, scene.GoldY);
-        floor.Position = new Vector2(scene.FloorX, scene.FloorY);
+        if (GodotObject.InstanceFromId(state.Floor) is Node2D floor) floor.Position = new Vector2(scene.FloorX, scene.FloorY);
         if (!state.GoldTweaked && gold.ProcessMaterial is ParticleProcessMaterial native)
         {
             // A copy: the coins keep their bounce and sprites, but the burst narrows to the portrait chest instead of the
@@ -201,6 +211,26 @@ internal sealed class PortraitTreasureLayout
             burst.Spread *= 0.82f;
             gold.ProcessMaterial = burst;
             state.GoldTweaked = true;
+        }
+        else if (state.FloorRect is { } nativeFloor && gold.ProcessMaterial is ShaderMaterial shader)
+        {
+            // Later builds collide with one floor box held in the emitter's own coordinates (floor_rect) instead of a
+            // LightOccluder2D. The same narrower burst applies, and the box keeps the place the moved occluder had: its
+            // offset from the mouth follows the chest's scale while the emitter itself stays unscaled.
+            if (!state.GoldTweaked)
+            {
+                shader = (ShaderMaterial)shader.Duplicate();
+                shader.SetShaderParameter("emission_shape_scale", new Vector3(1.2f, 0.72f, 1f));
+                ScaleShaderParameter(shader, "initial_linear_velocity_max", 0.82f);
+                ScaleShaderParameter(shader, "spread", 0.82f);
+                gold.ProcessMaterial = shader;
+                state.GoldTweaked = true;
+            }
+            Vector2 shift = new Vector2(
+                PortraitTreasureMath.FloorOffsetX - PortraitTreasureMath.MouthOffsetX,
+                PortraitTreasureMath.FloorOffsetY - PortraitTreasureMath.MouthOffsetY) * (scene.ChestScale - 1f);
+            shader.SetShaderParameter(FloorRectParameter, new Vector4(
+                nativeFloor.X + shift.X, nativeFloor.Y + shift.Y, nativeFloor.Z + shift.X, nativeFloor.W + shift.Y));
         }
 
         Capture(banner, captureVisible: false);
@@ -262,7 +292,6 @@ internal sealed class PortraitTreasureLayout
         if (state.Chest != 0) return true;
         if (room.GetNodeOrNull<Control>("%Chest") is not { } chest ||
             room.GetNodeOrNull<GpuParticles2D>("%GoldExplosion") is not { } gold ||
-            room.GetNodeOrNull<Node2D>("GoldExplosionCollider") is not { } floor ||
             room.GetNodeOrNull<Control>("%Banner") is not { } banner ||
             room.GetNodeOrNull<Control>("%RelicCollection") is not { } collection ||
             room.GetNodeOrNull<Control>("%EmptyLabel") is not { } empty ||
@@ -271,7 +300,21 @@ internal sealed class PortraitTreasureLayout
 
         state.Chest = chest.GetInstanceId();
         state.Gold = gold.GetInstanceId();
-        state.Floor = floor.GetInstanceId();
+        // The occluder exists only in builds whose burst collides through it; later builds carry floor_rect instead.
+        if (room.GetNodeOrNull<Node2D>("GoldExplosionCollider") is { } floor)
+        {
+            state.Floor = floor.GetInstanceId();
+            state.FloorPosition = floor.Position;
+        }
+        else if (gold.ProcessMaterial is ShaderMaterial shader && shader.GetShaderParameter(FloorRectParameter).VariantType ==
+                 Variant.Type.Vector4)
+        {
+            state.FloorRect = shader.GetShaderParameter(FloorRectParameter).AsVector4();
+        }
+        else
+        {
+            return false;
+        }
         state.Banner = banner.GetInstanceId();
         state.Collection = collection.GetInstanceId();
         state.Empty = empty.GetInstanceId();
@@ -279,7 +322,6 @@ internal sealed class PortraitTreasureLayout
 
         state.ChestModulate = chest.Modulate;
         state.GoldPosition = gold.Position;
-        state.FloorPosition = floor.Position;
         state.GoldMaterial = gold.ProcessMaterial;
 
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
