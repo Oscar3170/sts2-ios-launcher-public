@@ -46,7 +46,7 @@ internal sealed partial class PortraitEventLayout
                 LayoutEventPortrait(control, capHeight, canvasHeight, canvasWidth);
                 break;
             case CombatEventLayoutTypeName:
-                LayoutCombatEventPortrait(control, canvasHeight, canvasWidth);
+                LayoutCombatEventPortrait(control, capHeight, canvasHeight, canvasWidth);
                 break;
             case EventRoomTypeName:
                 TrackEventRoom(control, canvasWidth, canvasHeight);

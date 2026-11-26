@@ -40,8 +40,11 @@ internal sealed partial class PortraitEventLayout
     private static readonly Color EventCoverTint = new(0.30f, 0.30f, 0.30f);
     private static readonly string[] EventEffectNames = ["Outline", "Shadow", "RedFlash", "BlueFlash"];
 
-    /// <summary>Where the bottom-anchored options of a live combat event end, in the compact shape (20 points).</summary>
-    private const float CombatEventBottomInset = 58f;
+    private static (float Height, float Inset, int Font, int Gap) ChoiceMetrics(bool compact, bool tight) => tight
+        ? (PortraitEventMath.RowHeightTight, PortraitEventMath.OptionInsetYTight, PortraitEventMath.OptionTightFont, PortraitEventMath.GapTight)
+        : (compact ? PortraitEventMath.RowHeightCompact : PortraitEventMath.RowHeightTall,
+           compact ? PortraitEventMath.OptionInsetYCompact : PortraitEventMath.OptionInsetYTall,
+           PortraitEventMath.TextFont, compact ? PortraitEventMath.GapCompact : PortraitEventMath.GapTall);
 
     private static PropertyInfo? _eventRoomLayout;
     private static Type? _eventRoomLayoutOwner;
@@ -685,12 +688,7 @@ internal sealed partial class PortraitEventLayout
         Control? content = ResolveEventNode(state.ContentNode);
         if (options == null || content == null) return true;
         float width = MathF.Max(0f, state.Canvas.X - 2f * PortraitEventMath.SideInset);
-        float minHeight = tight ? PortraitEventMath.RowHeightTight
-            : state.Compact ? PortraitEventMath.RowHeightCompact : PortraitEventMath.RowHeightTall;
-        float insetY = tight ? PortraitEventMath.OptionInsetYTight
-            : state.Compact ? PortraitEventMath.OptionInsetYCompact : PortraitEventMath.OptionInsetYTall;
-        int font = tight ? PortraitEventMath.OptionTightFont : PortraitEventMath.TextFont;
-        int gap = tight ? PortraitEventMath.GapTight : state.Compact ? PortraitEventMath.GapCompact : PortraitEventMath.GapTall;
+        var (minHeight, insetY, font, gap) = ChoiceMetrics(state.Compact, tight);
         float textWidth = MathF.Max(0f, PortraitEventMath.OptionTextWidth(width) -
             (tightText ? PortraitEventMath.ScrollbarGutter : 0f));
 
@@ -827,14 +825,8 @@ internal sealed partial class PortraitEventLayout
             state.Reduced = false;
         }
         float width = state.Canvas.X > 0f ? state.Canvas.X - 2f * PortraitEventMath.SideInset : 1080f - 2f * PortraitEventMath.SideInset;
-        float minHeight = state.Tight ? PortraitEventMath.RowHeightTight
-            : state.Compact ? PortraitEventMath.RowHeightCompact : PortraitEventMath.RowHeightTall;
-        float insetY = state.Tight ? PortraitEventMath.OptionInsetYTight
-            : state.Compact ? PortraitEventMath.OptionInsetYCompact : PortraitEventMath.OptionInsetYTall;
-        int font = state.Tight ? PortraitEventMath.OptionTightFont : PortraitEventMath.TextFont;
-        LayoutEventRow(option, width, minHeight, font);
-        SetEventRowSize(option, width, minHeight, insetY,
-            MathF.Max(0f, PortraitEventMath.OptionTextWidth(width) - (state.Reduced ? PortraitEventMath.ScrollbarGutter : 0f)));
+        var (minHeight, insetY, font, _) = ChoiceMetrics(state.Compact, state.Tight);
+        SizeEventOption(option, width, minHeight, insetY, font, state.Reduced);
         SyncEventColumn(state, width, minHeight, insetY);
         if (state.Built) ScheduleEventPage(state, layout);
         return true;
@@ -878,28 +870,27 @@ internal sealed partial class PortraitEventLayout
     private readonly Dictionary<ulong, (Control Box, RichTextLabel Copy, Action Reposition)> _combatCopy = new();
 
     /// <summary>Keep the live tableau intact, with native copy directly above the choice stack.</summary>
-    private void LayoutCombatEventPortrait(Control layout, float canvasHeight, float canvasWidth)
+    private void LayoutCombatEventPortrait(Control layout, float capHeight, float canvasHeight, float canvasWidth)
     {
         bool compact = PortraitEventMath.IsCompact(canvasWidth, canvasHeight);
-        if (layout.GetNodeOrNull<Control>("VBoxContainer") is { } box)
-        {
-            if (compact)
-            {
-                // The compact choice stack grows up as rows are added, above the home indicator.
-                Capture(box, captureVisible: false);
-                box.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomWide);
-                box.OffsetLeft = PortraitEventMath.SideInset;
-                box.OffsetRight = -PortraitEventMath.SideInset;
-                box.OffsetBottom = -CombatEventBottomInset;
-                box.GrowVertical = Control.GrowDirection.Begin;
-            }
-            if (layout.GetNodeOrNull<RichTextLabel>("%EventDescription") is { } copy)
-                BindCombatEventCopy(layout, box, copy);
-        }
-        if (compact && layout.GetNodeOrNull<Control>("%OptionsContainer") is { } options)
-            foreach (Node child in options.GetChildren())
-                if (child is Control row && child.GetType().FullName == EventOptionTypeName)
-                    LayoutCombatEventRow(row, canvasWidth);
+        var band = PortraitEventMath.ChoiceBand(canvasHeight, PortraitBands.HeaderBottom(capHeight), compact, tight: false);
+        float width = canvasWidth - 2f * PortraitEventMath.SideInset;
+        if (layout.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } box ||
+            layout.GetNodeOrNull<VBoxContainer>("%OptionsContainer") is not { } options)
+            return;
+
+        Capture(box, captureVisible: false);
+        box.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        box.GrowVertical = Control.GrowDirection.End;
+        box.Position = layout.GetGlobalTransform().AffineInverse() * new Vector2(PortraitEventMath.SideInset, band.Top);
+        box.Size = new Vector2(width, 0f);
+        Capture(options, captureVisible: false);
+        options.AddThemeConstantOverride("separation", band.Gap);
+        foreach (Node child in options.GetChildren())
+            if (child is Control row && child.GetType().FullName == EventOptionTypeName)
+                LayoutCombatEventRow(row, canvasWidth, compact);
+        if (layout.GetNodeOrNull<RichTextLabel>("%EventDescription") is { } copy)
+            BindCombatEventCopy(layout, box, copy);
     }
 
     private void BindCombatEventCopy(Control layout, Control box, RichTextLabel copy)
@@ -907,14 +898,16 @@ internal sealed partial class PortraitEventLayout
         if (_combatCopy.ContainsKey(layout.GetInstanceId())) return;
         Capture(copy, captureVisible: false);
         copy.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
-        copy.Size = new Vector2(box.Size.X, 0f);
+        FitCombatCopy();
+
+        void FitCombatCopy() => MeasureEventDescription(copy, box.Size.X, PortraitEventMath.TextFont);
 
         void Reposition()
         {
             // Both controls are siblings. Keep native BBCode, reveal, and visibility without reparenting the label.
             if (!Mathf.IsEqualApprox(copy.Size.X, box.Size.X))
-                copy.Size = new Vector2(box.Size.X, 0f);
-            Vector2 wanted = new(box.Position.X, box.Position.Y - copy.Size.Y - 16f);
+                FitCombatCopy();
+            Vector2 wanted = new(box.Position.X, box.Position.Y - copy.Size.Y - PortraitEventMath.TextGap);
             if (!copy.Position.IsEqualApprox(wanted)) copy.Position = wanted;
         }
 
@@ -927,8 +920,8 @@ internal sealed partial class PortraitEventLayout
     private bool PrepareCombatEventOption(Control option, Control layout)
     {
         Vector2 canvas = layout.GetViewport()?.GetVisibleRect().Size ?? Vector2.Zero;
-        if (!PortraitEventMath.IsCompact(canvas.X, canvas.Y)) return false;
-        LayoutCombatEventRow(option, canvas.X);
+        if (canvas.X <= 0f) return false;
+        LayoutCombatEventRow(option, canvas.X, PortraitEventMath.IsCompact(canvas.X, canvas.Y));
         return true;
     }
 
@@ -947,12 +940,19 @@ internal sealed partial class PortraitEventLayout
         return null;
     }
 
-    private void LayoutCombatEventRow(Control row, float canvasWidth)
+    private void LayoutCombatEventRow(Control row, float canvasWidth, bool compact)
     {
-        float width = MathF.Max(0f, canvasWidth - 2f * PortraitEventMath.SideInset);
-        LayoutEventRow(row, width, PortraitEventMath.RowHeightTight, PortraitEventMath.OptionTightFont);
-        SetEventRowSize(row, width, PortraitEventMath.RowHeightTight, PortraitEventMath.OptionInsetYTight,
-            PortraitEventMath.OptionTextWidth(width));
+        float width = canvasWidth - 2f * PortraitEventMath.SideInset;
+        var (height, inset, font, _) = ChoiceMetrics(compact, tight: false);
+        SizeEventOption(row, width, height, inset, font, gutter: false);
+    }
+
+    private void SizeEventOption(Control row, float width, float height, float inset, int font, bool gutter)
+    {
+        LayoutEventRow(row, width, height, font);
+        float textWidth = MathF.Max(0f, PortraitEventMath.OptionTextWidth(width) -
+            (gutter ? PortraitEventMath.ScrollbarGutter : 0f));
+        SetEventRowSize(row, width, RowTextHeight(row, textWidth, inset, height), inset, textWidth);
     }
 
     // ---- copy ----------------------------------------------------------------------------------------------------------
@@ -1007,12 +1007,9 @@ internal sealed partial class PortraitEventLayout
         }
         if (description.Visible)
         {
-            SetEventFont(description, font, rich: true);
-            description.Size = new Vector2(width, description.Size.Y);
-            float height = description.GetContentHeight();
+            float height = MeasureEventDescription(description, width, font);
             description.Position = new Vector2(0f, y);
-            description.Size = new Vector2(width, height + PortraitEventMath.InkGutter);
-            y += height + PortraitEventMath.InkGutter + PortraitEventMath.CopyGap;
+            y += height + PortraitEventMath.CopyGap;
         }
         if (shared != null && shared.Visible)
         {
@@ -1027,6 +1024,15 @@ internal sealed partial class PortraitEventLayout
         copy.CustomMinimumSize = new Vector2(width, required);
         copy.Size = new Vector2(width, required);
         return required;
+    }
+
+    private float MeasureEventDescription(RichTextLabel description, float width, int font)
+    {
+        SetEventFont(description, font, rich: true);
+        description.Size = new Vector2(width, description.Size.Y);
+        float height = description.GetContentHeight() + PortraitEventMath.InkGutter;
+        description.Size = new Vector2(width, height);
+        return height;
     }
 
     /// <summary>Set one label's font at phone size and stop it sizing itself, keeping the game's own for landscape.</summary>
