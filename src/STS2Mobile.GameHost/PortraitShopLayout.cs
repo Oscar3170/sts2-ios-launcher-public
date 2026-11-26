@@ -1083,7 +1083,9 @@ internal sealed class PortraitShopLayout
 
         party.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
         party.PivotOffset = Vector2.Zero;
-        party.Scale = Vector2.One * cover * (weird ? 1.06f : 0.80f);
+        // Both rooms draw the player about 1.55 times the seated merchant's visible height, so the hero reads at the same
+        // relative size in the normal and the weird shop.
+        party.Scale = Vector2.One * cover * (weird ? 1.62f : 0.80f);
         party.GlobalPosition = artToWorld * playerFloor;
 
         merchant.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
