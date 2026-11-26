@@ -48,6 +48,7 @@ internal sealed class PortraitNavigationPads
     private readonly HashSet<ulong> _hoveredBacks = new();
     private readonly HashSet<ulong> _hoverWired = new();
     private readonly Dictionary<ulong, (Vector2 Show, Vector2 Hide)> _placedTargets = new();
+    private readonly Dictionary<ulong, Tween> _slides = new();
     /// <summary>The enchant legend a screen draws, or null when it has none; resolved once per screen, not per frame.</summary>
     private readonly Dictionary<ulong, Control?> _footerLegends = new();
     /// <summary>The members one concrete button type declares; resolved once per type, never applied to another type.</summary>
@@ -196,6 +197,7 @@ internal sealed class PortraitNavigationPads
         _paddedAt.Clear();
         _originalPositions.Clear();
         _placedTargets.Clear();
+        _slides.Clear();
         _footerLegends.Clear();
         _backScales.Clear();
         _hoveredBacks.Clear();
@@ -215,6 +217,8 @@ internal sealed class PortraitNavigationPads
     /// <c>OnWindowChange</c> assumes when it assigns <c>Position = _showPos</c>. The movement itself is a canvas point:
     /// <c>GlobalPosition</c> and the native slide tween both use the canvas, while a screen such as Blitz or Dread is scaled
     /// inside it. Mixing the two spaces put a Back at its local Y (thousands of units) as a global position, off the phone.
+    /// Where the parent offsets those places (a merchant inventory), the game's enable/disable slide is replaced by the same
+    /// slide to the canvas point.
     /// The button is never pivoted: a bottom pivot renders the art one height away from the rect that receives the taps.</para>
     /// </summary>
     private void PlaceBack(Control control)
@@ -296,6 +300,10 @@ internal sealed class PortraitNavigationPads
         bool enabled = fields.Enabled?.GetValue(control) is true;
         Vector2 target = enabled ? showCanvas : hideCanvas;
         Tween? tween = fields.MoveTween?.GetValue(control) as Tween;
+        // The game's enable/disable slide tweens global_position to the cached places, which are parent-local. Where the
+        // parent offsets them (a merchant inventory), that slide heads away from the row; the same slide is run in canvas
+        // space instead, so the Back keeps its entrance and exit and stays on its row's line.
+        bool offset = show.DistanceTo(showCanvas) > 0.5f || hide.DistanceTo(hideCanvas) > 0.5f;
         if (changed)
         {
             _placedTargets[id] = (show, hide);
@@ -303,13 +311,7 @@ internal sealed class PortraitNavigationPads
             fields.HidePos?.SetValue(control, hide);
             if (tween is not null && tween.IsValid()) tween.Kill();
             fields.MoveTween?.SetValue(control, null);
-            if (control.GlobalPosition.DistanceTo(target) > 2f)
-            {
-                Tween slide = control.CreateTween();
-                slide.TweenProperty(control, "global_position", target, 0.35)
-                    .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
-                fields.MoveTween?.SetValue(control, slide);
-            }
+            if (control.GlobalPosition.DistanceTo(target) > 2f) SlideBack(control, fields, target);
             else control.GlobalPosition = target;
             return;
         }
@@ -318,8 +320,25 @@ internal sealed class PortraitNavigationPads
         if (storedShow.DistanceTo(show) > 0.5f) fields.ShowPos.SetValue(control, show);
         if (fields.HidePos is not null && fields.HidePos.GetValue(control) is Vector2 storedHide && storedHide.DistanceTo(hide) > 0.5f)
             fields.HidePos.SetValue(control, hide);
+        if (offset && tween is not null && tween.IsValid() && tween.IsRunning()
+            && (!_slides.TryGetValue(id, out Tween? owned) || owned != tween))
+        {
+            tween.Kill();
+            SlideBack(control, fields, target);
+            return;
+        }
         if (tween is not null && tween.IsValid() && tween.IsRunning()) return;
         if (control.GlobalPosition.DistanceTo(target) > 0.5f) control.GlobalPosition = target;
+    }
+
+    /// <summary>The native Back slide's easing and duration, moving the button to a canvas point.</summary>
+    private void SlideBack(Control control, Fields fields, Vector2 target)
+    {
+        Tween slide = control.CreateTween();
+        slide.TweenProperty(control, "global_position", target, 0.35)
+            .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Cubic);
+        fields.MoveTween?.SetValue(control, slide);
+        _slides[control.GetInstanceId()] = slide;
     }
 
     private static void RestoreBack(Control control, (Vector2 Show, Vector2 Hide, Vector2 Pivot, Vector2 Scale) original)
@@ -434,7 +453,11 @@ internal sealed class PortraitNavigationPads
         foreach (ulong id in new List<ulong>(_originalPositions.Keys))
             if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _originalPositions.Remove(id);
         foreach (ulong id in new List<ulong>(_placedTargets.Keys))
-            if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id)) _placedTargets.Remove(id);
+            if (!GodotObject.IsInstanceIdValid(id) || !_tracked.Contains(id))
+            {
+                _placedTargets.Remove(id);
+                _slides.Remove(id);
+            }
         _loggedInput.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _hoveredBacks.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _hoverWired.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
