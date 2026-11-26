@@ -209,7 +209,6 @@ internal sealed class PortraitCardGridLayout
 
     private static FieldInfo? _cardRowsField;
     private static FieldInfo? _slidingIndexField;
-    private static FieldInfo? _draggingField;
     private static PropertyInfo? _sortedCardsProperty;
     private static MethodInfo? _assignRowMethod;
     private static MethodInfo? _positionRowsMethod;
@@ -223,15 +222,16 @@ internal sealed class PortraitCardGridLayout
     /// below", and in portrait both are true at once (the grid starts under the header band), so it rebinds the row standing
     /// at the grid's clipped foot back and forth every time the scroll moves. This pass re-points the same holders at the
     /// window the visible area needs, with their absolute positions, so a visible row keeps its cards and its place; it runs
-    /// after the game's own pass in the frame, so the rebind is never drawn. Nothing happens while the window is already
-    /// right (one int compare), and the assignment only runs on the frames the window moves.
+    /// after the game's own pass in the frame, so the rebind is never drawn. It runs during a finger drag too: the game's
+    /// recycler only runs while the content moves, and skipping this pass then left its back-and-forth on screen as the
+    /// flicker of the row at the foot. Nothing happens while the window is already right (one int compare), and the
+    /// assignment only runs on the frames the window moves.
     /// </summary>
     private static void ReconcileGridWindow(Control grid, GridState state)
     {
         if (state.AppliedCardWidth < 1f) return;
         ResolveWindowReflection();
         if (_cardRowsField == null || _sortedCardsProperty == null) return;
-        if (_draggingField?.GetValue(grid) is true) return;
         if (_cardRowsField.GetValue(grid) is not System.Collections.IList rows || rows.Count == 0) return;
         if (_sortedCardsProperty.GetValue(grid) is not System.Collections.IList cards || cards.Count == 0) return;
         if (GridScroll(grid, state) is not { } scroll) return;
@@ -268,7 +268,6 @@ internal sealed class PortraitCardGridLayout
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly;
         _cardRowsField = type.GetField("_cardRows", flags);
         _slidingIndexField = type.GetField("_slidingWindowCardIndex", flags);
-        _draggingField = type.GetField("_isDragging", flags);
         _sortedCardsProperty = type.GetProperty("SortedCards", BindingFlags.Instance | BindingFlags.Public);
         foreach (MethodInfo method in type.GetMethods(flags))
         {
