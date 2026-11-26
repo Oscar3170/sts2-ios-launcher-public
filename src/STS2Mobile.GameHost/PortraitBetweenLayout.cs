@@ -349,9 +349,8 @@ internal sealed partial class PortraitBetweenLayout
     /// The ribbon keeps one centre per screen. It is 108 units tall natively and the game slides it by its position, so growing
     /// it for a finger extends it downwards: the game's shown Y stays its top edge and the centre of a grown ribbon is the
     /// same before and after every Skip/Proceed re-enable. A Blitz run instead gives both labels one lane at 0.625 of the
-    /// canvas height, and the treasure room's ribbon hangs from the canvas's bottom edge, clear of the chest and its relic
-    /// holders; the game's own slide to its desktop place is taken over there so it ends in that lane without a correction
-    /// once it settles.
+    /// canvas height. Rest and treasure use the footer so the ribbon stays clear of room content. Their slide is taken
+    /// over so it ends in that lane without a correction once it settles.
     /// </summary>
     private void UpdateProceedButtonPortrait(Control proceed, Vector2 canvas)
     {
@@ -364,7 +363,7 @@ internal sealed partial class PortraitBetweenLayout
             {
                 Blitz = parentType == PortraitShopLayout.BlitzMerchantRoomTypeName ||
                         (parentType == RewardsScreenTypeName && IsBlitzRun()),
-                Footer = parentType == TreasureRoomTypeName,
+                Footer = parentType is TreasureRoomTypeName or PortraitRestSiteLayout.RestSiteRoomTypeName,
             };
         }
 
