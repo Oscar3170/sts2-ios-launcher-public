@@ -12,8 +12,9 @@ namespace STS2Mobile.GameHost;
 /// middle of the screen, the banner under the relic strip, the relic holders on three columns above the chest — with the
 /// collection's own entrance animation still ending where the grid puts each holder — and the labels for an empty chest and a
 /// fought-over relic. The game's own values are captured before the first move and put back when Portrait Mode is turned off.
+/// The room's Proceed ribbon stays with the shared between-screen lane owner.
 /// </summary>
-internal sealed partial class PortraitBetweenLayout
+internal sealed class PortraitTreasureLayout
 {
     public const string TreasureRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NTreasureRoom";
 
@@ -44,6 +45,21 @@ internal sealed partial class PortraitBetweenLayout
     private readonly HashSet<ulong> _treasures = new();
     private readonly Dictionary<ulong, TreasureState> _treasureStates = new();
 
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
+
+    private PortraitControlSnapshot Capture(Control control, bool captureVisible)
+    {
+        ulong id = control.GetInstanceId();
+        if (_snapshots.TryGetValue(id, out PortraitControlSnapshot? existing))
+        {
+            if (captureVisible && !existing.CaptureVisible) existing.RecordInitialVisibility(control.Visible);
+            return existing;
+        }
+        var created = new PortraitControlSnapshot(control, captureVisible);
+        _snapshots[id] = created;
+        return created;
+    }
+
     // ---- hooks ----------------------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -51,7 +67,7 @@ internal sealed partial class PortraitBetweenLayout
     /// so the first frame the room fades in over already has the environment instead of black bands. Returns whether it added
     /// the cover.
     /// </summary>
-    private bool BeginTreasureRoom(Control room)
+    public bool Begin(Control room)
     {
         ulong id = room.GetInstanceId();
         if (!_treasureStates.TryGetValue(id, out TreasureState? state))
@@ -63,7 +79,7 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>The room's composition; cheap to call again, it only rebuilds when the canvas or the cap changes.</summary>
-    private void UpdateTreasurePortrait(Control room, float capHeight, Vector2 canvas)
+    public void Apply(Control room, float capHeight, Vector2 canvas)
     {
         ulong id = room.GetInstanceId();
         if (!_treasureStates.TryGetValue(id, out TreasureState? state))
@@ -88,7 +104,7 @@ internal sealed partial class PortraitBetweenLayout
                 else if (state.CollectionSeen && !state.TipsCleared && ClearTreasureRelicTips(collection))
                 {
                     state.TipsCleared = true;
-                    GD.Print("Portrait between layout: the chest's relic tips are down; the footer is clear.");
+                    GD.Print("Portrait treasure layout: the chest's relic tips are down; the footer is clear.");
                 }
             }
             return;
@@ -96,8 +112,20 @@ internal sealed partial class PortraitBetweenLayout
         BuildTreasureRoom(room, capHeight, canvas, state);
     }
 
-    private void RestoreTreasureLandscape()
+    public void Update(float capHeight, Vector2 canvas)
     {
+        foreach (ulong id in _treasures)
+            if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
+                Apply(room, capHeight, canvas);
+    }
+
+    /// <summary>Puts the captured controls back, then the values this owner changed outside those snapshots.</summary>
+    public void RestoreLandscape()
+    {
+        foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                snapshot.Restore(control);
+        _snapshots.Clear();
         foreach (ulong id in _treasures)
         {
             if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) &&
@@ -127,8 +155,9 @@ internal sealed partial class PortraitBetweenLayout
         _treasureStates.Clear();
     }
 
-    private void PruneTreasureInstances()
+    public void PruneDead()
     {
+        foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
         _treasures.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _treasureStates.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList())
             _treasureStates.Remove(id);
@@ -222,7 +251,7 @@ internal sealed partial class PortraitBetweenLayout
         state.Canvas = canvas;
         state.Cap = capHeight;
         state.Built = true;
-        GD.Print($"Portrait between layout: treasure room, mouth {scene.MouthY:F0}, chest {800f * scene.ChestScale:F0} wide, " +
+        GD.Print($"Portrait treasure layout: treasure room, mouth {scene.MouthY:F0}, chest {800f * scene.ChestScale:F0} wide, " +
                  $"{holders} relic holders at {factor:F2} ({PortraitTreasureMath.HolderBox * factor:F0} units).");
         return true;
     }

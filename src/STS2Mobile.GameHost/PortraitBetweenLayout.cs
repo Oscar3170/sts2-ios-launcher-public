@@ -26,7 +26,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         PortraitMapLayout.MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
         PortraitShopLayout.MerchantInventoryTypeName, PortraitShopLayout.FakeMerchantInventoryTypeName, PortraitEventLayout.EventLayoutTypeName, MapFtueTypeName, PortraitEventLayout.AncientLayoutTypeName,
-        BackButtonTypeName, PortraitEventLayout.EventOptionTypeName, PortraitRestSiteLayout.RestSiteRoomTypeName, TreasureRoomTypeName, PortraitEventLayout.AncientDialogueLineTypeName,
+        BackButtonTypeName, PortraitEventLayout.EventOptionTypeName, PortraitRestSiteLayout.RestSiteRoomTypeName, PortraitTreasureLayout.TreasureRoomTypeName, PortraitEventLayout.AncientDialogueLineTypeName,
         PortraitShopLayout.MerchantRoomTypeName, PortraitShopLayout.BlitzMerchantRoomTypeName, PortraitShopLayout.FakeMerchantRoomTypeName,
         PortraitEventLayout.EventRoomTypeName, PortraitEventLayout.CombatEventLayoutTypeName,
     };
@@ -73,6 +73,7 @@ internal sealed partial class PortraitBetweenLayout
     private readonly PortraitEventLayout _events = new();
     private readonly HashSet<ulong> _hitPadHolders = new();
     private readonly PortraitRestSiteLayout _rest = new();
+    private readonly PortraitTreasureLayout _treasure = new();
     private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
 
@@ -167,8 +168,8 @@ internal sealed partial class PortraitBetweenLayout
             case PortraitRestSiteLayout.RestSiteRoomTypeName:
                 _rest.Apply(control, new Vector2(canvasWidth, canvasHeight));
                 break;
-            case TreasureRoomTypeName:
-                UpdateTreasurePortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
+            case PortraitTreasureLayout.TreasureRoomTypeName:
+                _treasure.Apply(control, capHeight, new Vector2(canvasWidth, canvasHeight));
                 break;
             case RewardsScreenTypeName:
                 LayoutRewardsPortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
@@ -197,7 +198,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         string? typeName = control.GetType().FullName;
         if (_events.LayoutOnAdd(control)) return true;
-        if (typeName == TreasureRoomTypeName) return BeginTreasureRoom(control);
+        if (typeName == PortraitTreasureLayout.TreasureRoomTypeName) return _treasure.Begin(control);
         // A View Upgrades tickbox joins the box this file keeps in the deck and selection screens' footers.
         if (typeName == UpgradeTickboxTypeName) return TrackViewUpgradesBox(control);
         return false;
@@ -228,9 +229,7 @@ internal sealed partial class PortraitBetweenLayout
                 KeepMapFtueOnScreen(ftue, canvas);
         _events.UpdateEvents(capHeight, canvas);
         _rest.Update(canvas);
-        foreach (ulong id in _treasures)
-            if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
-                UpdateTreasurePortrait(room, capHeight, canvas);
+        _treasure.Update(capHeight, canvas);
         _events.UpdateAncientPortraits(capHeight, canvas);
         _shop.OnProcessFrame(capHeight, canvas);
     }
@@ -268,7 +267,7 @@ internal sealed partial class PortraitBetweenLayout
                 box.Alignment = alignment;
         _alternativeAlignments.Clear();
 
-        RestoreTreasureLandscape();
+        _treasure.RestoreLandscape();
         _rest.RestoreArt();
 
         _map.RestoreLandscape();
@@ -333,6 +332,7 @@ internal sealed partial class PortraitBetweenLayout
         _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _events.PruneDead();
         _rest.PruneDead();
+        _treasure.PruneDead();
         foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
         foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
         _lootRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -363,7 +363,7 @@ internal sealed partial class PortraitBetweenLayout
             {
                 Blitz = parentType == PortraitShopLayout.BlitzMerchantRoomTypeName ||
                         (parentType == RewardsScreenTypeName && IsBlitzRun()),
-                Footer = parentType is TreasureRoomTypeName or PortraitRestSiteLayout.RestSiteRoomTypeName,
+                Footer = parentType is PortraitTreasureLayout.TreasureRoomTypeName or PortraitRestSiteLayout.RestSiteRoomTypeName,
             };
         }
 
