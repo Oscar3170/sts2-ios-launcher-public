@@ -41,7 +41,6 @@ internal sealed class PortraitCharacterArtLayout
     private readonly Dictionary<ulong, Control?> _containers = new();
     private readonly Dictionary<ulong, CpuParticles2D[]> _emitters = new();
     private readonly Dictionary<(ulong Id, string Property), Variant> _originalNodeValues = new();
-    private readonly Dictionary<ulong, ulong> _artFirstSeen = new();
     private readonly Dictionary<ulong, Node2D?> _artSpines = new();
     private readonly Dictionary<ulong, TextureRect?> _artTextures = new();
     private readonly List<ulong> _artIds = new();
@@ -128,7 +127,6 @@ internal sealed class PortraitCharacterArtLayout
         }
 
         Transform2D toCanvas = screen.GetGlobalTransformWithCanvas();
-        ulong now = Engine.GetProcessFrames();
         foreach (ulong id in _artIds)
         {
             bool framed = _artFramed.Contains(id);
@@ -144,18 +142,12 @@ internal sealed class PortraitCharacterArtLayout
                 if (GodotObject.InstanceFromId(id) is not Control) _artFramed.Add(id);
                 continue;
             }
-            // Give a freshly added scene a frame to finish entering and initialising its Spine before any native Spine call:
-            // it is framed just before this frame is drawn, after its Spine has been updated once.
-            if (!_artFirstSeen.TryGetValue(id, out ulong seen)) _artFirstSeen[id] = seen = now;
-            if (now <= seen)
-            {
-                FrameBeforeDraw(screen, container, id);
-                continue;
-            }
             if (sizeChanged) _artFramed.Remove(id);
+            // New art (a character pick) is framed in the frame it arrives. If its Spine cannot be measured yet, it is tried
+            // again just before this frame is drawn, after its Spine has updated once.
             if (!FrameArtChild(art, container.Size, toCanvas))
             {
-                HideUntilFramed(art);
+                FrameBeforeDraw(screen, container, id);
                 continue;
             }
             _artFramed.Add(id);
@@ -594,7 +586,6 @@ internal sealed class PortraitCharacterArtLayout
         _artFramedSize.Clear();
         _artSpines.Clear();
         _artTextures.Clear();
-        _artFirstSeen.Clear();
         _framedBeforeDraw.Clear();
         if (_preDrawSubscribed)
         {
@@ -640,7 +631,6 @@ internal sealed class PortraitCharacterArtLayout
         foreach (ulong id in _snapshots.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _snapshots.Remove(id);
         foreach (ulong id in _containers.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _containers.Remove(id);
         foreach (ulong id in _emitters.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _emitters.Remove(id);
-        foreach (ulong id in _artFirstSeen.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artFirstSeen.Remove(id);
         _hiddenUntilFramed.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _artSpines.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artSpines.Remove(id);
         foreach (ulong id in _artTextures.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artTextures.Remove(id);
