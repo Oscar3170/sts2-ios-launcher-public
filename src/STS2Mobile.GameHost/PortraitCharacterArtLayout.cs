@@ -595,6 +595,15 @@ internal sealed class PortraitCharacterArtLayout
         _artSpines.Clear();
         _artTextures.Clear();
         _artFirstSeen.Clear();
+        _framedBeforeDraw.Clear();
+        if (_preDrawSubscribed)
+        {
+            RenderingServer.FramePreDraw -= OnFramePreDraw;
+            _preDrawSubscribed = false;
+        }
+        foreach (ulong id in _hiddenUntilFramed)
+            if (GodotObject.InstanceFromId(id) is Control art && GodotObject.IsInstanceValid(art)) art.Visible = true;
+        _hiddenUntilFramed.Clear();
         _emitters.Clear();
     }
 
@@ -632,6 +641,7 @@ internal sealed class PortraitCharacterArtLayout
         foreach (ulong id in _containers.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _containers.Remove(id);
         foreach (ulong id in _emitters.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _emitters.Remove(id);
         foreach (ulong id in _artFirstSeen.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artFirstSeen.Remove(id);
+        _hiddenUntilFramed.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _artSpines.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artSpines.Remove(id);
         foreach (ulong id in _artTextures.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artTextures.Remove(id);
         // A gone playback's saved slots must never be written again (see RestoreFigures).
