@@ -196,7 +196,8 @@ internal static partial class PortraitProof
         Call(overlays, "Clear");
         await WaitFramesAsync(tree, 20);
 
-        // The treasure chest: a tap on the relic selects it, a second tap takes it.
+        // The treasure chest: a normal chest's only relic is taken on the first tap; a chest offering a choice selects first
+        // and takes on the second tap.
         await RunConsoleCmdAsync(Sts2, "RoomConsoleCmd", player, ["Treasure"]);
         await WaitFramesAsync(tree, 120);
         Node? room = Descendants(tree.Root).FirstOrDefault(n => n.GetType().Name == "NTreasureRoom");
@@ -213,7 +214,7 @@ internal static partial class PortraitProof
             await TapAsync(tree, CentreOf(chestRelics[0]));
             await WaitFramesAsync(tree, 30);
             await TouchStepAsync(tree, "choice-treasure-tap", DescribeTreasure(collection, chestRelics, player, relicsBefore), results);
-            await TapAgainAsync(tree, CentreOf(chestRelics[0]));
+            if (RelicCount(player) == relicsBefore) await TapAgainAsync(tree, CentreOf(chestRelics[0]));
             await WaitFramesAsync(tree, 90);
             await TouchStepAsync(tree, "choice-treasure-chosen", DescribeTreasure(collection, chestRelics, player, relicsBefore), results);
         }
