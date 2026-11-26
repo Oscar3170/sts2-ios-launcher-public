@@ -68,7 +68,14 @@ internal sealed class PhoneTouchScroll
     private readonly Type? _rewardsType;
     private readonly FieldInfo? _gridTarget, _gridDragging, _listTarget, _listDragging, _listContent, _rewardsTarget;
     private readonly PropertyInfo? _gridCanScroll, _gridLimitTop, _gridLimitBottom, _listScrollbar, _rewardsCanScroll, _rewardsLimit;
+    private readonly FieldInfo? _tipsBlockedField;
+    private readonly MethodInfo? _clearTips;
     private readonly bool _failed;
+
+    // A scroll is not a hover: the cards the finger passes over must not open their tips. The game's own switch for that
+    // (NHoverTipSet.shouldBlockHoverTips, set while a card is aimed) is held for the scroll and given back on the lift.
+    private bool _tipsBlocked;
+    private bool _tipsBlockedBefore;
     private SceneTree? _tree;
 
     private bool _down;
@@ -107,6 +114,9 @@ internal sealed class PhoneTouchScroll
             _rewardsTarget = _rewardsType?.GetField("_targetDragPos", InstAll);
             _rewardsCanScroll = _rewardsType?.GetProperty("CanScroll", InstAll);
             _rewardsLimit = _rewardsType?.GetProperty("ScrollLimitBottom", InstAll);
+            Type? tipSet = game.GetType("MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet");
+            _tipsBlockedField = tipSet?.GetField("shouldBlockHoverTips", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            _clearTips = tipSet?.GetMethod("Clear", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
             if (_gridTarget == null || _gridDragging == null || _listTarget == null || _listDragging == null)
             {
                 _failed = true;
@@ -138,6 +148,7 @@ internal sealed class PhoneTouchScroll
         }
         if (_tree != null && GodotObject.IsInstanceValid(_tree)) _tree.ProcessFrame -= OnProcessFrame;
         _tree = null;
+        UnblockTips();
         _settleView = 0;
         _settleContent = null;
     }
@@ -196,6 +207,7 @@ internal sealed class PhoneTouchScroll
         if (!SafeAreaCanvas.IsPortrait)
         {
             End();
+            UnblockTips();
             return;
         }
         try
@@ -205,6 +217,8 @@ internal sealed class PhoneTouchScroll
             {
                 if (touch.Pressed)
                 {
+                    // A new touch may open tips again: the card under a lifted scroll stayed hovered without one.
+                    UnblockTips();
                     End();
                     _down = true;
                     _start = toCanvas * touch.Position;
@@ -217,6 +231,7 @@ internal sealed class PhoneTouchScroll
                 else
                 {
                     End();
+                    ShowSelectionTipThroughBlock();
                 }
             }
             else if (input is InputEventScreenDrag drag && drag.Index == 0 && _down)
@@ -229,6 +244,7 @@ internal sealed class PhoneTouchScroll
         {
             GD.PrintErr("Phone touch scroll: ", error.Message);
             End();
+            UnblockTips();
         }
     }
 
@@ -254,6 +270,8 @@ internal sealed class PhoneTouchScroll
             // A drag on the view's background is the game's own; a view under another screen is not scrolled. This gesture
             // is not ours on the screen behind it either (its scroll is still held on its limits when the finger lifts).
             GD.Print($"Phone touch scroll: {view.GetType().Name} left to the game (dragging={dragging} covered={covered}).");
+            // The game's own drag still sweeps the finger across the cards.
+            if (dragging) BlockTips();
             _view = 0;
             _screen = 0;
             return;
@@ -262,8 +280,45 @@ internal sealed class PhoneTouchScroll
         ScrollsStarted++;
         GD.Print($"Phone touch scroll: {view.GetType().Name} scrolling from ({_start.X:F0},{_start.Y:F0}).");
         PressesReleased += PhoneSwipeRelease.Shared.Release(ReleaseSurface(view));
+        BlockTips();
         SetDragging(view, true);
         Scroll(view, moved.Y);
+    }
+
+    /// <summary>
+    /// Takes down the tip the press opened and keeps any other from opening until the next touch: the lift leaves the card
+    /// under the finger hovered, and a scroll that ends on a card must not open its tip either.
+    /// </summary>
+    private void BlockTips()
+    {
+        if (_tipsBlocked || _tipsBlockedField == null) return;
+        _tipsBlockedBefore = _tipsBlockedField.GetValue(null) is true;
+        _tipsBlocked = true;
+        if (_tipsBlockedBefore) return;
+        _clearTips?.Invoke(null, null);
+        _tipsBlockedField.SetValue(null, true);
+    }
+
+    /// <summary>The scroll's finger lifted: a selection the swipe put back (see PhoneSelectGesture) shows its own tip again.</summary>
+    private void ShowSelectionTipThroughBlock()
+    {
+        if (!_tipsBlocked || _tipsBlockedBefore || _tipsBlockedField == null) return;
+        _tipsBlockedField.SetValue(null, false);
+        try
+        {
+            PhoneSelectConfirm.ShowSelectionTip();
+        }
+        finally
+        {
+            _tipsBlockedField.SetValue(null, true);
+        }
+    }
+
+    private void UnblockTips()
+    {
+        if (!_tipsBlocked) return;
+        _tipsBlocked = false;
+        if (!_tipsBlockedBefore) _tipsBlockedField?.SetValue(null, false);
     }
 
     /// <summary>

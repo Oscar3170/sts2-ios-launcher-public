@@ -558,6 +558,21 @@ internal sealed class PhoneSelectConfirm
         if (Instance?._selected is { } selection && ReferenceEquals(selection.Screen, screen)) Clear(reason);
     }
 
+    /// <summary>Shows the selected item's tip again (a scroll kept tips from opening while it ran).</summary>
+    internal static void ShowSelectionTip()
+    {
+        if (Instance is not { _failed: false, _selected: { } selection } owner || !SafeAreaCanvas.IsPortrait) return;
+        if (!owner.StillSelected(selection, out _)) return;
+        try
+        {
+            selection.Adapter.ShowTip(selection.Screen, selection.Item);
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr($"Phone select confirm: the {selection.Adapter.Label}'s tip could not be shown again: ", error.Message);
+        }
+    }
+
     internal void Drop(string reason, bool counted) => Drop(reason, counted, restore: true);
 
     internal void Drop(string reason, bool counted, bool restore)
