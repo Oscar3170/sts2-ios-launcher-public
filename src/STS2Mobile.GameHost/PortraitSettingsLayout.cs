@@ -147,6 +147,8 @@ internal sealed class PortraitSettingsLayout
     private ulong _swallowDeadline;
     private bool _down;
     private bool _dragging;
+    /// <summary>Whether the press that owns the gesture is a finger; a touch gesture follows only the touch stream.</summary>
+    private bool _touchGesture;
     private DragKind _kind;
     private ulong _target;
     private ulong _surface;
@@ -458,20 +460,27 @@ internal sealed class PortraitSettingsLayout
             switch (input)
             {
                 case InputEventScreenTouch touch when touch.Index == 0:
-                    if (touch.Pressed) Begin(input, ToCanvas(touch.Position));
-                    else End();
+                    if (touch.Pressed) Begin(input, ToCanvas(touch.Position), touch: true);
+                    else if (_touchGesture) End();
                     return;
-                case InputEventScreenDrag drag when drag.Index == 0:
+                case InputEventScreenDrag drag when drag.Index == 0 && _touchGesture:
                     Move(ToCanvas(drag.Position));
                     return;
                 // The Linux host and the desktop editor send a mouse; the phone sends touches (and, with the game's
-                // emulate-mouse-from-touch setting, both). Absolute movement keeps the pair from scrolling twice.
+                // emulate-mouse-from-touch setting, both). One stream owns each gesture: the emulated mouse twin of a
+                // touch press still runs Begin (it is what dismisses an open list before the GUI sees that press), but it
+                // marks the gesture as a touch, and the cursor motions the emulation and the test pointer's warps emit are
+                // not the finger's. Following them turned a tap on a closed dropdown into a scroll swipe that released the
+                // press before the native dropdown could open it. ScreenDrag carries the finger's movement instead.
                 case InputEventMouseButton button when button.ButtonIndex == MouseButton.Left:
-                    if (button.Pressed) Begin(input, ToCanvas(button.Position));
-                    else End();
+                    if (button.Pressed) Begin(input, ToCanvas(button.Position),
+                        touch: button.Device == (int)InputEvent.DeviceIdEmulation);
+                    else if (!_touchGesture) End();
                     return;
-                case InputEventMouseMotion motion:
-                    if (_down) Move(ToCanvas(motion.Position));
+                case InputEventMouseMotion motion when _down && !_touchGesture &&
+                    motion.Device != (int)InputEvent.DeviceIdEmulation &&
+                    (motion.ButtonMask & MouseButtonMask.Left) != 0:
+                    Move(ToCanvas(motion.Position));
                     return;
             }
         }
@@ -519,7 +528,7 @@ internal sealed class PortraitSettingsLayout
     /// while its dropdown (drawn over the rows) plainly is, which kept the list's drag from ever starting. The hit test is
     /// the geometry of the list and the rows area instead.
     /// </summary>
-    private void Begin(InputEvent input, Vector2 point)
+    private void Begin(InputEvent input, Vector2 point, bool touch)
     {
         // Clear a previous gesture without consuming this new press. If a drag's release was lost (the input shield, a
         // screen change, the window losing focus), End() would mark this press handled and the option under it would
@@ -549,7 +558,7 @@ internal sealed class PortraitSettingsLayout
             if (_listDrag?.GetValue(list) is not Vector2 listDrag) { Note("list has no drag target", point); return; }
             // A list too short to scroll still owns the press: a swipe on it is not a language change.
             float listLimit = _listLimit?.GetValue(list) is float room ? Math.Min(room, 0f) : 0f;
-            Start(DragKind.List, list, list, point, listDrag.Y, listLimit);
+            Start(DragKind.List, list, list, point, listDrag.Y, listLimit, touch);
             return;
         }
         foreach ((ulong id, ScreenState state) in _screens)
@@ -565,7 +574,7 @@ internal sealed class PortraitSettingsLayout
                 !GodotObject.IsInstanceValid(scroll)) { Note("no scroll view", point); return; }
             if (_scrollLimit?.GetValue(scroll) is not float limit || limit > -0.5f) { Note("the rows fit", point); return; }
             if (_scrollDragY?.GetValue(scroll) is not float initial) { Note("no scroll target", point); return; }
-            Start(DragKind.Scroll, scroll, clip, point, initial, limit);
+            Start(DragKind.Scroll, scroll, clip, point, initial, limit, touch);
             return;
         }
         Note("no open list and no rows area at the press", point);
@@ -633,10 +642,11 @@ internal sealed class PortraitSettingsLayout
     private static void Note(string why, Vector2 point) =>
         GD.Print($"Portrait settings: press at ({point.X:F0},{point.Y:F0}) starts no swipe: {why}.");
 
-    private void Start(DragKind kind, Control target, Control surface, Vector2 point, float initial, float limit)
+    private void Start(DragKind kind, Control target, Control surface, Vector2 point, float initial, float limit, bool touch)
     {
         _down = true;
         _dragging = false;
+        _touchGesture = touch;
         _kind = kind;
         _target = target.GetInstanceId();
         _surface = surface.GetInstanceId();
@@ -705,6 +715,7 @@ internal sealed class PortraitSettingsLayout
         }
         _down = false;
         _dragging = false;
+        _touchGesture = false;
         _kind = DragKind.None;
         _target = 0;
         _surface = 0;
