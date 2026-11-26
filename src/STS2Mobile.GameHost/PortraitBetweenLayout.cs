@@ -21,13 +21,12 @@ internal sealed partial class PortraitBetweenLayout
     public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
     public const string MapFtueTypeName = "MegaCrit.Sts2.Core.Nodes.Ftue.NMapSelectFtue";
     public const string BackButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NBackButton";
-    public const string RestSiteRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NRestSiteRoom";
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
         PortraitMapLayout.MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
         PortraitShopLayout.MerchantInventoryTypeName, PortraitShopLayout.FakeMerchantInventoryTypeName, PortraitEventLayout.EventLayoutTypeName, MapFtueTypeName, PortraitEventLayout.AncientLayoutTypeName,
-        BackButtonTypeName, PortraitEventLayout.EventOptionTypeName, RestSiteRoomTypeName, TreasureRoomTypeName, PortraitEventLayout.AncientDialogueLineTypeName,
+        BackButtonTypeName, PortraitEventLayout.EventOptionTypeName, PortraitRestSiteLayout.RestSiteRoomTypeName, TreasureRoomTypeName, PortraitEventLayout.AncientDialogueLineTypeName,
         PortraitShopLayout.MerchantRoomTypeName, PortraitShopLayout.BlitzMerchantRoomTypeName, PortraitShopLayout.FakeMerchantRoomTypeName,
         PortraitEventLayout.EventRoomTypeName, PortraitEventLayout.CombatEventLayoutTypeName,
     };
@@ -73,9 +72,7 @@ internal sealed partial class PortraitBetweenLayout
     private readonly PortraitShopLayout _shop = new();
     private readonly PortraitEventLayout _events = new();
     private readonly HashSet<ulong> _hitPadHolders = new();
-    private readonly HashSet<ulong> _restSites = new();
-    private readonly Dictionary<ulong, int> _labelMaxFontSizes = new();
-    private readonly Dictionary<ulong, int> _labelMinFontSizes = new();
+    private readonly PortraitRestSiteLayout _rest = new();
     private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
 
@@ -167,8 +164,8 @@ internal sealed partial class PortraitBetweenLayout
             case PortraitEventLayout.EventRoomTypeName:
                 _events.Apply(control, typeName, capHeight, canvasHeight, canvasWidth);
                 break;
-            case RestSiteRoomTypeName:
-                TrackRestSite(control, canvasWidth, canvasHeight);
+            case PortraitRestSiteLayout.RestSiteRoomTypeName:
+                _rest.Apply(control, new Vector2(canvasWidth, canvasHeight));
                 break;
             case TreasureRoomTypeName:
                 UpdateTreasurePortrait(control, capHeight, new Vector2(canvasWidth, canvasHeight));
@@ -230,9 +227,7 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control ftue && GodotObject.IsInstanceValid(ftue) && ftue.IsVisibleInTree())
                 KeepMapFtueOnScreen(ftue, canvas);
         _events.UpdateEvents(capHeight, canvas);
-        foreach (ulong id in _restSites)
-            if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
-                UpdateRestSitePortrait(room, canvas);
+        _rest.Update(canvas);
         foreach (ulong id in _treasures)
             if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
                 UpdateTreasurePortrait(room, capHeight, canvas);
@@ -266,6 +261,7 @@ internal sealed partial class PortraitBetweenLayout
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
+        _rest.RestoreControls();
 
         foreach ((ulong id, BoxContainer.AlignmentMode alignment) in _alternativeAlignments)
             if (GodotObject.InstanceFromId(id) is BoxContainer box && GodotObject.IsInstanceValid(box))
@@ -273,7 +269,7 @@ internal sealed partial class PortraitBetweenLayout
         _alternativeAlignments.Clear();
 
         RestoreTreasureLandscape();
-        RestoreRestLandscape();
+        _rest.RestoreArt();
 
         _map.RestoreLandscape();
 
@@ -295,14 +291,7 @@ internal sealed partial class PortraitBetweenLayout
             holder.QueueFree();
         }
         _hitPadHolders.Clear();
-        foreach ((ulong id, int size) in _labelMaxFontSizes)
-            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
-                label.Set("MaxFontSize", size);
-        _labelMaxFontSizes.Clear();
-        foreach ((ulong id, int size) in _labelMinFontSizes)
-            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
-                label.Set("MinFontSize", size);
-        _labelMinFontSizes.Clear();
+        _rest.RestoreFonts();
         foreach ((ulong id, (bool had, int size)) in _labelFontSizes)
         {
             if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
@@ -343,11 +332,7 @@ internal sealed partial class PortraitBetweenLayout
         _shop.PruneDead();
         _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _events.PruneDead();
-        _restSites.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        PruneRestInstances();
-        PruneTreasureInstances();
-        foreach (ulong id in _labelMaxFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMaxFontSizes.Remove(id);
-        foreach (ulong id in _labelMinFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMinFontSizes.Remove(id);
+        _rest.PruneDead();
         foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
         foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
         _lootRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -825,8 +810,6 @@ internal sealed partial class PortraitBetweenLayout
         if (label.GetThemeFontSize("font_size") != size) label.AddThemeFontSizeOverride("font_size", size);
     }
 
-    private int GameLabelFontSize(Control label) =>
-        _labelFontSizes.TryGetValue(label.GetInstanceId(), out (bool Had, int Size) kept) ? kept.Size : label.GetThemeFontSize("font_size");
 
     // ---- shared --------------------------------------------------------------------------------------------------------
 
@@ -883,23 +866,6 @@ internal sealed partial class PortraitBetweenLayout
             area.OffsetTop = -growY;
             area.OffsetRight = growX;
             area.OffsetBottom = growY;
-        }
-    }
-
-    private void ExtensionLimits(Control label, int size)
-    {
-        ulong id = label.GetInstanceId();
-        Variant max = label.Get("MaxFontSize");
-        if (max.VariantType == Variant.Type.Int)
-        {
-            if (!_labelMaxFontSizes.ContainsKey(id)) _labelMaxFontSizes[id] = max.AsInt32();
-            label.Set("MaxFontSize", size);
-        }
-        Variant min = label.Get("MinFontSize");
-        if (min.VariantType == Variant.Type.Int)
-        {
-            if (!_labelMinFontSizes.ContainsKey(id)) _labelMinFontSizes[id] = min.AsInt32();
-            label.Set("MinFontSize", size);
         }
     }
 

@@ -19,8 +19,10 @@ namespace STS2Mobile.GameHost;
 /// art is framed once per canvas, so nothing moves while the rest is being spent.
 /// </para>
 /// </summary>
-internal sealed partial class PortraitBetweenLayout
+internal sealed class PortraitRestSiteLayout
 {
+    public const string RestSiteRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NRestSiteRoom";
+
     public const string RestUnderlayName = "PortraitRestUnderlay";
     public const string RestWaterName = "PortraitRestWater";
 
@@ -65,6 +67,67 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     private readonly Dictionary<ulong, RestState> _restStates = new();
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
+    private readonly HashSet<ulong> _restSites = new();
+    private static readonly string[] RichFontSizeNames =
+        ["normal_font_size", "bold_font_size", "bold_italics_font_size", "italics_font_size", "mono_font_size"];
+
+    private readonly Dictionary<ulong, int> _labelMaxFontSizes = new();
+    private readonly Dictionary<ulong, int> _labelMinFontSizes = new();
+    private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
+    private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
+
+    /// <summary>Sets a label's font size in portrait, keeping the game's own to put back in landscape.</summary>
+    private void SetLabelFontSize(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        if (!_labelFontSizes.ContainsKey(id))
+            _labelFontSizes[id] = (label.HasThemeFontSizeOverride("font_size"), label.GetThemeFontSize("font_size"));
+        if (label.GetThemeFontSize("font_size") != size) label.AddThemeFontSizeOverride("font_size", size);
+    }
+
+    private PortraitControlSnapshot Capture(Control control, bool captureVisible)
+    {
+        ulong id = control.GetInstanceId();
+        if (_snapshots.TryGetValue(id, out PortraitControlSnapshot? existing))
+        {
+            if (captureVisible && !existing.CaptureVisible) existing.RecordInitialVisibility(control.Visible);
+            return existing;
+        }
+        var created = new PortraitControlSnapshot(control, captureVisible);
+        _snapshots[id] = created;
+        return created;
+    }
+
+    private void ExtensionLimits(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        Variant max = label.Get("MaxFontSize");
+        if (max.VariantType == Variant.Type.Int)
+        {
+            if (!_labelMaxFontSizes.ContainsKey(id)) _labelMaxFontSizes[id] = max.AsInt32();
+            label.Set("MaxFontSize", size);
+        }
+        Variant min = label.Get("MinFontSize");
+        if (min.VariantType == Variant.Type.Int)
+        {
+            if (!_labelMinFontSizes.ContainsKey(id)) _labelMinFontSizes[id] = min.AsInt32();
+            label.Set("MinFontSize", size);
+        }
+    }
+
+    /// <summary>Sets every font size of a rich text label that does not size itself, keeping what it had for landscape.</summary>
+    private void SetRichFontSize(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        if (!_richFontSizes.ContainsKey(id))
+            _richFontSizes[id] = RichFontSizeNames
+                .Select(name => (label.HasThemeFontSizeOverride(name), label.HasThemeFontSizeOverride(name) ? label.GetThemeFontSize(name) : 0))
+                .ToArray();
+        foreach (string name in RichFontSizeNames)
+            if (!label.HasThemeFontSizeOverride(name) || label.GetThemeFontSize(name) != size)
+                label.AddThemeFontSizeOverride(name, size);
+    }
     private readonly HashSet<ulong> _restStyledLabels = new();
     private readonly Dictionary<ulong, int> _restStyledText = new();
     private static Type? _restRoomType;
@@ -73,10 +136,54 @@ internal sealed partial class PortraitBetweenLayout
     // ---- entry points from PortraitBetweenLayout ---------------------------------------------------------------
 
     /// <summary>The room was added: lay it out now, so the first frame is already the portrait one.</summary>
-    private void TrackRestSite(Control room, float canvasWidth, float canvasHeight)
+    public void Apply(Control room, Vector2 canvas)
     {
         _restSites.Add(room.GetInstanceId());
-        UpdateRestSitePortrait(room, new Vector2(canvasWidth, canvasHeight));
+        UpdateRestSitePortrait(room, canvas);
+    }
+
+    public void Update(Vector2 canvas)
+    {
+        foreach (ulong id in _restSites)
+            if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
+                UpdateRestSitePortrait(room, canvas);
+    }
+
+    public void RestoreControls()
+    {
+        foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                snapshot.Restore(control);
+        _snapshots.Clear();
+    }
+
+    public void RestoreFonts()
+    {
+        foreach ((ulong id, int size) in _labelMaxFontSizes)
+            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
+                label.Set("MaxFontSize", size);
+        _labelMaxFontSizes.Clear();
+        foreach ((ulong id, int size) in _labelMinFontSizes)
+            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
+                label.Set("MinFontSize", size);
+        _labelMinFontSizes.Clear();
+        foreach ((ulong id, (bool had, int size)) in _labelFontSizes)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
+            if (had) label.AddThemeFontSizeOverride("font_size", size);
+            else label.RemoveThemeFontSizeOverride("font_size");
+        }
+        _labelFontSizes.Clear();
+        foreach ((ulong id, (bool Had, int Size)[] sizes) in _richFontSizes)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
+            for (int i = 0; i < RichFontSizeNames.Length; i++)
+            {
+                if (sizes[i].Had) label.AddThemeFontSizeOverride(RichFontSizeNames[i], sizes[i].Size);
+                else label.RemoveThemeFontSizeOverride(RichFontSizeNames[i]);
+            }
+        }
+        _richFontSizes.Clear();
     }
 
     /// <summary>Each frame: the row and the two texts, and the art when its canvas changed.</summary>
@@ -93,14 +200,20 @@ internal sealed partial class PortraitBetweenLayout
         if (!state.Framed || !state.Canvas.IsEqualApprox(canvas)) ApplyRestArt(room, state, canvas);
     }
 
-    private void PruneRestInstances()
+    public void PruneDead()
     {
+        foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
+        _restSites.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _labelMaxFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMaxFontSizes.Remove(id);
+        foreach (ulong id in _labelMinFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMinFontSizes.Remove(id);
+        foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
+        foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
         foreach (ulong id in _restStates.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _restStates.Remove(id);
         _restStyledLabels.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _restStyledText.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _restStyledText.Remove(id);
     }
 
-    private void RestoreRestLandscape()
+    public void RestoreArt()
     {
         foreach (RestState state in _restStates.Values)
         {

@@ -28,6 +28,10 @@ Use the existing owner instead of adding a second path. Split large classes by i
 
 [`PortraitEventLayout`](src/STS2Mobile.GameHost/PortraitEventLayout.cs) owns event and Ancient composition, early option sizing, and native restore state. Event art extends behind the stone's torn lower edge; dialogue and choice bounds are independent of that overlap.
 
+Live combat events keep their native fight scene and description reveal. In portrait, the description follows the top of the choice stack without reparenting; `event_03_punch_off.png` in the `event` scenario checks the composition.
+
+[`PortraitRestSiteLayout`](src/STS2Mobile.GameHost/PortraitRestSiteLayout.cs) owns campsite framing, the option rows and copy, and their desktop restore state. It leaves native option nodes and click handling in place.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.
