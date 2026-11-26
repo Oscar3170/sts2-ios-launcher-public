@@ -43,16 +43,8 @@ internal sealed partial class PortraitEventLayout
     /// <summary>Where the bottom-anchored options of a live combat event end, in the compact shape (20 points).</summary>
     private const float CombatEventBottomInset = 58f;
 
-    private static readonly Dictionary<string, Texture2D?> ActRestTextures = new(StringComparer.Ordinal);
     private static PropertyInfo? _eventRoomLayout;
     private static Type? _eventRoomLayoutOwner;
-    private static readonly Dictionary<string, string> ActRestTexturePaths = new(StringComparer.Ordinal)
-    {
-        ["overgrowth"] = "res://images/rooms/rest_sites/overgrowth/overgrowth_rest_site_bg.png",
-        ["underdocks"] = "res://images/rooms/rest_sites/underdocks/underdocks_rest_site_bg.png",
-        ["hive"] = "res://images/rooms/rest_sites/hive/hive_rest_site_00.png",
-        ["glory"] = "res://images/rooms/rest_sites/glory/glory_rest_site_00.png",
-    };
 
     /// <summary>One composed event: the nodes the composition added, the game's nodes it moved, and what it measured.</summary>
     private sealed class EventState
@@ -151,7 +143,7 @@ internal sealed partial class PortraitEventLayout
         }
         if (cover == null)
         {
-            if (ActRestTexture() is not { } texture) return;
+            if (PortraitActArt.RestTexture() is not { } texture) return;
             cover = new TextureRect
             {
                 Name = EventRoomCoverName,
@@ -167,7 +159,7 @@ internal sealed partial class PortraitEventLayout
             room.AddChild(cover);
             room.MoveChild(cover, 0);
         }
-        else if (cover.Texture == null && ActRestTexture() is { } late)
+        else if (cover.Texture == null && PortraitActArt.RestTexture() is { } late)
         {
             cover.Texture = late;
         }
@@ -204,37 +196,6 @@ internal sealed partial class PortraitEventLayout
         return false;
     }
 
-    /// <summary>
-    /// The current act's rest-site illustration for the cover behind an event (loaded once per act). Null when the act or
-    /// its art is not known yet, so the caller can retry rather than leave a blank.
-    /// </summary>
-    internal static Texture2D? ActRestTexture()
-    {
-        string? act = CurrentActName();
-        if (string.IsNullOrEmpty(act)) return null;
-        if (ActRestTextures.TryGetValue(act!, out Texture2D? cached)) return cached;
-        if (!ActRestTexturePaths.TryGetValue(act!, out string? path) || !ResourceLoader.Exists(path)) return null;
-        Texture2D? texture = ResourceLoader.Load<Texture2D>(path);
-        if (texture != null) ActRestTextures[act!] = texture;
-        return texture;
-    }
-
-    private static string? CurrentActName()
-    {
-        try
-        {
-            Assembly game = typeof(MegaCrit.Sts2.Core.Nodes.NGame).Assembly;
-            Type? manager = game.GetType("MegaCrit.Sts2.Core.Runs.RunManager");
-            object? instance = manager?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
-            object? state = manager?.GetMethod("DebugOnlyGetState")?.Invoke(instance, null);
-            object? act = state?.GetType().GetProperty("Act")?.GetValue(state);
-            return act?.GetType().Name.ToLowerInvariant();
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-    }
 
     // ---- standard event ------------------------------------------------------------------------------------------------
 

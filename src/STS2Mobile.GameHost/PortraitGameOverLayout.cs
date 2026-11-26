@@ -1044,7 +1044,7 @@ internal sealed class PortraitGameOverLayout
             state.FightFaded = true;
             if (!state.ArtTried)
             {
-                if (PortraitBetweenLayout.ActRestTexture() is { } art)
+                if (PortraitActArt.RestTexture() is { } art)
                 {
                     AddArt(state, screen, art);
                     state.ArtTried = true;

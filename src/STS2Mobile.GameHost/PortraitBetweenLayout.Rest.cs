@@ -377,7 +377,7 @@ internal sealed partial class PortraitBetweenLayout
         }
         if (art == null) return;
 
-        bool underdocks = CurrentActName() == "underdocks";
+        bool underdocks = PortraitActArt.CurrentActName() == "underdocks";
         TextureRect? background = art.GetNodeOrNull<TextureRect>(underdocks ? RestUnderdocksBackgroundName : RestPrimaryBackgroundName)
             ?? art.GetNodeOrNull<TextureRect>(RestPrimaryBackgroundName);
         if (background?.Texture is { } texture && !state.Underlay)

@@ -74,6 +74,8 @@ internal sealed partial class PortraitBetweenLayout
     private readonly PortraitEventLayout _events = new();
     private readonly HashSet<ulong> _hitPadHolders = new();
     private readonly HashSet<ulong> _restSites = new();
+    private readonly Dictionary<ulong, int> _labelMaxFontSizes = new();
+    private readonly Dictionary<ulong, int> _labelMinFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
 
@@ -293,6 +295,14 @@ internal sealed partial class PortraitBetweenLayout
             holder.QueueFree();
         }
         _hitPadHolders.Clear();
+        foreach ((ulong id, int size) in _labelMaxFontSizes)
+            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
+                label.Set("MaxFontSize", size);
+        _labelMaxFontSizes.Clear();
+        foreach ((ulong id, int size) in _labelMinFontSizes)
+            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
+                label.Set("MinFontSize", size);
+        _labelMinFontSizes.Clear();
         foreach ((ulong id, (bool had, int size)) in _labelFontSizes)
         {
             if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
@@ -336,6 +346,8 @@ internal sealed partial class PortraitBetweenLayout
         _restSites.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         PruneRestInstances();
         PruneTreasureInstances();
+        foreach (ulong id in _labelMaxFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMaxFontSizes.Remove(id);
+        foreach (ulong id in _labelMinFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMinFontSizes.Remove(id);
         foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
         foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
         _lootRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -871,6 +883,23 @@ internal sealed partial class PortraitBetweenLayout
             area.OffsetTop = -growY;
             area.OffsetRight = growX;
             area.OffsetBottom = growY;
+        }
+    }
+
+    private void ExtensionLimits(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        Variant max = label.Get("MaxFontSize");
+        if (max.VariantType == Variant.Type.Int)
+        {
+            if (!_labelMaxFontSizes.ContainsKey(id)) _labelMaxFontSizes[id] = max.AsInt32();
+            label.Set("MaxFontSize", size);
+        }
+        Variant min = label.Get("MinFontSize");
+        if (min.VariantType == Variant.Type.Int)
+        {
+            if (!_labelMinFontSizes.ContainsKey(id)) _labelMinFontSizes[id] = min.AsInt32();
+            label.Set("MinFontSize", size);
         }
     }
 

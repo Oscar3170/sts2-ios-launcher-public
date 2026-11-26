@@ -323,7 +323,7 @@ internal sealed partial class PortraitBetweenLayout
         TextureRect? art = room.GetNodeOrNull<TextureRect>(TreasureArtName);
         if (art == null)
         {
-            if (ActRestTexture() is not { } texture) return false;
+            if (PortraitActArt.RestTexture() is not { } texture) return false;
             art = new TextureRect
             {
                 Name = TreasureArtName,
@@ -338,7 +338,7 @@ internal sealed partial class PortraitBetweenLayout
             room.AddChild(art);
             if (room.GetNodeOrNull<Control>("ColorRect") is { } backdrop) room.MoveChild(art, backdrop.GetIndex() + 1);
         }
-        else if (art.Texture == null && ActRestTexture() is { } late)
+        else if (art.Texture == null && PortraitActArt.RestTexture() is { } late)
         {
             art.Texture = late;
         }
