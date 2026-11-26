@@ -130,15 +130,7 @@ These paths are not publication files. Do not share generated game packs or comp
 
 A different game version needs its own patch profile: the patches, their count guards and the input hashes are written for v0.114.0, and still accept v0.113.0 and v0.111.0, the previous profiles. Never replace expected hashes just to make setup accept a new game build.
 
-Moving to a new game version (as done for v0.111.0 to v0.113.0, and v0.113.0 to v0.114.0):
-
-1. Install the new build with Steam on the Mac. The depot manifest id is the name of `depotcache/2868842_<manifest>.manifest` and `InstalledDepots` in `steamapps/appmanifest_2868840.acf`.
-2. In `tools/dependencies.json`, move the `game` block unchanged into `previous_game_profiles` (newest first), so a phone on that build stays tested. Write the new `game` block from `shasum -a 256` of the installed files (`release_info.json`, the pack, `sts2.dll` and the other assemblies), never from an error message.
-3. Bump the version in the profile ids together: `tools/profiles.py`, `TextureProfile` in `src/STS2Mobile.GamePack/GamePackBuilder.cs` and the label in `tools/FullGamePatcher/Program.cs`. Set `GAME_PACK_ENTRIES` in `tools/stage_full_game.py` from the new pack's directory.
-4. Run `./setup.sh --prepare-only` and `scripts/prepare-game-files.sh`, and fix each patch that fails in `src/STS2Mobile.GamePatcher`. Phones on the previous profile run the same patches, so a renamed target is found by either name (`GamePatch.Method(type, name, earlierName)`). Compare the patch report (`analysis/full-game-managed/public/game/profile.json`) with the previous version's, and look at every method whose patch moved.
-5. Copy `keptOriginal` from `analysis/full-game-textures-astc-v1/texture-report.json` into `textures_kept_original`.
-6. Build QuickMatch against the new game and run its tests (its repository says how). The weave check sees only the calls a mod makes, not the abstract members it must implement, so a game that changed QuickMatch's base types needs a new QuickMatch release, pinned here.
-7. Run `scripts/test.sh`, build, and set up the new version on a phone. Measure setup's peak disk use for `peak_disk_bytes`, play a fight, and only then pin the installed-game tests' output hashes.
+Moving to a new game version, from downloading the macOS build with `steamcmd` to pinning what a phone played, is described step by step in [GAME_VERSION_UPDATE.md](GAME_VERSION_UPDATE.md).
 
 Python packages are pinned by wheel hash in `tools/requirements.txt`; to change one, replace its version and its `--hash` with the values PyPI lists for the `cp313` macOS arm64 wheel. NuGet packages are locked in the `packages*.lock.json` next to each project: the plain file for ordinary builds and tests, and one per runtime (`packages.ios-arm64.lock.json`, and `.mono` for the Mono publish) for the iOS publishes, whose dependencies differ. After changing a package reference, run the restores once with `RestoreLockedMode=false` in the environment (for example `RestoreLockedMode=false ./setup.sh`, `scripts/build-mono.sh` and `scripts/test.sh`), check the changed lock files and commit them.
 
