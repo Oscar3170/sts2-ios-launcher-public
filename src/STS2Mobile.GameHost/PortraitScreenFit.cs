@@ -47,7 +47,8 @@ internal sealed class PortraitScreenFit
         [PortraitSubmenuLayout.ProfileTypeName] = PortraitSubmenuLayout.ProfileDesignWidth,
         [Ns + "ModdingScreen.NModdingScreen"] = 1080f,
         // Character select, Blitz and Dread are not fitted: they lay themselves out on a 1680 unit canvas of their own
-        // (PortraitMenuLayout) because their roster, info/ascension panels and confirm button need measured places.
+        // (PortraitMenuLayout fits the screen; PortraitCharacterSelectLayout places the roster, info/ascension panels and
+        // confirm button).
         // In a run, under the top bar. The pause menu is one narrow column of buttons (420 wide, each 80 tall), drawn larger
         // for touch: at 672 its entries are 44.6 points tall (800 gave 37.5).
         [Ns + "PauseMenu.NPauseMenu"] = 672f,

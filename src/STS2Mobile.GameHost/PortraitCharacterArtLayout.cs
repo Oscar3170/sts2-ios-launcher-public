@@ -6,7 +6,16 @@ using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
 
-internal sealed partial class PortraitMenuLayout
+/// <summary>
+/// The character art of the portrait character select, Blitz and Dread screens: characters with a separate backdrop scene get
+/// their backdrop TextureRect framed as a cover and the Spine as the figure; Ironclad, Regent and Defect share one Spine,
+/// which is split into a second playback masked to the figure and the original masked to the scenery. The rectangular
+/// ambient emitters of each character scene are fitted over the screen. All of that is per art container: it is framed once
+/// when the art is ready and re-framed only when the art child or the screen size changes, and it keeps its own captured
+/// controls and the emitter values put back in landscape. The menus own the screens, placement of the container above and
+/// below the art; this owner only frames the picture inside the container the screen hands it.
+/// </summary>
+internal sealed class PortraitCharacterArtLayout
 {
     // The character art is drawn from the single SpineSprite the scene already has. Characters with a separate backdrop
     // TextureRect frame it as cover and the Spine as the figure; the others are one composition, scaled so it covers the
@@ -20,6 +29,16 @@ internal sealed partial class PortraitMenuLayout
     private const string CoverMeta = "phone_character_cover";
     private static readonly Vector2 ArtSize = new(2560f, 1200f);
 
+    private const string FigureNodeName = "PhonePortraitFigure";
+
+    private sealed class FigureState
+    {
+        public Node2D? Figure;
+        public bool Masked;
+        public bool Animated;
+    }
+
+    private readonly Dictionary<ulong, Control?> _containers = new();
     private readonly Dictionary<ulong, CpuParticles2D[]> _emitters = new();
     private readonly Dictionary<(ulong Id, string Property), Variant> _originalNodeValues = new();
     private readonly Dictionary<ulong, ulong> _artFirstSeen = new();
@@ -28,14 +47,52 @@ internal sealed partial class PortraitMenuLayout
     private readonly List<ulong> _artIds = new();
     private readonly HashSet<ulong> _artFramed = new();
     private readonly Dictionary<ulong, Vector2> _artFramedSize = new();
+    private readonly Dictionary<ulong, FigureState> _figures = new();
+    private readonly Dictionary<ulong, Func<string, bool>> _maskRule = new();
+    private readonly Dictionary<ulong, List<(GodotObject Slot, Variant Attachment)>> _maskedAttachments = new();
+    private readonly HashSet<ulong> _maskWired = new();
+    private readonly Dictionary<ulong, (Vector2 Scale, Vector2 Position)> _spineOriginals = new();
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
 
-    private void FrameArt(Control screen, ScreenState state, string path)
+    private PortraitControlSnapshot Capture(Control control)
     {
-        Control? container = state.ArtContainer;
-        if (container == null || !GodotObject.IsInstanceValid(container))
+        ulong id = control.GetInstanceId();
+        if (!_snapshots.TryGetValue(id, out PortraitControlSnapshot? snap))
+            _snapshots[id] = snap = new PortraitControlSnapshot(control, captureVisible: false);
+        return snap;
+    }
+
+    /// <summary>Puts a control at a rectangle of its parent with the top left anchor, changing only what differs.</summary>
+    private void Place(Control? control, float x, float y, float w, float h)
+    {
+        if (control == null) return;
+        Capture(control);
+        if (control.AnchorLeft != 0f || control.AnchorTop != 0f || control.AnchorRight != 0f || control.AnchorBottom != 0f)
         {
-            container = Node(screen, state, path) ?? Node(screen, state, "%AnimatedBg");
-            state.ArtContainer = container;
+            control.AnchorLeft = 0f;
+            control.AnchorTop = 0f;
+            control.AnchorRight = 0f;
+            control.AnchorBottom = 0f;
+        }
+        if (MathF.Abs(control.OffsetLeft - x) > 0.5f) control.OffsetLeft = x;
+        if (MathF.Abs(control.OffsetTop - y) > 0.5f) control.OffsetTop = y;
+        if (MathF.Abs(control.OffsetRight - (x + w)) > 0.5f) control.OffsetRight = x + w;
+        if (MathF.Abs(control.OffsetBottom - (y + h)) > 0.5f) control.OffsetBottom = y + h;
+    }
+
+    /// <summary>
+    /// Frames the screen's art container and the character scene inside it, from the container the screen hands over (its
+    /// path, or the scene's unique <c>%AnimatedBg</c>). The container is resolved once per screen; a freed container is
+    /// resolved again, a null one stays final until the next portrait session.
+    /// </summary>
+    public void Apply(Control screen, string path)
+    {
+        ulong screenId = screen.GetInstanceId();
+        if (!_containers.TryGetValue(screenId, out Control? container) ||
+            (container != null && !GodotObject.IsInstanceValid(container)))
+        {
+            container = screen.GetNodeOrNull<Control>(path) ?? screen.GetNodeOrNull<Control>("%AnimatedBg");
+            _containers[screenId] = container;
         }
         if (container == null || !GodotObject.IsInstanceValid(container) || !container.IsInsideTree()) return;
         Capture(container);
@@ -272,6 +329,194 @@ internal sealed partial class PortraitMenuLayout
         if (!_originalNodeValues.ContainsKey(key)) _originalNodeValues[key] = node.Get(property);
     }
 
+    private static bool SplitsFigure(string name) => name is "IRONCLAD_bg" or "REGENT_bg" or "DEFECT_bg";
+
+    private static string? BaseSlot(string name) => name switch
+    {
+        "IRONCLAD_bg" => "bg",
+        "REGENT_bg" => "Layer 5",
+        "DEFECT_bg" => "backgroundbottom",
+        _ => null,
+    };
+
+    private static bool IsBackdropSlot(string name, string slot) => name switch
+    {
+        "IRONCLAD_bg" => slot is "bg" or "fire",
+        "REGENT_bg" => slot is "Layer 5" or "swirls" or "spheric guardian" or "snecko" or "amogus" or "sentry"
+            || slot is "shapes" or "deca" or "cultist" || slot.StartsWith("stars_", StringComparison.Ordinal)
+            || slot.EndsWith("outline2", StringComparison.Ordinal),
+        "DEFECT_bg" => slot is "backgroundbottom" or "backgroundtop" or "shine" or "sparkle",
+        _ => true,
+    };
+
+    private static float FigureFocus(string name) => name switch
+    {
+        "DEFECT_bg" => 0.36f,
+        "SILENT_bg" => 0.41f,
+        "FOOL_bg" or "NECROBINDER_bg" => 0.44f,
+        _ => 0.49f,
+    };
+
+    // The reference's fixed vertical band for the figure's centre. Never derive this from the live InfoPanel: when the art
+    // is framed on its first ready frame the panel is still being animated and its global transform can read as y=0, which
+    // moved the whole portrait off the top of the screen.
+    private const float FigureCenterY = 0.39f;
+
+    /// <summary>
+    /// Frames one split-composition character. False while its second playback is not ready (the caller falls back to the
+    /// whole composition's cover for those frames, as the reference does).
+    /// </summary>
+    private bool TryFrameSplitFigure(Control art, Node2D spine, string name, Vector2 viewport, Transform2D toCanvas)
+    {
+        if (!SplitsFigure(name) || BaseSlot(name) is not { } baseSlot) return false;
+        // The second playback needs the skeleton transform callback the reference relies on; leave the scene alone otherwise.
+        if (!spine.HasSignal("before_world_transforms_change")) return false;
+        ulong artId = art.GetInstanceId();
+        if (!_spineOriginals.ContainsKey(spine.GetInstanceId()))
+            _spineOriginals[spine.GetInstanceId()] = (spine.Scale, spine.Position);
+        (Vector2 Scale, Vector2 Position) native = _spineOriginals[spine.GetInstanceId()];
+        if (!_figures.TryGetValue(artId, out FigureState? state)) _figures[artId] = state = new FigureState();
+        if (state.Figure is null || !GodotObject.IsInstanceValid(state.Figure))
+        {
+            state.Figure = CreateFigure(art, spine, native);
+            state.Masked = false;
+            state.Animated = false;
+            if (state.Figure is null) return false;
+        }
+        Node2D figure = state.Figure;
+        // The original stays the backdrop: only its scenery slots remain attached.
+        spine.Scale = native.Scale;
+        spine.Position = native.Position;
+        if (!state.Masked)
+        {
+            if (figure.Call("get_skeleton").AsGodotObject() is null) return false;
+            MaskSlots(spine, slot => !IsBackdropSlot(name, slot));
+            MaskSlots(figure, slot => IsBackdropSlot(name, slot));
+            state.Masked = true;
+        }
+        if (!state.Animated)
+        {
+            if (figure.Call("get_animation_state").AsGodotObject() is not { } animation) return false;
+            animation.Call("set_animation", "animation", true);
+            figure.Show();
+            state.Animated = true;
+        }
+        if (ReadBounds(figure) is not { } figureBounds || figureBounds.Size.X < 1f || figureBounds.Size.Y < 1f) return false;
+        if (ReadBaseBounds(spine, baseSlot) is not { } skeletonCover || skeletonCover.Size.X < 1f || skeletonCover.Size.Y < 1f)
+            return false;
+        // Skeleton bounds are in the spine's own space; map them through the node's native transform before covering with them.
+        var cover = new Rect2(native.Position + skeletonCover.Position * native.Scale, skeletonCover.Size * native.Scale.Abs());
+        if (cover.Size.X < 1f || cover.Size.Y < 1f) return false;
+
+        float overscan = name == "DEFECT_bg" ? 1.12f : 1.04f;
+        float artScale = Mathf.Max(viewport.X / cover.Size.X, viewport.Y / cover.Size.Y) * overscan;
+        if (!float.IsFinite(artScale) || artScale <= 0f) return false;
+        art.Scale = new Vector2(artScale, artScale);
+        art.Position = viewport * 0.5f - cover.GetCenter() * artScale;
+        float figureScale = Mathf.Min(viewport.X * 1.40f / figureBounds.Size.X, viewport.Y * 0.63f / figureBounds.Size.Y);
+        if (!float.IsFinite(figureScale) || figureScale <= 0f) return false;
+        Vector2 target = viewport * new Vector2(FigureFocus(name), FigureCenterY);
+        figure.Scale = new Vector2(figureScale / artScale, figureScale / artScale);
+        figure.Position = (target - art.Position - figureBounds.GetCenter() * figureScale) / artScale;
+        Vector2 drawn = figureBounds.Size * figureScale;
+        if (!float.IsFinite(drawn.X) || !float.IsFinite(drawn.Y)) return false;
+        SetRectMeta(art, ArtFrameMeta, toCanvas * new Rect2(art.Position + cover.Position * artScale, cover.Size * artScale));
+        SetRectMeta(art, FigureFrameMeta, toCanvas * new Rect2(target - drawn * 0.5f, drawn));
+        return true;
+    }
+
+    private static Node2D? CreateFigure(Control art, Node2D spine, (Vector2 Scale, Vector2 Position) native)
+    {
+        if (art.GetNodeOrNull<Node2D>(FigureNodeName) is { } existing) return existing;
+        if (ClassDB.Instantiate("SpineSprite").AsGodotObject() is not Node2D figure) return null;
+        figure.Name = FigureNodeName;
+        foreach (string property in new[]
+                 {
+                     "normal_material", "additive_material", "multiply_material", "screen_material", "skeleton_data_res",
+                 })
+            figure.Set(property, spine.Get(property));
+        figure.Position = native.Position;
+        figure.Scale = native.Scale;
+        figure.Hide();
+        art.AddChild(figure);
+        art.MoveChild(figure, spine.GetIndex() + 1);
+        return figure;
+    }
+
+    /// <summary>The bounds of the one backdrop attachment, leaving every other attachment out of the measurement.</summary>
+    private static Rect2? ReadBaseBounds(Node2D sprite, string baseAttachment)
+    {
+        if (sprite.Call("get_skeleton").AsGodotObject() is not { } skeleton) return null;
+        var others = new List<(GodotObject Slot, Variant Attachment)>();
+        foreach (Variant value in skeleton.Call("get_slots").AsGodotArray())
+        {
+            if (value.AsGodotObject() is not { } slot) continue;
+            string slotName = slot.Call("get_data").AsGodotObject()?.Call("get_attachment_name").AsString() ?? "";
+            if (slotName == baseAttachment) continue;
+            Variant attachment = slot.Call("get_attachment");
+            if (attachment.AsGodotObject() is null) continue;
+            others.Add((slot, attachment));
+        }
+        try
+        {
+            foreach ((GodotObject slot, Variant _) in others) slot.Call("set_attachment", default(Variant));
+            return ReadBounds(sprite);
+        }
+        finally
+        {
+            foreach ((GodotObject slot, Variant attachment) in others) slot.Call("set_attachment", attachment);
+        }
+    }
+
+    /// <summary>Hides the named slots on one playback and re-hides them after the native timeline or skin changes.</summary>
+    private void MaskSlots(Node2D sprite, Func<string, bool> hide)
+    {
+        ulong id = sprite.GetInstanceId();
+        if (!_maskedAttachments.TryGetValue(id, out List<(GodotObject Slot, Variant Attachment)>? saved))
+            _maskedAttachments[id] = saved = new List<(GodotObject, Variant)>();
+        if (sprite.Call("get_skeleton").AsGodotObject() is not { } skeleton) return;
+        foreach (Variant value in skeleton.Call("get_slots").AsGodotArray())
+        {
+            if (value.AsGodotObject() is not { } slot) continue;
+            string slotName = slot.Call("get_data").AsGodotObject()?.Call("get_attachment_name").AsString() ?? "";
+            if (!hide(slotName)) continue;
+            Variant attachment = slot.Call("get_attachment");
+            if (attachment.AsGodotObject() is null) continue;
+            saved.Add((slot, attachment));
+            slot.Call("set_attachment", default(Variant));
+        }
+        if (_maskWired.Add(id))
+            sprite.Connect("before_world_transforms_change", Callable.From<GodotObject>(_ =>
+            {
+                if (SafeAreaCanvas.IsPortrait && _maskRule.TryGetValue(id, out Func<string, bool>? rule)) ApplyMask(sprite, rule);
+            }));
+        _maskRule[id] = hide;
+    }
+
+    private static void ApplyMask(Node2D sprite, Func<string, bool> hide)
+    {
+        if (sprite.Call("get_skeleton").AsGodotObject() is not { } skeleton) return;
+        foreach (Variant value in skeleton.Call("get_slots").AsGodotArray())
+        {
+            if (value.AsGodotObject() is not { } slot) continue;
+            string slotName = slot.Call("get_data").AsGodotObject()?.Call("get_attachment_name").AsString() ?? "";
+            if (hide(slotName) && slot.Call("get_attachment").AsGodotObject() is not null)
+                slot.Call("set_attachment", default(Variant));
+        }
+    }
+
+    /// <summary>
+    /// Puts the emitter values and the split slots back and drops the second playbacks, then forgets the framing so the next
+    /// portrait pass frames the art again with the screen's new size. The captured controls go back with
+    /// <see cref="RestoreControls"/> in the menu's own restore order.
+    /// </summary>
+    public void RestoreLandscape()
+    {
+        _containers.Clear();
+        RestoreArt();
+        RestoreFigures();
+    }
+
     private void RestoreArt()
     {
         foreach (((ulong id, string property), Variant value) in _originalNodeValues)
@@ -291,8 +536,33 @@ internal sealed partial class PortraitMenuLayout
         _emitters.Clear();
     }
 
-    private void PruneArt()
+    /// <summary>Puts every slot's original attachment back and drops the second playbacks (landscape).</summary>
+    private void RestoreFigures()
     {
+        foreach ((ulong _, List<(GodotObject Slot, Variant Attachment)> saved) in _maskedAttachments)
+            foreach ((GodotObject slot, Variant attachment) in saved)
+                if (GodotObject.IsInstanceValid(slot)) slot.Call("set_attachment", attachment);
+        foreach (FigureState state in _figures.Values)
+            if (state.Figure is not null && GodotObject.IsInstanceValid(state.Figure)) state.Figure.QueueFree();
+        _figures.Clear();
+        _maskRule.Clear();
+        _maskedAttachments.Clear();
+        _maskWired.Clear();
+        _spineOriginals.Clear();
+    }
+
+    public void RestoreControls()
+    {
+        foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                snapshot.Restore(control);
+        _snapshots.Clear();
+    }
+
+    public void PruneDead()
+    {
+        foreach (ulong id in _snapshots.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _snapshots.Remove(id);
+        foreach (ulong id in _containers.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _containers.Remove(id);
         foreach (ulong id in _emitters.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _emitters.Remove(id);
         foreach (ulong id in _artFirstSeen.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artFirstSeen.Remove(id);
         foreach (ulong id in _artSpines.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artSpines.Remove(id);

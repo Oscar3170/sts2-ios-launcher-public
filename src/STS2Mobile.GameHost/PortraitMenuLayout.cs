@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using Godot;
 
 namespace STS2Mobile.GameHost;
@@ -9,81 +8,42 @@ namespace STS2Mobile.GameHost;
 /// <summary>
 /// Portrait reflows for the main menu's run-setup screens. The game lays these screens out on its 1680 unit desktop canvas, so
 /// each is drawn on a 1680 unit virtual canvas that fills the portrait width (the canvas the reference rules were measured
-/// on) and laid out from the top of the safe band: the singleplayer mode cards wrap two to a row with the reference card
-/// interior, character select (and Blitz and Dread) lay the roster out four to a row and frame the character art over the
-/// screen (a separate backdrop scene where the character has one, otherwise a figure-biased cover), and the info panel,
-/// ascension panel and confirm button take their measured places. Every edit is captured first so turning Portrait Mode off
-/// restores the desktop layout live.
+/// on) and laid out from the top of the safe band. This owner keeps that canvas fit, the per-screen error guard, the
+/// captured controls and the dispatch; the screen compositions live with their own lifetimes:
+/// <see cref="PortraitModeCardsLayout"/> owns the singleplayer and multiplayer-host mode cards,
+/// <see cref="PortraitCharacterSelectLayout"/> owns character select, Blitz and Dread (roster, ascension and info panels,
+/// confirm button, Dread blocks), and <see cref="PortraitCharacterArtLayout"/> owns the character art framed behind them. The
+/// credits modal is the one menu screen here with nothing but its buttons to grow. Every edit is captured first so turning
+/// Portrait Mode off restores the desktop layout live.
 /// </summary>
-internal sealed partial class PortraitMenuLayout
+internal sealed class PortraitMenuLayout
 {
     private const string Ns = "MegaCrit.Sts2.Core.Nodes.Screens.";
-    public const string SingleplayerTypeName = Ns + "MainMenu.NSingleplayerSubmenu";
-    public const string MultiplayerHostTypeName = Ns + "MainMenu.NMultiplayerHostSubmenu";
-    public const string CharacterSelectTypeName = Ns + "CharacterSelect.NCharacterSelectScreen";
-    public const string BlitzTypeName = Ns + "Blitz.NBlitzScreen";
-    public const string DreadTypeName = Ns + "Dread.NDreadScreen";
     public const string CreditsTypeName = Ns + "Credits.NCreditsScreen";
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
-        SingleplayerTypeName, MultiplayerHostTypeName, CharacterSelectTypeName, BlitzTypeName, DreadTypeName, CreditsTypeName,
+        PortraitModeCardsLayout.SingleplayerTypeName, PortraitModeCardsLayout.MultiplayerHostTypeName,
+        PortraitCharacterSelectLayout.CharacterSelectTypeName, PortraitCharacterSelectLayout.BlitzTypeName,
+        PortraitCharacterSelectLayout.DreadTypeName, CreditsTypeName,
     };
 
     /// <summary>The desktop canvas the game and the reference rules lay these screens out on, 1680 units across.</summary>
     public const float DesignWidth = 1680f;
 
+    /// <summary>One menu screen's fitted canvas and safe band, passed to the screen owner that lays it out.</summary>
     private sealed class ScreenState
     {
         public string TypeName = "";
         public float Scale = 1f;
         public Rect2 Safe;
-        public bool ConfirmScaled;
-        public bool ConfirmPlaced;
-        public bool InfoPlaced;
-        public Container? Grid;
-        public Action? GridSort;
-        public BoxContainer? ModeRow;
-        public Action? ModeSort;
-        public int FocusCount = -1;
-
-        // Resolved scene nodes and the roster/focus plans, so the per-frame pass does no path lookups or LINQ.
-        public Control? GridControl;
-        public Control? ArtContainer;
-        public readonly Dictionary<string, Control?> Named = new(StringComparer.Ordinal);
-        public readonly List<Control> Roster = new();
-        public int RosterChildren = -1;
-        public Vector2 RosterCell;
-        public bool FocusDirty = true;
-        public readonly Dictionary<ulong, NodePath[]> FocusPaths = new();
-        public readonly HashSet<ulong> ScaledHeaders = new();
-
-        /// <summary>Forgets what only holds while portrait is on; the snapshots put the desktop layout back.</summary>
-        public void ResetPortrait()
-        {
-            if (GridSort != null && GodotObject.IsInstanceValid(Grid)) Grid.SortChildren -= GridSort;
-            GridSort = null;
-            Grid = null;
-            if (ModeSort != null && GodotObject.IsInstanceValid(ModeRow)) ModeRow!.SortChildren -= ModeSort;
-            ModeSort = null;
-            ModeRow = null;
-            ConfirmScaled = false;
-            ConfirmPlaced = false;
-            InfoPlaced = false;
-            FocusCount = -1;
-            GridControl = ArtContainer = null;
-            Named.Clear();
-            Roster.Clear();
-            RosterChildren = -1;
-            RosterCell = Vector2.Zero;
-            FocusDirty = true;
-            FocusPaths.Clear();
-            ScaledHeaders.Clear();
-        }
     }
 
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
     private readonly Dictionary<ulong, ScreenState> _screens = new();
+    private readonly PortraitModeCardsLayout _modeCards = new();
+    private readonly PortraitCharacterSelectLayout _characterSelect = new();
+    private readonly PortraitCharacterArtLayout _art = new();
 
     public void ApplyNode(Control screen, string typeName, float capHeight, Vector2 canvas)
     {
@@ -127,18 +87,21 @@ internal sealed partial class PortraitMenuLayout
             Fit(screen, state, capHeight, canvas);
             switch (state.TypeName)
             {
-                case SingleplayerTypeName:
-                case MultiplayerHostTypeName:
-                    LayoutModeCards(screen, state);
+                case PortraitModeCardsLayout.SingleplayerTypeName:
+                case PortraitModeCardsLayout.MultiplayerHostTypeName:
+                    _modeCards.Apply(screen, state.Safe, state.Scale);
                     break;
-                case CharacterSelectTypeName:
-                case BlitzTypeName:
-                    LayoutCharacterSelect(screen, state);
-                    FrameArt(screen, state, "AnimatedBg");
+                case PortraitCharacterSelectLayout.CharacterSelectTypeName:
+                    _characterSelect.Apply(screen, state.Safe, state.Scale, blitz: false);
+                    _art.Apply(screen, "AnimatedBg");
                     break;
-                case DreadTypeName:
-                    LayoutDread(screen, state);
-                    FrameArt(screen, state, "SubViewportContainer/SubViewport/AnimatedBg");
+                case PortraitCharacterSelectLayout.BlitzTypeName:
+                    _characterSelect.Apply(screen, state.Safe, state.Scale, blitz: true);
+                    _art.Apply(screen, "AnimatedBg");
+                    break;
+                case PortraitCharacterSelectLayout.DreadTypeName:
+                    _characterSelect.ApplyDread(screen, state.Safe, state.Scale);
+                    _art.Apply(screen, "SubViewportContainer/SubViewport/AnimatedBg");
                     break;
             }
         }
@@ -184,166 +147,63 @@ internal sealed partial class PortraitMenuLayout
 
     public void RestoreLandscape()
     {
-        foreach ((ulong id, ScreenState state) in _screens) state.ResetPortrait();
-        RestoreArt();
-        RestoreFigures();
-        RestoreFocus();
+        // The per-screen plans and callbacks go first, then the art, then the focus links; each owner restores what it
+        // wrote at the same points the menu always has.
+        _modeCards.ResetPortrait();
+        _characterSelect.ResetPortrait();
+        _art.RestoreLandscape();
+        _modeCards.RestoreFocus();
+        _characterSelect.RestoreFocus();
         PortraitTargetPads.ReleaseAll();
         PortraitMenuText.Release();
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
+        _modeCards.RestoreControls();
+        _characterSelect.RestoreControls();
+        _art.RestoreControls();
         // The info panel may slide again from wherever it is: give the game's own resting place back.
-        foreach ((ulong id, ScreenState _) in _screens)
-            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) &&
-                screen.GetNodeOrNull<Control>("InfoPanel") is { } info)
-                SetField(screen, "_infoPanelPosFinalVal", info.Position);
+        _characterSelect.RestoreRestingPlaces();
     }
 
     public void PruneDead()
     {
         foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
         foreach (ulong id in _screens.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _screens.Remove(id);
-        PruneFocus();
-        PruneArt();
+        _modeCards.PruneDead();
+        _characterSelect.PruneDead();
+        _art.PruneDead();
         PortraitTargetPads.PruneDead();
         PortraitMenuText.PruneDead();
     }
 
-    /// <summary>A scene node under this screen, resolved once (a null is final for these scenes; ResetPortrait clears it).</summary>
-    private static Control? Node(Control screen, ScreenState state, string path)
-    {
-        if (state.Named.TryGetValue(path, out Control? cached))
-        {
-            if (cached == null || GodotObject.IsInstanceValid(cached)) return cached;
-            state.Named.Remove(path);
-        }
-        Control? found = screen.GetNodeOrNull<Control>(path);
-        state.Named[path] = found;
-        return found;
-    }
-
-    /// <summary>A node below a cached parent, resolved once and kept in the state's name cache.</summary>
-    private static Control? Node(Control parent, ScreenState state, string path, string cacheKey)
-    {
-        if (state.Named.TryGetValue(cacheKey, out Control? cached))
-        {
-            if (cached == null || GodotObject.IsInstanceValid(cached)) return cached;
-            state.Named.Remove(cacheKey);
-        }
-        Control? found = parent.GetNodeOrNull<Control>(path);
-        state.Named[cacheKey] = found;
-        return found;
-    }
-
-    private PortraitControlSnapshot Capture(Control control, bool captureVisible = false)
+    private PortraitControlSnapshot Capture(Control control)
     {
         if (!_snapshots.TryGetValue(control.GetInstanceId(), out PortraitControlSnapshot? snap))
-        {
-            _snapshots[control.GetInstanceId()] = snap = new PortraitControlSnapshot(control, captureVisible);
-        }
-        else if (captureVisible && !snap.CaptureVisible)
-        {
-            snap.RecordInitialVisibility(control.Visible);
-        }
+            _snapshots[control.GetInstanceId()] = snap = new PortraitControlSnapshot(control, captureVisible: false);
         return snap;
     }
 
     /// <summary>
-    /// Keeps the back button's input on top: it becomes the last child of its own parent, which the GUI hit test asks first.
-    /// Moving a node within its own parent does not exit the tree, so its connections and hotkeys stay. The position belongs
-    /// to the navigation pad pass (the single writer for back buttons).
+    /// The credits modal's plain engine buttons at a finger's height. The screen keeps its own layout; only the button boxes
+    /// grow (their art and text follow the box).
     /// </summary>
-    private static void EnsureBackOnTop(Control screen, ScreenState state)
+    private void GrowCreditsTargets(Control screen)
     {
-        Control? back = Node(screen, state, "BackButton") ?? Node(screen, state, "%BackButton");
-        if (back?.GetParent() is Control parent && !PhoneHitArea.IsContainer(parent) &&
-            back.GetIndex() != parent.GetChildCount() - 1)
-            parent.MoveChild(back, parent.GetChildCount() - 1);
-    }
-
-    // ---- shared reflection ------------------------------------------------------------------------------------------------
-
-    private static readonly Dictionary<(Type, string), FieldInfo?> Fields = new();
-
-    private static FieldInfo? Field(object target, string name)
-    {
-        Type type = target.GetType();
-        if (!Fields.TryGetValue((type, name), out FieldInfo? field))
-            Fields[(type, name)] = field = FindField(type, name);
-        return field;
-    }
-
-    private static object? GetField(object target, string name) => Field(target, name)?.GetValue(target);
-
-    private static void SetField(object target, string name, object? value) => Field(target, name)?.SetValue(target, value);
-
-    private static FieldInfo? FindField(Type? type, string name)
-    {
-        for (; type != null; type = type.BaseType)
-            if (type.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is { } field)
-                return field;
-        return null;
-    }
-
-    private static bool TweenRunning(object owner, string field) =>
-        GetField(owner, field) is Tween tween && tween.IsValid() && tween.IsRunning();
-
-    /// <summary>Puts a control at a rectangle of its parent with the top left anchor, changing only what differs.</summary>
-    private void Place(Control? control, float x, float y, float w, float h)
-    {
-        if (control == null) return;
-        Capture(control);
-        if (control.AnchorLeft != 0f || control.AnchorTop != 0f || control.AnchorRight != 0f || control.AnchorBottom != 0f)
+        void Walk(Node node)
         {
-            control.AnchorLeft = 0f;
-            control.AnchorTop = 0f;
-            control.AnchorRight = 0f;
-            control.AnchorBottom = 0f;
+            foreach (Node child in node.GetChildren())
+            {
+                if (child is not Control control || !GodotObject.IsInstanceValid(control)) continue;
+                if (control is BaseButton && control.IsVisibleInTree() &&
+                    control.CustomMinimumSize.Y < PortraitBands.MinTarget)
+                {
+                    Capture(control);
+                    control.CustomMinimumSize = new Vector2(control.CustomMinimumSize.X, PortraitBands.MinTarget);
+                }
+                Walk(control);
+            }
         }
-        if (MathF.Abs(control.OffsetLeft - x) > 0.5f) control.OffsetLeft = x;
-        if (MathF.Abs(control.OffsetTop - y) > 0.5f) control.OffsetTop = y;
-        if (MathF.Abs(control.OffsetRight - (x + w)) > 0.5f) control.OffsetRight = x + w;
-        if (MathF.Abs(control.OffsetBottom - (y + h)) > 0.5f) control.OffsetBottom = y + h;
+        Walk(screen);
     }
-
-    /// <summary>Sets a control's scale and pivot, changing only what differs (a native hover tween may own the scale).</summary>
-    private static void SetScale(Control control, Vector2 scale, Vector2 pivot)
-    {
-        if (control.PivotOffset.DistanceSquaredTo(pivot) > 0.25f) control.PivotOffset = pivot;
-        if (control.Scale.DistanceSquaredTo(scale) > 0.000001f) control.Scale = scale;
-    }
-
-    private static void SetMinSize(Control control, Vector2 size)
-    {
-        if (control.CustomMinimumSize.DistanceSquaredTo(size) > 0.25f) control.CustomMinimumSize = size;
-    }
-
-    // ---- focus neighbours -------------------------------------------------------------------------------------------------
-
-    private readonly List<(ulong Id, NodePath? Left, NodePath? Right, NodePath? Top, NodePath? Bottom)> _focus = new();
-
-    private void SaveFocus(Control button)
-    {
-        ulong id = button.GetInstanceId();
-        for (int i = 0; i < _focus.Count; i++)
-            if (_focus[i].Id == id) return;
-        _focus.Add((id, button.FocusNeighborLeft, button.FocusNeighborRight, button.FocusNeighborTop, button.FocusNeighborBottom));
-    }
-
-    private void RestoreFocus()
-    {
-        foreach ((ulong id, NodePath? left, NodePath? right, NodePath? top, NodePath? bottom) in _focus)
-        {
-            if (GodotObject.InstanceFromId(id) is not Control button || !GodotObject.IsInstanceValid(button)) continue;
-            if (left is { } l) button.FocusNeighborLeft = l;
-            if (right is { } r) button.FocusNeighborRight = r;
-            if (top is { } t) button.FocusNeighborTop = t;
-            if (bottom is { } b) button.FocusNeighborBottom = b;
-        }
-        _focus.Clear();
-    }
-
-    private void PruneFocus() =>
-        _focus.RemoveAll(entry => !GodotObject.IsInstanceIdValid(entry.Id));
 }

@@ -38,6 +38,14 @@ Live combat events keep their native fight scene and description reveal. In port
 
 [`PortraitCardGridLayout`](src/STS2Mobile.GameHost/PortraitCardGridLayout.cs) owns the deck, pile and card-selection grids, their sort row, info line and View Upgrades box, with their desktop restore state. The action lane, banners and map tip stay with the between-screen coordinator.
 
+[`PortraitMenuLayout`](src/STS2Mobile.GameHost/PortraitMenuLayout.cs) fits the run-setup menus on their 1680 unit canvas, keeps the capture and error guard, and dispatches to the three menu owners below in the unchanged per-frame, restore and prune order. Only the credits modal's touch targets are laid out here.
+
+[`PortraitModeCardsLayout`](src/STS2Mobile.GameHost/PortraitModeCardsLayout.cs) owns the singleplayer and multiplayer-host mode cards, their row sort callback, drawn-bounds spacing and cross-row focus.
+
+[`PortraitCharacterSelectLayout`](src/STS2Mobile.GameHost/PortraitCharacterSelectLayout.cs) owns character select, Blitz and Dread: the roster and its cross-row focus, the ascension and info panels, the confirm button, the Blitz/Dread header row and Dread's name, score, streak and rotation tickbox.
+
+[`PortraitCharacterArtLayout`](src/STS2Mobile.GameHost/PortraitCharacterArtLayout.cs) owns the character art behind those screens: the backdrop cover, the split single-Spine figure and its slot mask, the ambient emitters, and their desktop restore values. It frames once per art container, not per frame.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.
