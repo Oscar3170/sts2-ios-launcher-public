@@ -188,7 +188,19 @@ internal sealed class CombatAssetWarmup
     private bool AddVerified(string? path) => Usable(path) && Store(path!);
 
     private bool Usable(string? path) =>
-        _paths.Count < MaxPaths && !string.IsNullOrEmpty(path) && path!.StartsWith("res://", StringComparison.Ordinal);
+        _paths.Count < MaxPaths && !string.IsNullOrEmpty(path) && path!.StartsWith("res://", StringComparison.Ordinal) &&
+        !IsAtlasSprite(path);
+
+    /// <summary>
+    /// An atlas sprite (<c>res://images/atlases/&lt;atlas&gt;.sprites/&lt;name&gt;.tres</c>) is made by the game's own C#
+    /// <c>AtlasResourceLoader</c>. Loaded on the session's worker threads, many of them at once raced in the engine's C#
+    /// binding of the objects they share: one worker set up a binding inside <c>ResourceFormatLoader::load</c> while another
+    /// released the same object at the end of <c>ResourceLoader::_run_load_task</c>, and the release's binding callback read a
+    /// null pointer (device crash reports of 2026-11-26, at the start of two fights in a row). These stay with the game, which
+    /// loads each on its first use.
+    /// </summary>
+    private static bool IsAtlasSprite(string path) =>
+        path.StartsWith("res://images/atlases/", StringComparison.Ordinal) && path.Contains(".sprites/", StringComparison.Ordinal);
 
     private bool Store(string path)
     {
