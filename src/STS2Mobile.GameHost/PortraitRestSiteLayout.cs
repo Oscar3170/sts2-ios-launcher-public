@@ -128,7 +128,7 @@ internal sealed class PortraitRestSiteLayout
             if (!label.HasThemeFontSizeOverride(name) || label.GetThemeFontSize(name) != size)
                 label.AddThemeFontSizeOverride(name, size);
     }
-    private readonly HashSet<ulong> _restStyledLabels = new();
+    private readonly Dictionary<ulong, int> _restStyledLabels = new();
     private readonly Dictionary<ulong, int> _restStyledText = new();
     private static Type? _restRoomType;
     private static FieldInfo? _restDescriptionTweenField;
@@ -209,7 +209,7 @@ internal sealed class PortraitRestSiteLayout
         foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
         foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
         foreach (ulong id in _restStates.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _restStates.Remove(id);
-        _restStyledLabels.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        foreach (ulong id in _restStyledLabels.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _restStyledLabels.Remove(id);
         foreach (ulong id in _restStyledText.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _restStyledText.Remove(id);
     }
 
@@ -261,7 +261,8 @@ internal sealed class PortraitRestSiteLayout
         {
             DisconnectRestSort(state);
             for (int i = 0; i < choices.GetChildCount(); i++)
-                if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) StyleRestOptionLabel(button);
+                if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion())
+                    StyleRestOptionLabel(button, PortraitRestMath.OptionLabelFontSize);
             float lift = RestCopyLift(count, choices.GetCombinedMinimumSize().X, canvas);
             RestOptionsRow row = PortraitRestMath.OptionsRow(count, choices.GetCombinedMinimumSize().X, canvas.X, canvas.Y, lift);
             bool placed = Mathf.IsEqualApprox(choices.Scale.X, row.Scale)
@@ -332,8 +333,9 @@ internal sealed class PortraitRestSiteLayout
         }
         // The grid can change without a re-sort (a new canvas); placing it again is idempotent and allocates nothing.
         PlaceRestGrid(state);
+        int labelSize = PortraitRestMath.OptionLabelFontSizeFor(first.Scale);
         for (int i = 0; i < choices.GetChildCount(); i++)
-            if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) StyleRestOptionLabel(button);
+            if (choices.GetChild(i) is Control button && !button.IsQueuedForDeletion()) StyleRestOptionLabel(button, labelSize);
         float bottomRowTop = first.Y + (rows - 1) * (PortraitRestMath.OptionsHeight + PortraitRestMath.OptionsRowGap) * first.Scale;
         return (first.Y, PortraitRestMath.OptionsDrawnBottom(bottomRowTop, first.Scale));
     }
@@ -412,13 +414,18 @@ internal sealed class PortraitRestSiteLayout
         state.Choices = 0;
     }
 
-    /// <summary>The label under an option is set in the button's own units, so it grows with the row and reads large enough for a phone.</summary>
-    private void StyleRestOptionLabel(Control button)
+    /// <summary>
+    /// The label under an option is set in the button's own units, so it grows with the row; a shrunken grid raises it so it
+    /// still draws at the game's own 28 units.
+    /// </summary>
+    private void StyleRestOptionLabel(Control button, int size)
     {
         if (button.GetNodeOrNull<Label>("Label") is not { } label) return;
-        if (!_restStyledLabels.Add(label.GetInstanceId())) return;
-        SetLabelFontSize(label, PortraitRestMath.OptionLabelFontSize);
-        ExtensionLimits(label, PortraitRestMath.OptionLabelFontSize);
+        ulong id = label.GetInstanceId();
+        if (_restStyledLabels.TryGetValue(id, out int styled) && styled == size) return;
+        _restStyledLabels[id] = size;
+        SetLabelFontSize(label, size);
+        ExtensionLimits(label, size);
     }
 
     // ---- the question and the copy -------------------------------------------------------------------------------

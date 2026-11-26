@@ -71,6 +71,13 @@ public static class PortraitRestMath
     /// </summary>
     public const int OptionLabelFontSize = 48;
 
+    /// <summary>The game's own option label height in canvas units; a shrunken grid never draws its labels smaller.</summary>
+    public const float OptionLabelMinDrawn = 28f;
+
+    /// <summary>The label size in the button's units: the template's 48, raised so the drawn label keeps 28 units.</summary>
+    public static int OptionLabelFontSizeFor(float rowScale) =>
+        rowScale <= 0f ? OptionLabelFontSize : Math.Max(OptionLabelFontSize, (int)MathF.Ceiling(OptionLabelMinDrawn / rowScale));
+
     /// <summary>
     /// Two options keep the game's own row; three or more always take exactly two rows (<see cref="OptionsRowCount"/>), so the
     /// widest row holds at most three buttons until the count passes six.
