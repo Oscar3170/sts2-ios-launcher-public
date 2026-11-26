@@ -539,9 +539,14 @@ internal sealed class PortraitCharacterArtLayout
     /// <summary>Puts every slot's original attachment back and drops the second playbacks (landscape).</summary>
     private void RestoreFigures()
     {
-        foreach ((ulong _, List<(GodotObject Slot, Variant Attachment)> saved) in _maskedAttachments)
+        // A slot is a view into its playback's skeleton: once the playback has gone (the character select freed when a run
+        // starts) the slot object can outlive it, and writing to it reaches freed Spine memory. Only a live playback is put back.
+        foreach ((ulong spriteId, List<(GodotObject Slot, Variant Attachment)> saved) in _maskedAttachments)
+        {
+            if (!LivePlayback(spriteId)) continue;
             foreach ((GodotObject slot, Variant attachment) in saved)
                 if (GodotObject.IsInstanceValid(slot)) slot.Call("set_attachment", attachment);
+        }
         foreach (FigureState state in _figures.Values)
             if (state.Figure is not null && GodotObject.IsInstanceValid(state.Figure)) state.Figure.QueueFree();
         _figures.Clear();
@@ -567,5 +572,16 @@ internal sealed class PortraitCharacterArtLayout
         foreach (ulong id in _artFirstSeen.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artFirstSeen.Remove(id);
         foreach (ulong id in _artSpines.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artSpines.Remove(id);
         foreach (ulong id in _artTextures.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _artTextures.Remove(id);
+        // A gone playback's saved slots must never be written again (see RestoreFigures).
+        foreach (ulong id in _maskedAttachments.Keys.Where(id => !LivePlayback(id)).ToList())
+        {
+            _maskedAttachments.Remove(id);
+            _maskRule.Remove(id);
+            _maskWired.Remove(id);
+        }
+        foreach (ulong id in _spineOriginals.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _spineOriginals.Remove(id);
     }
+
+    private static bool LivePlayback(ulong spriteId) =>
+        GodotObject.InstanceFromId(spriteId) is Node sprite && GodotObject.IsInstanceValid(sprite) && !sprite.IsQueuedForDeletion();
 }
