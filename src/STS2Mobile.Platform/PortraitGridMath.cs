@@ -56,6 +56,12 @@ public static class PortraitGridMath
     public const float ContentTopPadding = 80f;
     public const float ContentBottomPadding = 320f;
 
+    /// <summary>
+    /// How far the cards fade out at the grid's top and bottom edges (the game's own border band is 5 % of a 1080 unit
+    /// screen, 54). Shorter than <see cref="ContentTopPadding"/>, so the first row at rest is never faded.
+    /// </summary>
+    public const float GridMaskFade = 64f;
+
     /// <summary>The deck view's sort row: four buttons across the grid's width, 44 points tall.</summary>
     public const float SortHeaderHeight = 135f;
     public const float SortHeaderGap = 8f;

@@ -64,6 +64,12 @@ internal sealed class PortraitCardGridLayout
         public ulong Prompt;
         public ulong InfoText;
         public bool Logged;
+        public ulong BorderFade;
+        public bool BorderFadeVisible;
+        public ulong MaskScroll;
+        public CanvasItem.ClipChildrenMode NativeClipChildren;
+        public Action? MaskDraw;
+        public Action? MaskRedraw;
     }
 
     /// <summary>One text control's own wrapping and sizing, before portrait took it in hand.</summary>
@@ -295,6 +301,80 @@ internal sealed class PortraitCardGridLayout
         return true;
     }
 
+    // ---- the grid's soft ends ------------------------------------------------------------------------------------
+
+    private static GradientTexture2D? _maskFadeIn;
+    private static GradientTexture2D? _maskFadeOut;
+
+    /// <summary>
+    /// The game darkens the grid's first and last 5 % with a black BorderGradient over the cards, which in landscape fades
+    /// them into the screen's edges. Portrait ends the grid mid-screen over the stage, so its bottom band read as a black
+    /// stripe ending in a hard cut. Portrait hides that band and fades the cards themselves instead: the scroll area (a
+    /// clip_children parent in the game's scene) draws an opaque mask over the grid's rectangle whose first and last
+    /// <see cref="PortraitGridMath.GridMaskFade"/> units ramp to transparent, so the cards thin out into the stage.
+    /// </summary>
+    private static void InstallScrollMask(Control grid, Control scroll, GridState state)
+    {
+        if (state.BorderFade == 0 && grid.GetNodeOrNull<CanvasItem>("BorderGradient") is { } fade)
+        {
+            state.BorderFade = fade.GetInstanceId();
+            state.BorderFadeVisible = fade.Visible;
+        }
+        if (state.BorderFade != 0 && GodotObject.InstanceFromId(state.BorderFade) is CanvasItem border &&
+            GodotObject.IsInstanceValid(border) && border.Visible)
+            border.Visible = false;
+        if (state.MaskScroll == scroll.GetInstanceId()) return;
+        state.MaskScroll = scroll.GetInstanceId();
+        state.NativeClipChildren = scroll.ClipChildren;
+        scroll.ClipChildren = CanvasItem.ClipChildrenMode.Only;
+        Action draw = () => DrawScrollMask(grid, scroll);
+        Action redraw = scroll.QueueRedraw;
+        state.MaskDraw = draw;
+        state.MaskRedraw = redraw;
+        scroll.Draw += draw;
+        // The scroll is the content's own position: the mask is redrawn where the grid stands each time it moves.
+        scroll.ItemRectChanged += redraw;
+        scroll.QueueRedraw();
+    }
+
+    private static void RemoveScrollMask(GridState state)
+    {
+        if (state.MaskScroll != 0 && GodotObject.InstanceFromId(state.MaskScroll) is Control scroll && GodotObject.IsInstanceValid(scroll))
+        {
+            if (state.MaskDraw is { } draw) scroll.Draw -= draw;
+            if (state.MaskRedraw is { } redraw) scroll.ItemRectChanged -= redraw;
+            scroll.ClipChildren = state.NativeClipChildren;
+            scroll.QueueRedraw();
+        }
+        if (state.BorderFade != 0 && GodotObject.InstanceFromId(state.BorderFade) is CanvasItem border && GodotObject.IsInstanceValid(border))
+            border.Visible = state.BorderFadeVisible;
+        state.MaskScroll = state.BorderFade = 0;
+        state.MaskDraw = state.MaskRedraw = null;
+    }
+
+    /// <summary>The mask, in the scroll area's coordinates: the grid's rectangle, opaque, with transparent ends.</summary>
+    private static void DrawScrollMask(Control grid, Control scroll)
+    {
+        if (!GodotObject.IsInstanceValid(grid)) return;
+        _maskFadeIn ??= MaskRamp(transparentFirst: true);
+        _maskFadeOut ??= MaskRamp(transparentFirst: false);
+        Vector2 size = grid.Size;
+        float fade = MathF.Min(PortraitGridMath.GridMaskFade, size.Y * 0.25f);
+        Vector2 origin = -scroll.Position;
+        scroll.DrawTextureRect(_maskFadeIn, new Rect2(origin, new Vector2(size.X, fade)), false);
+        scroll.DrawRect(new Rect2(origin + new Vector2(0f, fade), new Vector2(size.X, size.Y - 2f * fade)), Colors.White);
+        scroll.DrawTextureRect(_maskFadeOut, new Rect2(origin + new Vector2(0f, size.Y - fade), new Vector2(size.X, fade)), false);
+    }
+
+    private static GradientTexture2D MaskRamp(bool transparentFirst)
+    {
+        Color clear = new(1f, 1f, 1f, 0f);
+        var gradient = new Gradient();
+        gradient.SetColor(0, transparentFirst ? clear : Colors.White);
+        gradient.SetColor(1, transparentFirst ? Colors.White : clear);
+        return new GradientTexture2D { Gradient = gradient, Width = 2, Height = 64, FillTo = new Vector2(0f, 1f) };
+    }
+
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
     public void RestoreGridsLandscape()
     {
@@ -309,6 +389,7 @@ internal sealed class PortraitCardGridLayout
             }
             if (GodotObject.InstanceFromId(id) is not Control grid || !GodotObject.IsInstanceValid(grid)) continue;
             if (state.ClipSaved) grid.ClipContents = state.NativeClip;
+            RemoveScrollMask(state);
             if (state.YOffsetSaved && _yOffsetProperty != null) _yOffsetProperty.SetValue(grid, state.NativeYOffset);
             if (_cardSizeField != null && state.NativeCardSize.X > 0.5f) _cardSizeField.SetValue(grid, state.NativeCardSize);
             RestoreGridHolderScales(grid, state);
@@ -408,6 +489,7 @@ internal sealed class PortraitCardGridLayout
             scroll.OffsetLeft = PortraitGridMath.SideInset;
             scroll.OffsetRight = -PortraitGridMath.SideInset;
             scroll.Size = new Vector2(scrollWidth, gridHeight);
+            InstallScrollMask(grid, scroll, state);
         }
         if (grid.GetNodeOrNull<Control>("Scrollbar") is { } scrollbar)
         {
@@ -679,6 +761,9 @@ internal sealed class PortraitCardGridLayout
     /// </summary>
     private void LayoutDeckInfoText(GridState state, Vector2 canvas)
     {
+        // Only the deck view's BottomText is an info line: the selection screens' BottomText is their prompt, a dark box that
+        // hugs its text, and stretching it to the info line's wrap box left it twice as tall as the text.
+        if (state.Screen != PortraitGridScreen.DeckView) return;
         if (state.InfoText == 0 && GodotObject.InstanceFromId(state.ScreenId) is Control screen)
             state.InfoText = screen.GetNodeOrNull<Control>(DeckInfoTextName)?.GetInstanceId() ?? 0;
         if (state.InfoText == 0 || GodotObject.InstanceFromId(state.InfoText) is not Control line || !GodotObject.IsInstanceValid(line)) return;
