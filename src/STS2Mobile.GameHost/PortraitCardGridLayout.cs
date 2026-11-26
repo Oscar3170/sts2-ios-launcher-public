@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes;
@@ -21,8 +22,11 @@ namespace STS2Mobile.GameHost;
 /// box are re-asserted when the game re-lays them out, and every one of them is captured first and put back in landscape.
 /// </para>
 /// </summary>
-internal sealed partial class PortraitBetweenLayout
+internal sealed class PortraitCardGridLayout
 {
+    public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
+    public const string UpgradeTickboxTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens.NUpgradePreviewTickbox";
+
     private const string DeckViewScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NDeckViewScreen";
     private const string PileScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NCardPileScreen";
     private const string CardSelectionNamespace = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection";
@@ -38,7 +42,7 @@ internal sealed partial class PortraitBetweenLayout
     private const string SortRowName = "SortingOptions";
     private const string DeckInfoTextName = "BottomText";
 
-    /// <summary>One grid's portrait layout: its screen, its native card size and what this file changed.</summary>
+    /// <summary>One grid's portrait layout: its screen, its native card size and what this owner changed.</summary>
     private sealed class GridState
     {
         public PortraitGridScreen Screen = PortraitGridScreen.DeckSelect;
@@ -74,6 +78,11 @@ internal sealed partial class PortraitBetweenLayout
     private readonly Dictionary<ulong, GridState> _gridStates = new();
     private readonly Dictionary<ulong, PortraitGridScreen> _viewUpgrades = new();
     private readonly Dictionary<ulong, GridTextMode> _gridTextModes = new();
+    private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
+    private static readonly string[] RichFontSizeNames =
+        ["normal_font_size", "bold_font_size", "bold_italics_font_size", "italics_font_size", "mono_font_size"];
+    private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
+    private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
 
     private static Type? _cardGridType;
     private static FieldInfo? _cardSizeField;
@@ -84,6 +93,41 @@ internal sealed partial class PortraitBetweenLayout
     private static FieldInfo? _hoverTweenField;
     private static float _gridHolderNativeScale = 0.8f;
 
+    private PortraitControlSnapshot Capture(Control control, bool captureVisible)
+    {
+        ulong id = control.GetInstanceId();
+        if (_snapshots.TryGetValue(id, out PortraitControlSnapshot? existing))
+        {
+            if (captureVisible && !existing.CaptureVisible) existing.RecordInitialVisibility(control.Visible);
+            return existing;
+        }
+        var created = new PortraitControlSnapshot(control, captureVisible);
+        _snapshots[id] = created;
+        return created;
+    }
+
+    /// <summary>Sets a label's font size in portrait, keeping the game's own to put back in landscape.</summary>
+    private void SetLabelFontSize(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        if (!_labelFontSizes.ContainsKey(id))
+            _labelFontSizes[id] = (label.HasThemeFontSizeOverride("font_size"), label.GetThemeFontSize("font_size"));
+        if (label.GetThemeFontSize("font_size") != size) label.AddThemeFontSizeOverride("font_size", size);
+    }
+
+    /// <summary>Sets every font size of a rich text label that does not size itself, keeping what it had for landscape.</summary>
+    private void SetRichFontSize(Control label, int size)
+    {
+        ulong id = label.GetInstanceId();
+        if (!_richFontSizes.ContainsKey(id))
+            _richFontSizes[id] = RichFontSizeNames
+                .Select(name => (label.HasThemeFontSizeOverride(name), label.HasThemeFontSizeOverride(name) ? label.GetThemeFontSize(name) : 0))
+                .ToArray();
+        foreach (string name in RichFontSizeNames)
+            if (!label.HasThemeFontSizeOverride(name) || label.GetThemeFontSize(name) != size)
+                label.AddThemeFontSizeOverride(name, size);
+    }
+
     // ---- entry points from PortraitBetweenLayout ---------------------------------------------------------------
 
     /// <summary>
@@ -91,7 +135,7 @@ internal sealed partial class PortraitBetweenLayout
     /// the deck view's sort row above it. Called for every <c>NCardGrid</c> the tree adds, and again whenever the grid or
     /// its screen moves it.
     /// </summary>
-    private void LayoutCardGridPortrait(Control grid, float capHeight, float canvasHeight, float canvasWidth)
+    public void Apply(Control grid, float capHeight, float canvasHeight, float canvasWidth)
     {
         if (grid.GetType().FullName != CardGridTypeName) return;
         ulong id = grid.GetInstanceId();
@@ -114,6 +158,17 @@ internal sealed partial class PortraitBetweenLayout
             }
         }
         ApplyGridPortrait(grid, state, new Vector2(canvasWidth, canvasHeight), capHeight);
+    }
+
+    /// <summary>Each frame: the grids, then the View Upgrades boxes their screens keep in the footer.</summary>
+    public void Update(float capHeight, Vector2 canvas)
+    {
+        foreach (ulong id in _gridStates.Keys)
+            if (GodotObject.InstanceFromId(id) is Control grid && GodotObject.IsInstanceValid(grid) && grid.IsVisibleInTree())
+                KeepGridPortrait(grid, capHeight, canvas);
+        foreach ((ulong id, PortraitGridScreen screen) in _viewUpgrades)
+            if (GodotObject.InstanceFromId(id) is Control box && GodotObject.IsInstanceValid(box) && box.IsVisibleInTree())
+                UpdateViewUpgradesBox(box, screen, canvas);
     }
 
     /// <summary>Each frame: the grid's own rect, the holder scales and the deck's footer are kept where portrait put them.</summary>
@@ -229,7 +284,7 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>Tracks the View Upgrades box a deck or selection screen's tickbox stands in and places it in the footer.</summary>
-    private bool TrackViewUpgradesBox(Control tickbox)
+    public bool TrackViewUpgradesBox(Control tickbox)
     {
         Control? box = ViewUpgradesBoxOf(tickbox);
         if (box == null) return false;
@@ -240,18 +295,8 @@ internal sealed partial class PortraitBetweenLayout
         return true;
     }
 
-    private void PruneGridInstances()
-    {
-        foreach (ulong id in new List<ulong>(_gridStates.Keys))
-            if (!GodotObject.IsInstanceIdValid(id)) _gridStates.Remove(id);
-        foreach (ulong id in new List<ulong>(_viewUpgrades.Keys))
-            if (!GodotObject.IsInstanceIdValid(id)) _viewUpgrades.Remove(id);
-        foreach (ulong id in new List<ulong>(_gridTextModes.Keys))
-            if (!GodotObject.IsInstanceIdValid(id)) _gridTextModes.Remove(id);
-    }
-
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
-    private void RestoreGridsLandscape()
+    public void RestoreGridsLandscape()
     {
         foreach ((ulong id, GridState state) in _gridStates)
         {
@@ -280,6 +325,47 @@ internal sealed partial class PortraitBetweenLayout
             label.SizeFlagsVertical = mode.FlagsV;
         }
         _gridTextModes.Clear();
+    }
+
+    /// <summary>Puts every control this owner moved back where the game had it.</summary>
+    public void RestoreControls()
+    {
+        foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
+            if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
+                snapshot.Restore(control);
+        _snapshots.Clear();
+    }
+
+    /// <summary>The sort row's and the info line's own text sizes go back to the game's.</summary>
+    public void RestoreFonts()
+    {
+        foreach ((ulong id, (bool had, int size)) in _labelFontSizes)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
+            if (had) label.AddThemeFontSizeOverride("font_size", size);
+            else label.RemoveThemeFontSizeOverride("font_size");
+        }
+        _labelFontSizes.Clear();
+        foreach ((ulong id, (bool Had, int Size)[] sizes) in _richFontSizes)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
+            for (int i = 0; i < RichFontSizeNames.Length; i++)
+            {
+                if (sizes[i].Had) label.AddThemeFontSizeOverride(RichFontSizeNames[i], sizes[i].Size);
+                else label.RemoveThemeFontSizeOverride(RichFontSizeNames[i]);
+            }
+        }
+        _richFontSizes.Clear();
+    }
+
+    public void PruneDead()
+    {
+        foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
+        foreach (ulong id in _gridStates.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _gridStates.Remove(id);
+        foreach (ulong id in _viewUpgrades.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _viewUpgrades.Remove(id);
+        foreach (ulong id in _gridTextModes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _gridTextModes.Remove(id);
+        foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
+        foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
     }
 
     // ---- the grid's own rectangle and its cards -----------------------------------------------------------------
@@ -409,7 +495,7 @@ internal sealed partial class PortraitBetweenLayout
         if (state.RelicRow != 0 && GodotObject.IsInstanceIdValid(state.RelicRow)) return;
         state.RelicRow = 0;
         if (grid.GetTree()?.Root is not Node root) return;
-        foreach (Node node in Descendants(root))
+        foreach (Node node in PortraitBetweenLayout.Descendants(root))
             if (node is Control control && control.GetType().FullName == RelicInventoryTypeName)
             {
                 state.RelicRow = control.GetInstanceId();

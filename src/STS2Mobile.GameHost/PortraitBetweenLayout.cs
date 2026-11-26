@@ -16,29 +16,21 @@ namespace STS2Mobile.GameHost;
 internal sealed partial class PortraitBetweenLayout
 {
     public const string ProceedButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NProceedButton";
-    public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
     public const string MapFtueTypeName = "MegaCrit.Sts2.Core.Nodes.Ftue.NMapSelectFtue";
     public const string BackButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NBackButton";
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
         PortraitMapLayout.MapScreenTypeName, ProceedButtonTypeName, PortraitRewardsLayout.RewardsScreenTypeName,
-        PortraitRewardsLayout.CardRewardTypeName, CardGridTypeName,
+        PortraitRewardsLayout.CardRewardTypeName, PortraitCardGridLayout.CardGridTypeName,
         PortraitShopLayout.MerchantInventoryTypeName, PortraitShopLayout.FakeMerchantInventoryTypeName, PortraitEventLayout.EventLayoutTypeName, MapFtueTypeName, PortraitEventLayout.AncientLayoutTypeName,
         BackButtonTypeName, PortraitEventLayout.EventOptionTypeName, PortraitRestSiteLayout.RestSiteRoomTypeName, PortraitTreasureLayout.TreasureRoomTypeName, PortraitEventLayout.AncientDialogueLineTypeName,
         PortraitShopLayout.MerchantRoomTypeName, PortraitShopLayout.BlitzMerchantRoomTypeName, PortraitShopLayout.FakeMerchantRoomTypeName,
         PortraitEventLayout.EventRoomTypeName, PortraitEventLayout.CombatEventLayoutTypeName,
     };
 
-    // Card grids in portrait: three cards to a row, the screen's footer band kept at the bottom. The size arithmetic lives in
-    // PortraitGridMath and the layout in PortraitBetweenLayout.Grid.cs.
-    private const string UpgradeTickboxTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens.NUpgradePreviewTickbox";
-
     // Sizes for a finger. 127 units are 44 points and a font of 32 units is 11 points (PortraitBands).
     private const string HitPadHolderName = PhoneHitArea.HolderName;
-    private static readonly string[] RichFontSizeNames =
-        ["normal_font_size", "bold_font_size", "bold_italics_font_size", "italics_font_size", "mono_font_size"];
-    private const float GridScale = 1.8f;
     // The shared banner ("Choose a Card") is 162 units tall, 172 to 334 above the screen's middle; in portrait it rises to just
     // under the relic strip so the cards under it can grow.
     internal const float BannerTopOffset = 334f;
@@ -56,8 +48,7 @@ internal sealed partial class PortraitBetweenLayout
     private readonly PortraitRestSiteLayout _rest = new();
     private readonly PortraitTreasureLayout _treasure = new();
     private readonly PortraitRewardsLayout _rewards = new();
-    private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
-    private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
+    private readonly PortraitCardGridLayout _grids = new();
 
     // ---- The action lane and the run mode --------------------------------------------------------------------------------
 
@@ -139,8 +130,8 @@ internal sealed partial class PortraitBetweenLayout
             case PortraitRewardsLayout.CardRewardTypeName:
                 _rewards.ApplyCardReward(control);
                 break;
-            case CardGridTypeName:
-                LayoutCardGridPortrait(control, capHeight, canvasHeight, canvasWidth);
+            case PortraitCardGridLayout.CardGridTypeName:
+                _grids.Apply(control, capHeight, canvasHeight, canvasWidth);
                 break;
             case PortraitShopLayout.MerchantInventoryTypeName:
             case PortraitShopLayout.FakeMerchantInventoryTypeName:
@@ -161,8 +152,8 @@ internal sealed partial class PortraitBetweenLayout
         string? typeName = control.GetType().FullName;
         if (_events.LayoutOnAdd(control)) return true;
         if (typeName == PortraitTreasureLayout.TreasureRoomTypeName) return _treasure.Begin(control);
-        // A View Upgrades tickbox joins the box this file keeps in the deck and selection screens' footers.
-        if (typeName == UpgradeTickboxTypeName) return TrackViewUpgradesBox(control);
+        // A View Upgrades tickbox joins the box the grid owner keeps in the deck and selection screens' footers.
+        if (typeName == PortraitCardGridLayout.UpgradeTickboxTypeName) return _grids.TrackViewUpgradesBox(control);
         return false;
     }
 
@@ -175,12 +166,7 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button) && button.IsVisibleInTree())
                 UpdateProceedButtonPortrait(button, canvas);
         _rewards.Update(canvas, capHeight);
-        foreach (ulong id in _gridStates.Keys)
-            if (GodotObject.InstanceFromId(id) is Control grid && GodotObject.IsInstanceValid(grid) && grid.IsVisibleInTree())
-                KeepGridPortrait(grid, capHeight, canvas);
-        foreach ((ulong id, PortraitGridScreen screen) in _viewUpgrades)
-            if (GodotObject.InstanceFromId(id) is Control box && GodotObject.IsInstanceValid(box) && box.IsVisibleInTree())
-                UpdateViewUpgradesBox(box, screen, canvas);
+        _grids.Update(capHeight, canvas);
         foreach (ulong id in _mapFtues)
             if (GodotObject.InstanceFromId(id) is Control ftue && GodotObject.IsInstanceValid(ftue) && ftue.IsVisibleInTree())
                 KeepMapFtueOnScreen(ftue, canvas);
@@ -195,7 +181,7 @@ internal sealed partial class PortraitBetweenLayout
     {
         _rewards.RestoreCardRewardsLandscape();
         _events.RestoreEventStructure();
-        RestoreGridsLandscape();
+        _grids.RestoreGridsLandscape();
 
         // The loot window's entrance and the ribbons' slides are ours while portrait; kill them before the snapshots put the
         // game's own layout back.
@@ -209,6 +195,7 @@ internal sealed partial class PortraitBetweenLayout
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
+        _grids.RestoreControls();
         _rest.RestoreControls();
 
         _rewards.RestoreAlignments();
@@ -237,23 +224,7 @@ internal sealed partial class PortraitBetweenLayout
         }
         _hitPadHolders.Clear();
         _rest.RestoreFonts();
-        foreach ((ulong id, (bool had, int size)) in _labelFontSizes)
-        {
-            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
-            if (had) label.AddThemeFontSizeOverride("font_size", size);
-            else label.RemoveThemeFontSizeOverride("font_size");
-        }
-        _labelFontSizes.Clear();
-        foreach ((ulong id, (bool Had, int Size)[] sizes) in _richFontSizes)
-        {
-            if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
-            for (int i = 0; i < RichFontSizeNames.Length; i++)
-            {
-                if (sizes[i].Had) label.AddThemeFontSizeOverride(RichFontSizeNames[i], sizes[i].Size);
-                else label.RemoveThemeFontSizeOverride(RichFontSizeNames[i]);
-            }
-        }
-        _richFontSizes.Clear();
+        _grids.RestoreFonts();
         _rewards.RestoreFonts();
         _events.RestoreControls();
     }
@@ -264,7 +235,7 @@ internal sealed partial class PortraitBetweenLayout
         _map.PruneDead();
         _proceedButtons.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _mapFtues.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        PruneGridInstances();
+        _grids.PruneDead();
         _rewards.PruneDead();
         _hitAreaTargets.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _shop.PruneDead();
@@ -272,8 +243,6 @@ internal sealed partial class PortraitBetweenLayout
         _events.PruneDead();
         _rest.PruneDead();
         _treasure.PruneDead();
-        foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
-        foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
         foreach (ulong id in _proceedLanes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _proceedLanes.Remove(id);
     }
 
@@ -437,16 +406,6 @@ internal sealed partial class PortraitBetweenLayout
         else if (rect.Position.X < 16f) panel.Position += new Vector2(16f - rect.Position.X, 0f);
     }
 
-    /// <summary>Sets a label's font size in portrait, keeping the game's own to put back in landscape.</summary>
-    private void SetLabelFontSize(Control label, int size)
-    {
-        ulong id = label.GetInstanceId();
-        if (!_labelFontSizes.ContainsKey(id))
-            _labelFontSizes[id] = (label.HasThemeFontSizeOverride("font_size"), label.GetThemeFontSize("font_size"));
-        if (label.GetThemeFontSize("font_size") != size) label.AddThemeFontSizeOverride("font_size", size);
-    }
-
-
     // ---- shared --------------------------------------------------------------------------------------------------------
 
     private PortraitControlSnapshot Capture(Control control, bool captureVisible)
@@ -505,19 +464,6 @@ internal sealed partial class PortraitBetweenLayout
         }
     }
 
-    /// <summary>Sets every font size of a rich text label that does not size itself, keeping what it had for landscape.</summary>
-    private void SetRichFontSize(Control label, int size)
-    {
-        ulong id = label.GetInstanceId();
-        if (!_richFontSizes.ContainsKey(id))
-            _richFontSizes[id] = RichFontSizeNames
-                .Select(name => (label.HasThemeFontSizeOverride(name), label.HasThemeFontSizeOverride(name) ? label.GetThemeFontSize(name) : 0))
-                .ToArray();
-        foreach (string name in RichFontSizeNames)
-            if (!label.HasThemeFontSizeOverride(name) || label.GetThemeFontSize(name) != size)
-                label.AddThemeFontSizeOverride(name, size);
-    }
-
     /// <summary>One line naming the visible between-fight screens and their rectangles, for the proof log.</summary>
     public static string DescribeForProof(Node root)
     {
@@ -548,7 +494,7 @@ internal sealed partial class PortraitBetweenLayout
         return "screens=" + string.Join(" ", parts.Distinct());
     }
 
-    private static IEnumerable<Node> Descendants(Node node)
+    internal static IEnumerable<Node> Descendants(Node node)
     {
         foreach (Node child in node.GetChildren())
         {

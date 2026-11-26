@@ -444,7 +444,7 @@ internal sealed class PortraitOverlayLayout
                 _potionPopups.Add(id);
                 return;
             case UpgradeTickboxTypeName:
-                // The deck and deck-selection screens' View Upgrades box belongs to the card grid layout (PortraitBetweenLayout).
+                // The deck and deck-selection screens' View Upgrades box belongs to the card grid layout (PortraitCardGridLayout).
                 if (control.GetParent()?.GetType().FullName == InspectCardScreenTypeName) _inspectTickboxes.Add(id);
                 return;
             case ConfirmButtonTypeName:

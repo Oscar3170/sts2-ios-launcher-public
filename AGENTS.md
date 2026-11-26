@@ -36,6 +36,8 @@ Live combat events keep their native fight scene and description reveal. In port
 
 [`PortraitRewardsLayout`](src/STS2Mobile.GameHost/PortraitRewardsLayout.cs) owns the spoils screen's window, rows and Skip clearance, and the card reward's two-column grid and banner lift, with their desktop restore state. The action lane stays with the between-screen coordinator.
 
+[`PortraitCardGridLayout`](src/STS2Mobile.GameHost/PortraitCardGridLayout.cs) owns the deck, pile and card-selection grids, their sort row, info line and View Upgrades box, with their desktop restore state. The action lane, banners and map tip stay with the between-screen coordinator.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.
