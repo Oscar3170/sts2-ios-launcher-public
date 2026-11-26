@@ -20,7 +20,7 @@ namespace STS2Mobile.GameHost;
 /// off. Everything else is the game's animation, its live particles and its own buttons.
 /// </para>
 /// </summary>
-internal sealed partial class PortraitBetweenLayout
+internal sealed partial class PortraitEventLayout
 {
     public const string EventRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NEventRoom";
     public const string CombatEventLayoutTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NCombatEventLayout";
@@ -527,7 +527,7 @@ internal sealed partial class PortraitBetweenLayout
         Control? choices = ResolveEventNode(state.ChoicesNode);
         if (clip == null || fade == null || slot == null || choices == null) return;
 
-        float bandTop = state.Cap + PortraitBands.TopBarHeight;
+        float bandTop = PortraitBands.HeaderBottom(state.Cap);
         EventChoiceBand band = PortraitEventMath.ChoiceBand(state.Canvas.Y, bandTop, state.Compact, state.Tight);
         EventTextSlot textSlot = PortraitEventMath.TextSlot(state.Canvas.Y, bandTop, band.Top);
         state.Band = band;
@@ -536,8 +536,9 @@ internal sealed partial class PortraitBetweenLayout
         float artBottom = PortraitEventMath.ArtBottom(band.Top);
         Vector2 origin = layout.GlobalPosition;
 
-        Vector2 clipSize = new(state.Canvas.X, MathF.Max(0f, artBottom - bandTop));
-        Vector2 clipAt = new(-origin.X, bandTop - origin.Y);
+        float artTop = bandTop - HeaderArtBleed;
+        Vector2 clipSize = new(state.Canvas.X, MathF.Max(0f, artBottom - artTop));
+        Vector2 clipAt = new(-origin.X, artTop - origin.Y);
         if (!clip.Size.IsEqualApprox(clipSize))
         {
             clip.Size = clipSize;

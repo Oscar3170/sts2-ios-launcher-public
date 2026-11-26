@@ -13,7 +13,7 @@ namespace STS2Mobile.GameHost;
 /// nameplate enlarged once it settles at the bottom. The crop is cached per ancient instance, so rebuilding the reward rows
 /// never reframes the art; every node is put back for landscape.
 /// </summary>
-internal sealed partial class PortraitBetweenLayout
+internal sealed partial class PortraitEventLayout
 {
     /// <summary>The clip that crops the painting; it holds <c>%AncientBgContainer</c> while portrait is on.</summary>
     public const string AncientArtClipName = "PortraitAncientArt";
@@ -113,7 +113,7 @@ internal sealed partial class PortraitBetweenLayout
     }
 
     /// <summary>Per frame: the game may move the painting on a window change, and the fade waits for the room cover.</summary>
-    private void UpdateAncientPortraits(float capHeight, Vector2 canvas)
+    public void UpdateAncientPortraits(float capHeight, Vector2 canvas)
     {
         foreach (ulong id in _ancientStates.Keys)
             if (GodotObject.InstanceFromId(id) is Control ancient && GodotObject.IsInstanceValid(ancient) && ancient.IsVisibleInTree())
@@ -280,7 +280,7 @@ internal sealed partial class PortraitBetweenLayout
         float optionsHeight = metrics.TotalHeight(Enumerable.Repeat(metrics.RowHeight, Math.Max(optionCount, 0)).ToArray());
         bool compact = state.Canvas.Y <= state.Canvas.X * (16f / 9f) + 1f;
         float focus = PortraitAncientMath.FocusX(AncientBackgroundScene(layout));
-        float artTop = PortraitAncientMath.ArtTop(state.HeaderBottom);
+        float artTop = state.HeaderBottom - HeaderArtBleed;
         // The painting is placed once, for the deeper dialogue band; the rewards band is the same crop with its bottom
         // pulled up, so nothing in the art's scale or position ever changes during the event.
         state.Frame = PortraitAncientMath.FrameArt(
@@ -301,7 +301,7 @@ internal sealed partial class PortraitBetweenLayout
         state.ContentLeft = PortraitAncientMath.ContentSideInset;
         state.ContainerLeft = PortraitAncientMath.ContainerInset;
         state.ContainerWidth = state.Canvas.X - 2f * PortraitAncientMath.ContainerInset;
-        state.ContentTop = state.Frame.ClipTop + PortraitAncientMath.ContentTopGap;
+        state.ContentTop = state.HeaderBottom + PortraitAncientMath.ContentTopInset;
         state.DialogueHeight = Math.Max(1f, state.Frame.ClipBottom - PortraitAncientMath.DialogueBottomGap - state.ContentTop);
         state.RewardHeight = Math.Max(state.DialogueHeight, nameplateTop - state.ContentTop);
         ApplyAncientColumn(state, layout, optionsHeight);

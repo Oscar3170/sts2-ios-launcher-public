@@ -51,11 +51,8 @@ public static class PortraitAncientMath
     /// <summary>The authored size of every ancient background painting.</summary>
     public const float ArtSourceWidth = 1920f, ArtSourceHeight = 1080f;
 
-    /// <summary>Gap between the run's header (top bar, potion row and relic strip) and the art.</summary>
-    public const float ArtTopGap = 30f;
-
-    /// <summary>Top of the dialogue column, below the art's top edge.</summary>
-    public const float ContentTopGap = 16f * UnitsPerPoint;
+    /// <summary>Top of the dialogue column, inset from the bottom of the stone header independently of the art.</summary>
+    public const float ContentTopInset = 30f + 16f * UnitsPerPoint;
 
     /// <summary>Side inset of the clipped dialogue-and-options box.</summary>
     public const float ContainerInset = 5.4f * UnitsPerPoint;
@@ -135,9 +132,6 @@ public static class PortraitAncientMath
         "Nonuepeipe" => 1010f,
         _ => 960f,
     };
-
-    /// <summary>Top of the art: just under the run's header.</summary>
-    public static float ArtTop(float headerBottom) => headerBottom + ArtTopGap;
 
     /// <summary>Top of the nameplate's room inside the safe frame; the reward rows end above it.</summary>
     public static float NameplateTop(float canvasHeight, float safeInset) =>

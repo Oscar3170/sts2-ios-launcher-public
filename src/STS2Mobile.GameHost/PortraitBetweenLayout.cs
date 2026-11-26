@@ -19,21 +19,17 @@ internal sealed partial class PortraitBetweenLayout
     public const string RewardsScreenTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NRewardsScreen";
     public const string CardRewardTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection.NCardRewardSelectionScreen";
     public const string CardGridTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid";
-    public const string EventLayoutTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NEventLayout";
     public const string MapFtueTypeName = "MegaCrit.Sts2.Core.Nodes.Ftue.NMapSelectFtue";
-    public const string AncientLayoutTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NAncientEventLayout";
     public const string BackButtonTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NBackButton";
-    public const string EventOptionTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NEventOptionButton";
     public const string RestSiteRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NRestSiteRoom";
-    public const string AncientDialogueLineTypeName = "MegaCrit.Sts2.Core.Nodes.Events.NAncientDialogueLine";
 
     public static readonly HashSet<string> WatchedTypeNames = new(StringComparer.Ordinal)
     {
         PortraitMapLayout.MapScreenTypeName, ProceedButtonTypeName, RewardsScreenTypeName, CardRewardTypeName, CardGridTypeName,
-        PortraitShopLayout.MerchantInventoryTypeName, PortraitShopLayout.FakeMerchantInventoryTypeName, EventLayoutTypeName, MapFtueTypeName, AncientLayoutTypeName,
-        BackButtonTypeName, EventOptionTypeName, RestSiteRoomTypeName, TreasureRoomTypeName, AncientDialogueLineTypeName,
+        PortraitShopLayout.MerchantInventoryTypeName, PortraitShopLayout.FakeMerchantInventoryTypeName, PortraitEventLayout.EventLayoutTypeName, MapFtueTypeName, PortraitEventLayout.AncientLayoutTypeName,
+        BackButtonTypeName, PortraitEventLayout.EventOptionTypeName, RestSiteRoomTypeName, TreasureRoomTypeName, PortraitEventLayout.AncientDialogueLineTypeName,
         PortraitShopLayout.MerchantRoomTypeName, PortraitShopLayout.BlitzMerchantRoomTypeName, PortraitShopLayout.FakeMerchantRoomTypeName,
-        EventRoomTypeName, CombatEventLayoutTypeName,
+        PortraitEventLayout.EventRoomTypeName, PortraitEventLayout.CombatEventLayoutTypeName,
     };
 
     // Card grids in portrait: three cards to a row, the screen's footer band kept at the bottom. The size arithmetic lives in
@@ -42,7 +38,6 @@ internal sealed partial class PortraitBetweenLayout
 
     // Sizes for a finger. 127 units are 44 points and a font of 32 units is 11 points (PortraitBands).
     private const string HitPadHolderName = PhoneHitArea.HolderName;
-    private const int EventTextFontSize = 32;
     private static readonly string[] RichFontSizeNames =
         ["normal_font_size", "bold_font_size", "bold_italics_font_size", "italics_font_size", "mono_font_size"];
     private const float CardRowSpacing = 350f;
@@ -76,11 +71,9 @@ internal sealed partial class PortraitBetweenLayout
     private readonly HashSet<ulong> _hitAreaTargets = new();
     private readonly HashSet<ulong> _liftedBanners = new();
     private readonly PortraitShopLayout _shop = new();
+    private readonly PortraitEventLayout _events = new();
     private readonly HashSet<ulong> _hitPadHolders = new();
-    private readonly HashSet<ulong> _events = new();
     private readonly HashSet<ulong> _restSites = new();
-    private readonly Dictionary<ulong, int> _labelMaxFontSizes = new();
-    private readonly Dictionary<ulong, int> _labelMinFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)> _labelFontSizes = new();
     private readonly Dictionary<ulong, (bool Had, int Size)[]> _richFontSizes = new();
 
@@ -164,12 +157,13 @@ internal sealed partial class PortraitBetweenLayout
             case BackButtonTypeName:
                 EnsureHitPad(control, 0f, PortraitBands.MinTarget);
                 break;
-            case EventOptionTypeName:
-                if (IsInLayout(control, AncientLayoutTypeName)) LayoutAncientOptionPortrait(control);
-                else ApplyEventOption(control);
-                break;
-            case AncientDialogueLineTypeName:
-                LayoutAncientDialogueLinePortrait(control);
+            case PortraitEventLayout.EventOptionTypeName:
+            case PortraitEventLayout.AncientDialogueLineTypeName:
+            case PortraitEventLayout.AncientLayoutTypeName:
+            case PortraitEventLayout.EventLayoutTypeName:
+            case PortraitEventLayout.CombatEventLayoutTypeName:
+            case PortraitEventLayout.EventRoomTypeName:
+                _events.Apply(control, typeName, capHeight, canvasHeight, canvasWidth);
                 break;
             case RestSiteRoomTypeName:
                 TrackRestSite(control, canvasWidth, canvasHeight);
@@ -186,9 +180,6 @@ internal sealed partial class PortraitBetweenLayout
             case CardGridTypeName:
                 LayoutCardGridPortrait(control, capHeight, canvasHeight, canvasWidth);
                 break;
-            case AncientLayoutTypeName:
-                LayoutAncientPortrait(control, capHeight, canvasWidth, canvasHeight);
-                break;
             case PortraitShopLayout.MerchantInventoryTypeName:
             case PortraitShopLayout.FakeMerchantInventoryTypeName:
             case PortraitShopLayout.MerchantRoomTypeName:
@@ -196,51 +187,20 @@ internal sealed partial class PortraitBetweenLayout
             case PortraitShopLayout.FakeMerchantRoomTypeName:
                 _shop.Apply(control, typeName, capHeight, canvasWidth, canvasHeight);
                 break;
-            case EventLayoutTypeName:
-                LayoutEventPortrait(control, capHeight, canvasHeight, canvasWidth);
-                break;
-            case CombatEventLayoutTypeName:
-                LayoutCombatEventPortrait(control, capHeight, canvasHeight, canvasWidth);
-                break;
-            case EventRoomTypeName:
-                TrackEventRoom(control, canvasWidth, canvasHeight);
-                break;
             case MapFtueTypeName:
                 _mapFtues.Add(control.GetInstanceId());
                 break;
         }
     }
 
-    /// <summary>
-    /// Called as a node is added, before the game sets its screen up: an ancient's option rows and dialogue lines get their
-    /// portrait size here, because the game measures them for the column's slide in the frame they are added.
-    /// Returns whether it changed anything.
-    /// </summary>
+    /// <summary>Applies layout needed before the native screen measures a new node.</summary>
     public bool LayoutOnAdd(Control control)
     {
         string? typeName = control.GetType().FullName;
-        if (typeName == AncientDialogueLineTypeName)
-        {
-            LayoutAncientDialogueLinePortrait(control);
-            return true;
-        }
-        if (typeName == EventOptionTypeName && IsInLayout(control, AncientLayoutTypeName))
-        {
-            LayoutAncientOptionPortrait(control);
-            return true;
-        }
-        if (typeName == EventOptionTypeName) return ApplyEventOption(control);
-        if (typeName == EventLayoutTypeName) return HoldEventArtUntilFramed(control);
+        if (_events.LayoutOnAdd(control)) return true;
         if (typeName == TreasureRoomTypeName) return BeginTreasureRoom(control);
         // A View Upgrades tickbox joins the box this file keeps in the deck and selection screens' footers.
         if (typeName == UpgradeTickboxTypeName) return TrackViewUpgradesBox(control);
-        return false;
-    }
-
-    private static bool IsInLayout(Node node, string layoutTypeName)
-    {
-        for (Node? parent = node.GetParent(); parent != null; parent = parent.GetParent())
-            if (parent.GetType().FullName == layoutTypeName) return true;
         return false;
     }
 
@@ -267,19 +227,14 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _mapFtues)
             if (GodotObject.InstanceFromId(id) is Control ftue && GodotObject.IsInstanceValid(ftue) && ftue.IsVisibleInTree())
                 KeepMapFtueOnScreen(ftue, canvas);
-        foreach (ulong id in _events)
-            if (GodotObject.InstanceFromId(id) is Control layout && GodotObject.IsInstanceValid(layout) && layout.IsVisibleInTree())
-                UpdateEventPortrait(layout, capHeight, canvas);
-        foreach (ulong id in _eventRooms)
-            if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsInsideTree())
-                UpdateEventRoomCover(room, canvas);
+        _events.UpdateEvents(capHeight, canvas);
         foreach (ulong id in _restSites)
             if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
                 UpdateRestSitePortrait(room, canvas);
         foreach (ulong id in _treasures)
             if (GodotObject.InstanceFromId(id) is Control room && GodotObject.IsInstanceValid(room) && room.IsVisibleInTree())
                 UpdateTreasurePortrait(room, capHeight, canvas);
-        UpdateAncientPortraits(capHeight, canvas);
+        _events.UpdateAncientPortraits(capHeight, canvas);
         _shop.OnProcessFrame(capHeight, canvas);
     }
 
@@ -289,7 +244,7 @@ internal sealed partial class PortraitBetweenLayout
             if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen))
                 RestoreCardRewardLandscape(screen);
         _laidOutRewardHolders.Clear();
-        RestoreEventsLandscape();
+        _events.RestoreEventStructure();
         RestoreGridsLandscape();
 
         // The loot window's entrance and the ribbons' slides are ours while portrait; kill them before the snapshots put the
@@ -338,14 +293,6 @@ internal sealed partial class PortraitBetweenLayout
             holder.QueueFree();
         }
         _hitPadHolders.Clear();
-        foreach ((ulong id, int size) in _labelMaxFontSizes)
-            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
-                label.Set("MaxFontSize", size);
-        _labelMaxFontSizes.Clear();
-        foreach ((ulong id, int size) in _labelMinFontSizes)
-            if (GodotObject.InstanceFromId(id) is Control label && GodotObject.IsInstanceValid(label))
-                label.Set("MinFontSize", size);
-        _labelMinFontSizes.Clear();
         foreach ((ulong id, (bool had, int size)) in _labelFontSizes)
         {
             if (GodotObject.InstanceFromId(id) is not Control label || !GodotObject.IsInstanceValid(label)) continue;
@@ -368,8 +315,7 @@ internal sealed partial class PortraitBetweenLayout
                 label.GetType().GetProperty("AutoSizeEnabled", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
                     ?.SetValue(label, Value);
         _rewardAutoSizes.Clear();
-        // After the snapshots: the painting goes back into the layout and the game's own window rule places it.
-        RestoreAncientLandscape();
+        _events.RestoreControls();
     }
 
     public void PruneDead()
@@ -386,13 +332,10 @@ internal sealed partial class PortraitBetweenLayout
         _liftedBanners.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _shop.PruneDead();
         _hitPadHolders.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
-        _events.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        _events.PruneDead();
         _restSites.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         PruneRestInstances();
         PruneTreasureInstances();
-        PruneAncientInstances();
-        foreach (ulong id in _labelMaxFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMaxFontSizes.Remove(id);
-        foreach (ulong id in _labelMinFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelMinFontSizes.Remove(id);
         foreach (ulong id in _labelFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _labelFontSizes.Remove(id);
         foreach (ulong id in _richFontSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _richFontSizes.Remove(id);
         _lootRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -401,7 +344,6 @@ internal sealed partial class PortraitBetweenLayout
         foreach (ulong id in _proceedLanes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _proceedLanes.Remove(id);
         foreach (ulong id in _rewardAutoSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _rewardAutoSizes.Remove(id);
         foreach (ulong id in _alternativeAlignments.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _alternativeAlignments.Remove(id);
-        PruneEventInstances();
     }
 
     // ---- Proceed button (rewards, shop, rest site, treasure) ------------------------------------------------------------

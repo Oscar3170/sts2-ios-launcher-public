@@ -387,7 +387,7 @@ internal static partial class PortraitProof
         string Rect(string path) => layout.GetNodeOrNull<Control>(path) is { } c ? CanvasRect(c) : "none";
         // The portrait composition moves the title and the copy into its slot and the options into their scroll; before it
         // runs (or for an event without a picture) they are still where the game put them.
-        string slot = PortraitBetweenLayout.EventTextSlotName;
+        string slot = PortraitEventLayout.EventTextSlotName;
         string copy = slot + "/Panel/Text/Copy/";
         bool composed = layout.GetNodeOrNull<Control>(slot) != null;
         string title = Rect(layout.GetNodeOrNull<Control>(copy + "Title") != null ? copy + "Title" : "VBoxContainer/Title");
@@ -400,16 +400,16 @@ internal static partial class PortraitProof
         if (layout.GetNodeOrNull<ScrollContainer>(slot + "/Panel/Text") is { } scroll)
             textScroll = $"slot={Rect(slot)} scroll={CanvasRect(scroll)} {Overflow(scroll)}";
         string choices = "none";
-        if (layout.GetNodeOrNull<ScrollContainer>(PortraitBetweenLayout.EventChoicesScrollName) is { } rows)
+        if (layout.GetNodeOrNull<ScrollContainer>(PortraitEventLayout.EventChoicesScrollName) is { } rows)
         {
             Control? options = layout.GetNodeOrNull<Control>("%OptionsContainer");
             List<Control> buttons = options?.GetChildren().OfType<Control>()
-                .Where(c => c.GetType().FullName == PortraitBetweenLayout.EventOptionTypeName).ToList() ?? [];
+                .Where(c => c.GetType().FullName == PortraitEventLayout.EventOptionTypeName).ToList() ?? [];
             string sizes = string.Join(",", buttons.Select(b => $"{b.Size.Y:F0}"));
             choices = $"scroll={CanvasRect(rows)} {Overflow(rows)} rows={buttons.Count}[{sizes}] first={((buttons.Count > 0) ? CanvasRect(buttons[0]) : "none")}";
         }
         return $"canvas={tree.Root.GetVisibleRect().Size} composed={composed} art={Rect("%Portrait")} " +
-            $"clip={Rect(PortraitBetweenLayout.EventArtClipName)} text={Rect(composed ? slot : "VBoxContainer")} title={title} " +
+            $"clip={Rect(PortraitEventLayout.EventArtClipName)} text={Rect(composed ? slot : "VBoxContainer")} title={title} " +
             $"description[{description}] text-scroll[{textScroll}] options={Rect("%OptionsContainer")} choices[{choices}]";
     }
 

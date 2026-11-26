@@ -24,6 +24,10 @@ Use the existing owner instead of adding a second path. Split large classes by i
 
 [`PortraitMapLayout`](src/STS2Mobile.GameHost/PortraitMapLayout.cs) owns the map graph, drawing footer, legend, map-point touch targets, and their restore state. It tells navigation where the footer starts; [`PortraitNavigationPads`](src/STS2Mobile.GameHost/PortraitNavigationPads.cs) still places Back.
 
+[`PortraitShopLayout`](src/STS2Mobile.GameHost/PortraitShopLayout.cs) owns the standard, weird, and Blitz shop compositions, inventory pages, price labels and touch pads. It keeps native stock nodes in place and restores the room and inventory through their existing lifecycle.
+
+[`PortraitEventLayout`](src/STS2Mobile.GameHost/PortraitEventLayout.cs) owns event and Ancient composition, early option sizing, and native restore state. Event art extends behind the stone's torn lower edge; dialogue and choice bounds are independent of that overlap.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.
