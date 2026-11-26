@@ -437,6 +437,7 @@ internal sealed class PortraitCombatLayout
         public readonly PropertyInfo? HandInCardSelectionProp;
         public readonly MethodInfo? HandForceRefreshMethod;
         public readonly FieldInfo? HandSelectedCardTweenField;
+        public readonly FieldInfo? HandAnimOutTweenField;
 
         public readonly PropertyInfo? CardHolderCardNodeProp;
         public readonly FieldInfo? HolderTargetPosField;
@@ -587,6 +588,7 @@ internal sealed class PortraitCombatLayout
             HandInCardSelectionProp = handType?.GetProperty("IsInCardSelection", InstAll);
             HandForceRefreshMethod = handType?.GetMethod("ForceRefreshCardIndices", InstAll);
             HandSelectedCardTweenField = FindField(handType, "_selectedCardScaleTween");
+            HandAnimOutTweenField = FindField(handType, "_animOutTween");
             HandCombatStateField = FindField(handType, "_combatState");
 
             Type? handHolderType = sts2.GetType("MegaCrit.Sts2.Core.Nodes.Cards.Holders.NHandCardHolder");

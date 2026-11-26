@@ -204,6 +204,16 @@ public static class PortraitCombatMath
         return new PortraitCombatBands(stageTop, feet, railTop, handTop, compact);
     }
 
+    /// <summary>Room left below the canvas for a hidden hand card's glow and shadow.</summary>
+    private const float HandHideMargin = 40f;
+
+    /// <summary>
+    /// How far down the hand is moved to hide it (combat end): its upper row's top, <see cref="PortraitCombatBands.HandTopY"/>,
+    /// ends below the canvas bottom. The game's own fixed offset only clears its one landscape row.
+    /// </summary>
+    public static float HandHideOffset(float canvasHeight, PortraitCombatBands bands) =>
+        canvasHeight - bands.HandTopY + HandHideMargin;
+
     public const float UnplayableBodyBrightness = 0.54f;
 
     /// <summary>How far the energy cost badge reaches past a card's left edge, in card units (measured).</summary>

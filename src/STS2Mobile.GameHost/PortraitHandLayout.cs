@@ -103,6 +103,13 @@ internal sealed class PortraitHandLayout
     /// <summary>The largest single frame counted into the draw's clock, so one load hitch cannot end a draw early.</summary>
     private const double HandDrawMaxFrameMsec = 100.0;
 
+    /// <summary>The game's hand hide (<c>NPlayerHand.AnimOut</c>): a 0.8 s tween to 500 units down.</summary>
+    private const float NativeHandHideY = 500f;
+    private const double NativeHandHideSeconds = 0.8;
+
+    /// <summary>The hand hide that replaced the game's, so it is not replaced again.</summary>
+    private ulong _handHideTweenId;
+
     private readonly Dictionary<ulong, Dictionary<ulong, Color>> _dimmedCardChildren = new();
     private readonly HashSet<ulong> _boostedHighlights = new();
     // Hand cards drawn from the pile whose glow and shadow Reduce Effects took away while they arrive, keyed by the card
@@ -290,6 +297,28 @@ internal sealed class PortraitHandLayout
     }
 
     /// <summary>
+    /// The game hides the hand (combat end) by tweening it to a fixed 500 units down, enough for its one landscape row; the
+    /// portrait hand is two rows tall, so its upper row stayed on screen under the rewards. The first frame the game's hide
+    /// runs, it is replaced by the same 0.8 s ease-in/back tween to just below the canvas.
+    /// </summary>
+    private void ExtendHandHide(Control hand, CombatReflection refl, PortraitCombatBands bands)
+    {
+        if (refl.HandAnimOutTweenField?.GetValue(hand) is not Tween native || !GodotObject.IsInstanceValid(native) ||
+            !native.IsRunning() || native.GetInstanceId() == _handHideTweenId)
+            return;
+        float canvasHeight = hand.GetViewport().GetVisibleRect().Size.Y;
+        float hideY = PortraitCombatMath.HandHideOffset(canvasHeight, bands);
+        if (hideY <= NativeHandHideY)
+            return;
+        native.Kill();
+        Tween tween = hand.CreateTween();
+        tween.TweenProperty(hand, "position", new Vector2(0f, hideY), NativeHandHideSeconds)
+            .SetEase(Tween.EaseType.In).SetTrans(Tween.TransitionType.Back);
+        refl.HandAnimOutTweenField.SetValue(hand, tween);
+        _handHideTweenId = tween.GetInstanceId();
+    }
+
+    /// <summary>
     /// Forgets the draw and turn bookkeeping of the hand session that is ending, so the next portrait session reads its
     /// first draw from scratch: a stale count lock would hold the row at the old size, a stale turn number would swallow
     /// the new turn's draw, and stale "last" inputs would suppress the first pass's work.
@@ -435,6 +464,7 @@ internal sealed class PortraitHandLayout
         Control? container = hand.GetNodeOrNull<Control>("%CardHolderContainer") ?? hand.GetNodeOrNull<Control>("CardHolderContainer");
         if (container == null)
             return;
+        ExtendHandHide(hand, refl, bands);
 
         ulong handId = hand.GetInstanceId();
         if (_nativeLayoutHandId != handId)
