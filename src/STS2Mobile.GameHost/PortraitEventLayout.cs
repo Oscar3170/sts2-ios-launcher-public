@@ -46,7 +46,7 @@ internal sealed partial class PortraitEventLayout
                 LayoutEventPortrait(control, capHeight, canvasHeight, canvasWidth);
                 break;
             case CombatEventLayoutTypeName:
-                LayoutCombatEventPortrait(control, capHeight, canvasHeight, canvasWidth);
+                LayoutCombatEventPortrait(control, canvasHeight, canvasWidth);
                 break;
             case EventRoomTypeName:
                 TrackEventRoom(control, canvasWidth, canvasHeight);
@@ -100,6 +100,12 @@ internal sealed partial class PortraitEventLayout
 
     public void RestoreControls()
     {
+        foreach (var (box, copy, reposition) in _combatCopy.Values)
+        {
+            if (GodotObject.IsInstanceValid(box)) box.ItemRectChanged -= reposition;
+            if (GodotObject.IsInstanceValid(copy)) copy.Resized -= reposition;
+        }
+        _combatCopy.Clear();
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
@@ -138,6 +144,7 @@ internal sealed partial class PortraitEventLayout
 
     public void PruneDead()
     {
+        foreach (ulong id in _combatCopy.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _combatCopy.Remove(id);
         foreach (ulong id in _snapshots.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _snapshots.Remove(id);
         _events.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         PruneAncientInstances();

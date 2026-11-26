@@ -875,27 +875,53 @@ internal sealed partial class PortraitEventLayout
 
     // ---- live combat events ---------------------------------------------------------------------------------------------
 
-    /// <summary>
-    /// A live combat event (Punch Off, The Lantern Key) keeps its tableau; only in the compact 9:16 shape does its option
-    /// stack become a bottom-anchored, phone-sized column. The taller shape leaves the game's composition untouched.
-    /// </summary>
-    private void LayoutCombatEventPortrait(Control layout, float capHeight, float canvasHeight, float canvasWidth)
+    private readonly Dictionary<ulong, (Control Box, RichTextLabel Copy, Action Reposition)> _combatCopy = new();
+
+    /// <summary>Keep the live tableau intact, with native copy directly above the choice stack.</summary>
+    private void LayoutCombatEventPortrait(Control layout, float canvasHeight, float canvasWidth)
     {
-        if (!PortraitEventMath.IsCompact(canvasWidth, canvasHeight)) return;
+        bool compact = PortraitEventMath.IsCompact(canvasWidth, canvasHeight);
         if (layout.GetNodeOrNull<Control>("VBoxContainer") is { } box)
         {
-            // Anchored to the bottom of the screen and growing up as the options are added, above the home indicator.
-            Capture(box, captureVisible: false);
-            box.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomWide);
-            box.OffsetLeft = PortraitEventMath.SideInset;
-            box.OffsetRight = -PortraitEventMath.SideInset;
-            box.OffsetBottom = -CombatEventBottomInset;
-            box.GrowVertical = Control.GrowDirection.Begin;
+            if (compact)
+            {
+                // The compact choice stack grows up as rows are added, above the home indicator.
+                Capture(box, captureVisible: false);
+                box.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.BottomWide);
+                box.OffsetLeft = PortraitEventMath.SideInset;
+                box.OffsetRight = -PortraitEventMath.SideInset;
+                box.OffsetBottom = -CombatEventBottomInset;
+                box.GrowVertical = Control.GrowDirection.Begin;
+            }
+            if (layout.GetNodeOrNull<RichTextLabel>("%EventDescription") is { } copy)
+                BindCombatEventCopy(layout, box, copy);
         }
-        if (layout.GetNodeOrNull<Control>("%OptionsContainer") is { } options)
+        if (compact && layout.GetNodeOrNull<Control>("%OptionsContainer") is { } options)
             foreach (Node child in options.GetChildren())
                 if (child is Control row && child.GetType().FullName == EventOptionTypeName)
                     LayoutCombatEventRow(row, canvasWidth);
+    }
+
+    private void BindCombatEventCopy(Control layout, Control box, RichTextLabel copy)
+    {
+        if (_combatCopy.ContainsKey(layout.GetInstanceId())) return;
+        Capture(copy, captureVisible: false);
+        copy.SetAnchorsPreset(Control.LayoutPreset.TopLeft);
+        copy.Size = new Vector2(box.Size.X, 0f);
+
+        void Reposition()
+        {
+            // Both controls are siblings. Keep native BBCode, reveal, and visibility without reparenting the label.
+            if (!Mathf.IsEqualApprox(copy.Size.X, box.Size.X))
+                copy.Size = new Vector2(box.Size.X, 0f);
+            Vector2 wanted = new(box.Position.X, box.Position.Y - copy.Size.Y - 16f);
+            if (!copy.Position.IsEqualApprox(wanted)) copy.Position = wanted;
+        }
+
+        _combatCopy.Add(layout.GetInstanceId(), (box, copy, Reposition));
+        box.ItemRectChanged += Reposition;
+        copy.Resized += Reposition;
+        Reposition();
     }
 
     private bool PrepareCombatEventOption(Control option, Control layout)
