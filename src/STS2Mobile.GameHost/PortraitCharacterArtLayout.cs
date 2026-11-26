@@ -53,6 +53,11 @@ internal sealed class PortraitCharacterArtLayout
     private readonly HashSet<ulong> _maskWired = new();
     private readonly Dictionary<ulong, (Vector2 Scale, Vector2 Position)> _spineOriginals = new();
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
+    // Art added this frame (a character pick) waits for its Spine's first update before any Spine call, but must not be drawn
+    // as the game laid it out for landscape: it is framed just before this frame is drawn, and hidden until it can be.
+    private readonly List<(Control Screen, Control Container, ulong ArtId)> _framedBeforeDraw = new();
+    private readonly HashSet<ulong> _hiddenUntilFramed = new();
+    private bool _preDrawSubscribed;
 
     private PortraitControlSnapshot Capture(Control control)
     {
@@ -139,14 +144,71 @@ internal sealed class PortraitCharacterArtLayout
                 if (GodotObject.InstanceFromId(id) is not Control) _artFramed.Add(id);
                 continue;
             }
-            // Give a freshly added scene a frame to finish entering and initialising its Spine before any native Spine call.
+            // Give a freshly added scene a frame to finish entering and initialising its Spine before any native Spine call:
+            // it is framed just before this frame is drawn, after its Spine has been updated once.
             if (!_artFirstSeen.TryGetValue(id, out ulong seen)) _artFirstSeen[id] = seen = now;
-            if (now <= seen) continue;
+            if (now <= seen)
+            {
+                FrameBeforeDraw(screen, container, id);
+                continue;
+            }
             if (sizeChanged) _artFramed.Remove(id);
-            if (!FrameArtChild(art, container.Size, toCanvas)) continue;
+            if (!FrameArtChild(art, container.Size, toCanvas))
+            {
+                HideUntilFramed(art);
+                continue;
+            }
             _artFramed.Add(id);
             _artFramedSize[id] = container.Size;
+            ShowFramed(art);
         }
+    }
+
+    private void FrameBeforeDraw(Control screen, Control container, ulong artId)
+    {
+        foreach ((Control _, Control _, ulong pending) in _framedBeforeDraw)
+            if (pending == artId) return;
+        _framedBeforeDraw.Add((screen, container, artId));
+        if (_preDrawSubscribed) return;
+        RenderingServer.FramePreDraw += OnFramePreDraw;
+        _preDrawSubscribed = true;
+    }
+
+    private void OnFramePreDraw()
+    {
+        if (_framedBeforeDraw.Count == 0) return;
+        var pending = _framedBeforeDraw.ToArray();
+        _framedBeforeDraw.Clear();
+        if (!SafeAreaCanvas.IsPortrait) return;
+        foreach ((Control screen, Control container, ulong id) in pending)
+        {
+            if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(container) || !container.IsInsideTree()) continue;
+            if (GodotObject.InstanceFromId(id) is not Control art || !GodotObject.IsInstanceValid(art) ||
+                art.IsQueuedForDeletion() || !art.IsInsideTree() || _artFramed.Contains(id)) continue;
+            if (FrameArtChild(art, container.Size, screen.GetGlobalTransformWithCanvas()))
+            {
+                _artFramed.Add(id);
+                _artFramedSize[id] = container.Size;
+                ShowFramed(art);
+            }
+            else
+            {
+                HideUntilFramed(art);
+            }
+        }
+    }
+
+    /// <summary>Art that cannot be framed yet is not drawn at all rather than drawn in its landscape layout.</summary>
+    private void HideUntilFramed(Control art)
+    {
+        if (!art.Visible) return;
+        art.Visible = false;
+        _hiddenUntilFramed.Add(art.GetInstanceId());
+    }
+
+    private void ShowFramed(Control art)
+    {
+        if (_hiddenUntilFramed.Remove(art.GetInstanceId())) art.Visible = true;
     }
 
     /// <summary>Frames one character scene; false while its Spine skeleton is still loading so a later frame retries.</summary>
