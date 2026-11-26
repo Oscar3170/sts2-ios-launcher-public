@@ -157,24 +157,19 @@ internal sealed class PortraitMainMenuLayout
 
     public void RestoreLandscape()
     {
-        SwitchTrace.Note($"main menus {_menus.Count}");
         foreach ((ulong id, MenuState state) in _menus)
             if (GodotObject.InstanceFromId(id) is NMainMenu menu && GodotObject.IsInstanceValid(menu))
             {
-                SwitchTrace.Note($"main menu alive inTree={menu.IsInsideTree()}");
                 KillReticleTween(menu);
-                SwitchTrace.Note("main menu tween");
                 if (menu.GetNodeOrNull<Control>(ReticleLeftPath) is { } left) left.Modulate = TransparentWhite;
                 if (menu.GetNodeOrNull<Control>(ReticleRightPath) is { } right) right.Modulate = TransparentWhite;
                 if (state.ModStatusOriginalIndex >= 0 && menu.GetNodeOrNull<Label>(ModStatusPath) is { } modded &&
                     GodotObject.IsInstanceValid(modded))
                     menu.MoveChild(modded, Math.Min(state.ModStatusOriginalIndex, menu.GetChildCount() - 1));
             }
-        SwitchTrace.Note($"main snapshots {_snapshots.Count}");
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
-        SwitchTrace.Note($"main labels {_labelStyles.Count}");
         foreach ((ulong id, LabelStyle style) in _labelStyles)
         {
             if (GodotObject.InstanceFromId(id) is not Label label || !GodotObject.IsInstanceValid(label)) continue;
@@ -185,7 +180,6 @@ internal sealed class PortraitMainMenuLayout
             if (style.ColorOverride) label.AddThemeColorOverride("font_outline_color", style.Color);
             else label.RemoveThemeColorOverride("font_outline_color");
         }
-        SwitchTrace.Note($"main texts {_textStyles.Count}");
         foreach ((ulong id, TextStyle style) in _textStyles)
         {
             if (GodotObject.InstanceFromId(id) is not Control control || !GodotObject.IsInstanceValid(control)) continue;

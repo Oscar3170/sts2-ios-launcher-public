@@ -200,22 +200,15 @@ internal sealed class PortraitCombatLayout
     {
         CombatReflection refl = EnsureReflection();
 
-        SwitchTrace.Note("combat ftue");
         FitCombatFtueModal(root, portrait: false);
-        SwitchTrace.Note("combat card visuals");
         _hand.RestoreCardVisuals(refl);
-        SwitchTrace.Note("combat end turn");
         _rail.RestoreEndTurnFilters();
-        SwitchTrace.Note("combat selection ui");
         _hand.RestoreSelectionUi();
-        SwitchTrace.Note("combat bosses");
         _stage.RestoreBackgroundBosses();
         _warmup.Stop();
-        SwitchTrace.Note("combat fonts");
         _hand.RestoreFonts();
 
         _orbs.RestoreFonts();
-        SwitchTrace.Note("combat creature hud");
         _creatureHud.Restore(refl, _stage, _orbs.RestoreCreature);
         _orbs.EndSession();
 
@@ -223,27 +216,21 @@ internal sealed class PortraitCombatLayout
         {
             if (GodotObject.InstanceFromId(roomId) is not Control room || !GodotObject.IsInstanceValid(room))
                 continue;
-            SwitchTrace.Note("combat room stage");
             _stage.RestoreRoom(room, refl);
             Control? ui = room.GetNodeOrNull<Control>("%CombatUi") ?? room.GetNodeOrNull<Control>("CombatUi");
             if (ui != null)
             {
-                SwitchTrace.Note("combat room rail");
                 rail.RestoreUi(room, ui, refl);
-                SwitchTrace.Note("combat room hand targets");
                 PortraitHandLayout.RefreshNativeTargets(ui, refl);
             }
 
-            SwitchTrace.Note("combat room proceed");
             PortraitCombatRail.RestoreProceed(room, refl);
         }
         _rooms.Clear();
-        SwitchTrace.Note("combat end sessions");
         _stage.EndSession();
         _failedRooms.Clear();
         _rail.EndSession();
         _hand.EndSession();
-        SwitchTrace.Note("combat restored");
     }
 
     public void PruneDead()
