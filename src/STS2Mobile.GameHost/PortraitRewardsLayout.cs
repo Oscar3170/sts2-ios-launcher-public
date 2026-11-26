@@ -229,7 +229,10 @@ internal sealed class PortraitRewardsLayout
         var target = new Vector2(fit.X, fit.Y);
         FieldInfo? fadeField = RewardsFadeTween(state.Screen.GetType());
         Tween? fadeTween = fadeField?.GetValue(state.Screen) as Tween;
-        if (fadeTween != null && fadeTween.IsValid() && fadeTween.IsRunning() && state.Fade != fadeTween)
+        // Only the entrance is taken over. A complete set (the final boss offers none; a terminal set whose last reward was
+        // taken) fades its empty window out instead, and turning that fade-out into this fade-in showed an empty loot window.
+        bool complete = state.Screen.Get("IsComplete").AsBool();
+        if (!complete && fadeTween != null && fadeTween.IsValid() && fadeTween.IsRunning() && state.Fade != fadeTween)
         {
             // The game's entrance slides the window to its desktop place and fades it in; take the slide over so it ends at
             // the portrait place (the window starts transparent, so nothing is seen at the desktop place). A loot screen
