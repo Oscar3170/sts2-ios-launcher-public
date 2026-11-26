@@ -20,6 +20,8 @@ Use the existing owner instead of adding a second path. Split large classes by i
 
 [`PortraitCombatStage`](src/STS2Mobile.GameHost/PortraitCombatStage.cs) owns the frozen encounter plan, backdrop, creature roots and hitboxes, world-effect anchors, and Osty’s position gate. [`PortraitCreatureHud`](src/STS2Mobile.GameHost/PortraitCreatureHud.cs) owns creature health displays, intents, and powers; it batches after placement. [`PortraitCombatOrbs`](src/STS2Mobile.GameHost/PortraitCombatOrbs.cs) uses the stage hitboxes to fit the queue before draw, after native tweens. The coordinator keeps that order and the per-creature native restore sequence.
 
+Stage fitting owns creature scale magnitude, not horizontal facing. Keep the native X sign when fitting or restoring scale, and use the unsigned magnitude for touch sizing.
+
 [`PortraitRunHeader`](src/STS2Mobile.GameHost/PortraitRunHeader.cs) owns the stone header, potion and relic rows, native holder input, and their desktop restore values. The coordinator discovers those nodes and passes canvas geometry; the header owns its pre-draw and swipe callbacks.
 
 [`PortraitMapLayout`](src/STS2Mobile.GameHost/PortraitMapLayout.cs) owns the map graph, drawing footer, legend, map-point touch targets, and their restore state. It tells navigation where the footer starts; [`PortraitNavigationPads`](src/STS2Mobile.GameHost/PortraitNavigationPads.cs) still places Back.
