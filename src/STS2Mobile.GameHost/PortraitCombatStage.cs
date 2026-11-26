@@ -1035,14 +1035,14 @@ internal sealed class PortraitCombatStage
             if (known.PlacementSettle > 0)
             {
                 known.PlacementSettle--;
-                SnapAndClampHitbox(creature, known, slot, bands, known.LastStageScale.X, isAlly);
+                SnapAndClampHitbox(creature, known, slot, bands, MathF.Abs(known.LastStageScale.X), isAlly);
                 (float settleLeft, float settleRight) = HitboxLocalExtent(creature, refl);
                 (_, float settleFoot) = HitboxLocalVerticalExtent(creature, refl);
                 known.RememberOrigin(creature, settleLeft, settleRight, settleFoot);
             }
             else
             {
-                GrowHitboxToTouchTarget(known, slot, bands, known.LastStageScale.X, isAlly);
+                GrowHitboxToTouchTarget(known, slot, bands, MathF.Abs(known.LastStageScale.X), isAlly);
             }
             known.RememberStage(creature, placement, boundsSize);
             _queueLabel(creature, maxBarWidth, isAlly);
@@ -1058,7 +1058,9 @@ internal sealed class PortraitCombatStage
 
         creature.PivotOffset = Vector2.Zero;
         creature.ZIndex = slot.RowDepth;
-        bool scaleChanged = MathF.Abs(creature.Scale.X - fittedScale) > 0.003f;
+        // The stage owns scale magnitude. Native scenes can mirror the root without moving it to another slot.
+        float facing = creature.Scale.X < 0f ? -1f : 1f;
+        bool scaleChanged = MathF.Abs(MathF.Abs(creature.Scale.X) - fittedScale) > 0.003f;
 
         // A body only ever moves for a real placement change: its first placement, a new slot, or a new drawn scale (the
         // room's scale is re-frozen when the roster arrives, so the provisional placement of the player is replaced by a
@@ -1078,6 +1080,8 @@ internal sealed class PortraitCombatStage
             (lo, hi) = HitboxLocalExtent(creature, refl);
             (_, foot) = HitboxLocalVerticalExtent(creature, refl);
         }
+        if (facing < 0f)
+            (lo, hi) = (-hi, -lo);
 
         // A wide creature moves in so its hit box stays between minLeft and maxRight (the hit box itself, which is not
         // always centred on the feet), and the hit box's bottom edge lands on the foot line.
@@ -1087,7 +1091,7 @@ internal sealed class PortraitCombatStage
         canvasX = MathF.Round(canvasX * 0.5f) * 2f;
         Vector2 targetLocalPos = new(canvasX - containerOrigin.X,
             slot.CanvasFeetY - foot * fittedScale - containerOrigin.Y);
-        Vector2 targetScale = new(fittedScale, fittedScale);
+        Vector2 targetScale = new(facing * fittedScale, fittedScale);
 
         bool posChanged;
         if (needsPlacement)
@@ -1126,7 +1130,7 @@ internal sealed class PortraitCombatStage
             {
                 (float liveLeft, float liveRight) = HitboxLocalExtent(creature, refl);
                 (_, float liveFoot) = HitboxLocalVerticalExtent(creature, refl);
-                placing.RememberPlacement(slot, creature.Position, creature.Scale.X, liveLeft, liveRight, liveFoot);
+                placing.RememberPlacement(slot, creature.Position, liveLeft, liveRight, liveFoot);
             }
         }
         else
@@ -2491,8 +2495,7 @@ internal sealed class PortraitCombatStage
         /// bounds change, so nothing re-reads the hit box once this is stored: a body that followed it drifted (2 units,
         /// then 50, after a card play).
         /// </summary>
-        public void RememberPlacement(PortraitCreatureSlot slot, Vector2 origin, float scale, float left, float right,
-            float foot)
+        public void RememberPlacement(PortraitCreatureSlot slot, Vector2 origin, float left, float right, float foot)
         {
             PlacementApplied = true;
             PlacementSlot = slot;
@@ -2580,7 +2583,7 @@ internal sealed class PortraitCombatStage
         {
 
             creature.PivotOffset = _pivotOffset;
-            creature.Scale = _scale;
+            creature.Scale = new Vector2(MathF.CopySign(MathF.Abs(_scale.X), creature.Scale.X), _scale.Y);
             creature.Position = _position;
             creature.ZIndex = _zIndex;
 
