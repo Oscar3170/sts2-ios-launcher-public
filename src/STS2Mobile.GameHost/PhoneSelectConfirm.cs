@@ -85,6 +85,12 @@ internal sealed class PhoneSelectConfirm
         /// </summary>
         internal virtual bool TipFollowsHover => false;
 
+        /// <summary>
+        /// Whether the screen's choice needs a second tap. A screen whose every item can be taken keeps the game's own single
+        /// tap: selecting first would only add a tap, as there is nothing to choose between.
+        /// </summary>
+        internal virtual bool Confirms(Control screen) => true;
+
         internal abstract int ItemCount(Control screen);
 
         internal abstract Control? ItemAt(Control screen, int index);
@@ -491,6 +497,7 @@ internal sealed class PhoneSelectConfirm
         if (_failed || !SafeAreaCanvas.IsPortrait) return;
         if (e is not InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: true } press) return;
         if (!GodotObject.IsInstanceValid(screen) || !GodotObject.IsInstanceValid(item)) return;
+        if (!adapter.Confirms(screen)) return;
         BeginPress(screen, item, adapter, press.Position);
     }
 
@@ -997,14 +1004,27 @@ internal sealed class PhoneSelectConfirm
         {
             IList? holders = Holders(screen);
             int count = holders?.Count ?? 0;
-            // The collection connects its holders' release when the chest opens; take it off then, before the first press.
+            // The collection connects its holders' release when the chest opens; take it off then, before the first press,
+            // unless the player can take every relic, which keeps the game's own tap.
             ulong id = screen.GetInstanceId();
             if (!_knownCounts.TryGetValue(id, out int known) || known != count)
             {
                 _knownCounts[id] = count;
-                if (count > 0) Block(screen);
+                if (count > 0 && Confirms(screen)) Block(screen);
+                else Unblock(screen);
             }
             return count;
+        }
+
+        /// <summary>
+        /// Only a choice between relics takes two taps. A single player picks one relic per round; when the chest shows no
+        /// more relics than the rounds left (a normal chest's one relic), every relic is taken and there is nothing to choose.
+        /// With other players a relic can be contested, so the choice always counts. Unknown rules keep the second tap.
+        /// </summary>
+        internal override bool Confirms(Control screen)
+        {
+            int count = Holders(screen)?.Count ?? 0;
+            return count <= 0 || !(RelicPicks.LocalPicksLeft() is int picks && count <= picks);
         }
 
         internal override Control? ItemAt(Control screen, int index)
@@ -1028,7 +1048,10 @@ internal sealed class PhoneSelectConfirm
             Block(screen);
         }
 
-        internal override void Attach(Control screen) => Block(screen);
+        internal override void Attach(Control screen)
+        {
+            if (Confirms(screen)) Block(screen);
+        }
 
         internal override void Detach(Control screen) => Unblock(screen);
 
@@ -1395,4 +1418,39 @@ internal sealed class PhoneSelectConfirm
         holder.GetNodeOrNull<Control>("%Hitbox") is { } hitbox
             ? new Rect2(hitbox.Position, hitbox.Size)
             : new Rect2(-150f, -211f, 300f, 422f);
+
+    /// <summary>
+    /// The local player's relic picks left in the open chest, read from the game's <c>TreasureRoomRelicSynchronizer</c>:
+    /// one per round. v0.113 counts the rounds left (<c>_roundsLeft</c>); later builds count rounds and the current round
+    /// (<c>_rounds</c>, <c>_currentRound</c>). Null with other players in the run (a relic can then be contested) or when
+    /// neither form is found.
+    /// </summary>
+    private static class RelicPicks
+    {
+        internal static int? LocalPicksLeft()
+        {
+            try
+            {
+                Type? manager = typeof(NGame).Assembly.GetType("MegaCrit.Sts2.Core.Runs.RunManager");
+                object? instance = manager?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                object? sync = instance?.GetType().GetProperty("TreasureRoomRelicSynchronizer", InstAll)?.GetValue(instance);
+                if (sync == null) return null;
+                Type type = sync.GetType();
+                object? state = type.GetField("_runState", InstAll)?.GetValue(sync);
+                if (state?.GetType().GetProperty("Players", InstAll)?.GetValue(state) is not IEnumerable players) return null;
+                int count = 0;
+                foreach (object? _ in players) count++;
+                if (count != 1) return null;
+                if (type.GetField("_roundsLeft", InstAll)?.GetValue(sync) is int left) return left;
+                if (type.GetField("_rounds", InstAll)?.GetValue(sync) is int rounds &&
+                    type.GetField("_currentRound", InstAll)?.GetValue(sync) is int current)
+                    return rounds - current;
+                return null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+    }
 }
