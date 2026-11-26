@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes;
-using MegaCrit.Sts2.Core.Nodes.Combat;
 using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
@@ -34,6 +33,7 @@ internal sealed class PhoneHoverTips
     private const string PotionPopupTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionPopup";
     private const string RelicHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Relics.NRelicInventoryHolder";
     private const string PotionHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionHolder";
+    private const string CreatureTypeName = "MegaCrit.Sts2.Core.Nodes.Combat.NCreature";
     private const float Margin = 10f;
     private const float Gap = 8f;
 
@@ -90,15 +90,23 @@ internal sealed class PhoneHoverTips
         _parkedAfterCardRelease = false;
         _parkedOwner = null;
         if (!wasParked || pressCanvas is not { } point || owner == null || !GodotObject.IsInstanceValid(owner)) return;
-        NCreature? creature = null;
-        for (Node? node = owner.GetParent(); node != null && creature == null; node = node.GetParent()) creature = node as NCreature;
-        if (creature == null || !creature.IsFocused || creature.Hitbox != owner) return;
+        // NCreature is not in the game stub the app compiles against; its members are reached by name.
+        Type? creatureType = typeof(NGame).Assembly.GetType(CreatureTypeName);
+        if (creatureType == null) return;
+        Node? creature = null;
+        for (Node? node = owner.GetParent(); node != null && creature == null; node = node.GetParent())
+            if (creatureType.IsInstanceOfType(node)) creature = node;
+        if (creature == null || !IsFocused(creature) || creatureType.GetProperty("Hitbox")?.GetValue(creature) != owner) return;
         if (!owner.GetGlobalRect().HasPoint(point)) return;
         Callable.From(() =>
         {
-            if (GodotObject.IsInstanceValid(creature) && creature.IsFocused && creature.Entity is { } entity)
-                creature.ShowHoverTips(entity.HoverTips);
+            if (!GodotObject.IsInstanceValid(creature) || !IsFocused(creature)) return;
+            object? entity = creatureType.GetProperty("Entity")?.GetValue(creature);
+            object? tips = entity?.GetType().GetProperty("HoverTips")?.GetValue(entity);
+            if (tips != null) creatureType.GetMethod("ShowHoverTips")?.Invoke(creature, [tips]);
         }).CallDeferred();
+
+        bool IsFocused(Node node) => creatureType.GetProperty("IsFocused")?.GetValue(node) is true;
     }
 
     private sealed class ColumnState
