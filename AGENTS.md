@@ -34,6 +34,8 @@ Live combat events keep their native fight scene and description reveal. In port
 
 [`PortraitRestSiteLayout`](src/STS2Mobile.GameHost/PortraitRestSiteLayout.cs) owns campsite framing, the option rows and copy, and their desktop restore state. It leaves native option nodes and click handling in place.
 
+[`PortraitRewardsLayout`](src/STS2Mobile.GameHost/PortraitRewardsLayout.cs) owns the spoils screen's window, rows and Skip clearance, and the card reward's two-column grid and banner lift, with their desktop restore state. The action lane stays with the between-screen coordinator.
+
 ## Developing safely
 
 - Check the working tree and active game/profile before editing. Preserve unrelated changes, user settings, saves, and local signing configuration. Keep installs and writes to live game data opt-in; never overwrite an assembly while the game is running.

@@ -345,7 +345,7 @@ internal sealed class PortraitOverlayLayout
     private const float ChoiceSideMargin = 24f;
     private const float ChoiceMaxFontGrowth = 1.5f;
 
-    // Choose a card: the card reward's own portrait numbers (PortraitBetweenLayout), so both screens read alike. Its footer
+    // Choose a card: the card reward's own portrait numbers (PortraitRewardsLayout), so both screens read alike. Its footer
     // row holds the peek button at the left and Skip at the right, below the cards; the row is as tall as the larger control.
     private const float ChoiceCardWidth = 300f;
     private const float ChoiceCardHeight = 422f;

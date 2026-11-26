@@ -100,10 +100,10 @@ internal sealed class PhoneTouchScroll
             _listScrollbar = _listType?.GetProperty("Scrollbar", InstAll);
             var screens = new List<Type>(4);
             foreach (string name in new[] { CardsViewScreenTypeName, GridSelectionScreenTypeName, CardPileScreenTypeName,
-                PortraitMapLayout.MapScreenTypeName, PortraitBetweenLayout.RewardsScreenTypeName })
+                PortraitMapLayout.MapScreenTypeName, PortraitRewardsLayout.RewardsScreenTypeName })
                 if (game.GetType(name) is { } screen) screens.Add(screen);
             _screenTypes = screens.ToArray();
-            _rewardsType = game.GetType(PortraitBetweenLayout.RewardsScreenTypeName);
+            _rewardsType = game.GetType(PortraitRewardsLayout.RewardsScreenTypeName);
             _rewardsTarget = _rewardsType?.GetField("_targetDragPos", InstAll);
             _rewardsCanScroll = _rewardsType?.GetProperty("CanScroll", InstAll);
             _rewardsLimit = _rewardsType?.GetProperty("ScrollLimitBottom", InstAll);
