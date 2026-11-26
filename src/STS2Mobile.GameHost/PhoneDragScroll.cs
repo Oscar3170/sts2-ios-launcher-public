@@ -30,6 +30,7 @@ internal sealed class PhoneDragScroll
     private Window? _window;
     private ulong _layout;
     private bool _down;
+    private bool _touchGesture;
     private bool _dragging;
     private ulong _active;
     private float _startY;
@@ -96,19 +97,22 @@ internal sealed class PhoneDragScroll
             switch (input)
             {
                 case InputEventScreenTouch touch when touch.Index == 0:
-                    if (touch.Pressed) Begin(ToCanvas(touch.Position));
-                    else End();
+                    if (touch.Pressed) Begin(ToCanvas(touch.Position), touch: true);
+                    else if (_touchGesture) End();
                     return;
-                case InputEventScreenDrag drag when drag.Index == 0:
+                case InputEventScreenDrag drag when drag.Index == 0 && _touchGesture:
                     Move(ToCanvas(drag.Position));
                     return;
-                // The Linux host and the desktop editor send a mouse; the phone sends touches. Both describe one gesture.
-                case InputEventMouseButton button when button.ButtonIndex == MouseButton.Left:
-                    if (button.Pressed) Begin(ToCanvas(button.Position));
+                // One stream owns each gesture. Touch emulation and cursor warps can emit additional mouse events.
+                case InputEventMouseButton button when !_touchGesture &&
+                    button.ButtonIndex == MouseButton.Left && button.Device != (int)InputEvent.DeviceIdEmulation:
+                    if (button.Pressed) Begin(ToCanvas(button.Position), touch: false);
                     else End();
                     return;
-                case InputEventMouseMotion motion:
-                    if (_down) Move(ToCanvas(motion.Position));
+                case InputEventMouseMotion motion when _down && !_touchGesture &&
+                    motion.Device != (int)InputEvent.DeviceIdEmulation &&
+                    (motion.ButtonMask & MouseButtonMask.Left) != 0:
+                    Move(ToCanvas(motion.Position));
                     return;
                 case InputEventMouseButton wheel when wheel.Pressed &&
                     wheel.ButtonIndex is MouseButton.WheelUp or MouseButton.WheelDown:
@@ -131,12 +135,13 @@ internal sealed class PhoneDragScroll
 
     private Vector2 ToCanvas(Vector2 point) => _window == null ? point : _window.GetFinalTransform().AffineInverse() * point;
 
-    private void Begin(Vector2 point)
+    private void Begin(Vector2 point, bool touch)
     {
         End();
         ScrollContainer? region = TargetAt(point);
         if (region == null) return;
         _down = true;
+        _touchGesture = touch;
         _active = region.GetInstanceId();
         _startY = point.Y;
         _initial = region.ScrollVertical;
@@ -172,6 +177,7 @@ internal sealed class PhoneDragScroll
     {
         if (_dragging) PhoneSwipeRelease.Shared.Release(PressedLayout());
         _down = false;
+        _touchGesture = false;
         _dragging = false;
         _active = 0;
     }
