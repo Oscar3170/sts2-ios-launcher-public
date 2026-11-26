@@ -40,6 +40,8 @@ src/STS2Mobile.FullGame/icon.png.import
 *.png
 *.jpg
 *.jpeg
+# The launcher's own app icon; Godot reads the generated icon.png from it.
+!src/STS2Mobile.FullGame/branding/AppIcon.png
 *.heic
 *.pdf
 *.mov

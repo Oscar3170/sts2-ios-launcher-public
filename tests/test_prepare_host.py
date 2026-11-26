@@ -3,7 +3,6 @@ import json
 import struct
 import tempfile
 import unittest
-import zlib
 from pathlib import Path
 
 import prepare_full_game_project as host
@@ -13,19 +12,27 @@ from prepare_full_game_xcode import opaque_png
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class PlaceholderIconTests(unittest.TestCase):
-    def test_is_an_opaque_rgb_png_of_the_size_xcode_wants(self):
-        data = host.placeholder_icon(16)
+class LauncherIconTests(unittest.TestCase):
+    def test_the_tracked_icon_is_an_opaque_1024_png(self):
+        data = (ROOT / "src/STS2Mobile.FullGame/branding/AppIcon.png").read_bytes()
         self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
-        width, height, depth, color = struct.unpack(">IIBB", data[16:26])
-        self.assertEqual((width, height, depth, color), (16, 16, 8, 2))
+        width, height, depth, color, _, _, interlace = struct.unpack(">IIBBBBB", data[16:29])
+        self.assertEqual((width, height, depth, color, interlace), (1024, 1024, 8, 2, 0))
         # The Xcode step takes it as it is, because it has no alpha channel.
         self.assertEqual(opaque_png(data), data)
 
-    def test_rows_have_the_stated_length(self):
-        data = host.placeholder_icon(16)
-        length = struct.unpack(">I", data[33:37])[0]
-        self.assertEqual(len(zlib.decompress(data[41 : 41 + length])), 16 * (16 * 3 + 1))
+    def test_prepare_copies_the_tracked_icon_to_the_godot_project(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "AppIcon.png"
+            source.write_bytes(b"icon bytes")
+            destination = Path(directory) / "icon.png"
+            host.install_icon(source, destination)
+            self.assertEqual(destination.read_bytes(), b"icon bytes")
+
+    def test_a_missing_icon_stops_preparation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "Missing launcher icon"):
+                host.install_icon(Path(directory) / "missing.png", Path(directory) / "icon.png")
 
 
 class BuiltInModTests(unittest.TestCase):

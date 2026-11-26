@@ -8,7 +8,7 @@ The app's build reads no game file, and needs no Steam install. The game's assem
 
 1. Provision the toolchain, FMOD and Spine.
 2. Generate static Steam serializers and stage the patched SteamKit2.
-3. Prepare the host project and a placeholder icon.
+3. Prepare the host project and its launcher icon.
 4. Export the Godot host: the Xcode project and the main pack, with an empty stub in place of the app's library.
 5. Prepare native lifecycle and presentation fixes in the generated Xcode project.
 6. Build the Mono app: `scripts/build-mono.sh --unsigned`.

@@ -1,15 +1,13 @@
 """Prepare the host project from pinned dependencies. No game file takes part.
 
 The host project holds only what the host itself owns: its launcher scene, the native extension registrations, the static
-SteamKit2 and a placeholder icon. The game's files reach the phone's data folder instead.
+SteamKit2 and the launcher icon. The game's files reach the phone's data folder instead.
 """
 
 import argparse
 import json
 import shutil
-import struct
 import subprocess
-import zlib
 from pathlib import Path
 
 import patch_fmod_file_thread
@@ -17,7 +15,7 @@ from hashing import sha256_file
 
 ROOT = Path(__file__).resolve().parents[1]
 HOST = ROOT / "src/STS2Mobile.FullGame"
-ICON_SIZE = 1024
+ICON_SOURCE = HOST / "branding/AppIcon.png"
 
 FMOD_EXTENSION = """[configuration]
 entry_symbol="fmod_library_init"
@@ -83,26 +81,20 @@ def stage_native_extensions() -> list[dict]:
     return changes
 
 
-def placeholder_icon(size: int = ICON_SIZE) -> bytes:
-    """A plain opaque PNG, in place of the game's icon."""
-    background, mark = bytes((32, 36, 44)), bytes((196, 72, 56))
-    low, high = size * 3 // 8, size * 5 // 8
-    plain = b"\x00" + background * size
-    marked = b"\x00" + background * low + mark * (high - low) + background * (size - high)
-    rows = b"".join(marked if low <= row < high else plain for row in range(size))
-
-    def chunk(kind: bytes, body: bytes) -> bytes:
-        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
-
-    header = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
-    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b"")
+def install_icon(source: Path = ICON_SOURCE, destination: Path = HOST / "icon.png") -> None:
+    """Put the launcher's icon where Godot imports it and the Xcode export reads it."""
+    try:
+        data = source.read_bytes()
+    except FileNotFoundError:
+        raise ValueError(f"Missing launcher icon: {source}") from None
+    destination.write_bytes(data)
 
 
 def prepare(steam: Path) -> None:
     verify_native(ROOT / "vendor/fmod/2.03.06", "2.03.06")
     verify_native(ROOT / "vendor/spine/4.2-godot4.5.1", "4.2")
     native_changes = stage_native_extensions()
-    (HOST / "icon.png").write_bytes(placeholder_icon())
+    install_icon()
     staged = HOST / "staged"
     staged.mkdir(exist_ok=True)
     steamkit = {}

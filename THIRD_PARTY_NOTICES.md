@@ -1,6 +1,6 @@
 # Third-party components
 
-The game itself is not included, and the build reads no game file. The app holds none of the game: it downloads the game from Steam after the player signs in. Game code, assets, trademarks, and bundled components retain their respective ownership and terms.
+The game itself is not included, and the build reads no game file. The app holds none of the game's code or assets, apart from its icon, which is a crop of the game's Steam library artwork and stays MegaCrit's. The game is downloaded from Steam after the player signs in. Game code, assets, trademarks, and bundled components retain their respective ownership and terms.
 
 This repository's own code is under the MIT license in `LICENSE`. The parts below keep their own licenses.
 
@@ -10,7 +10,7 @@ The Steam service code retains its upstream MIT notice in `src/STS2Mobile.Steam/
 
 ## What the built app holds
 
-The app runs on the Mono runtime from .NET 10. The build compiles the .NET code ahead of time and embeds it, with the runtime, in one framework. The app's own files are the engine executable (`FullGame`), three frameworks, a small main pack of the host's files (`FullGame.pck`), a placeholder icon and the usual iOS metadata. It holds no separate `.dll` files.
+The app runs on the Mono runtime from .NET 10. The build compiles the .NET code ahead of time and embeds it, with the runtime, in one framework. The app's own files are the engine executable (`FullGame`), three frameworks, a small main pack of the host's files (`FullGame.pck`), the launcher icon and the usual iOS metadata. It holds no separate `.dll` files.
 
 The app is built either by each person on their own Mac or by this repository's GitHub Actions workflow, which publishes the unsigned IPA as a release for people with no Mac. The components below are compiled or linked into either build. The notice files are in the downloaded inputs, at the paths given (all ignored by git). Whether the terms of the FMOD, Spine and SteamKit2 components are met by a published IPA is still being checked.
 
