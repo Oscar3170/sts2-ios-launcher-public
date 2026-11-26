@@ -49,9 +49,9 @@ public sealed class InstalledBuildTests : IDisposable
     {
         File.Copy(Path.Combine(Path.GetDirectoryName(InstalledGame.Data!)!, "release_info.json"), Path.Combine(_game, "release_info.json"));
         var installed = InstalledBuild.Read(_game)!;
-        Assert.Equal(new InstalledBuild(InstalledBuild.BetaBranch, GameProfile.Current.Steam!.Manifest, 0, "0.113.0", Tested: true), installed);
+        Assert.Equal(new InstalledBuild(InstalledBuild.BetaBranch, GameProfile.Current.Steam!.Manifest, 0, "0.114.0", Tested: true), installed);
         // The stamp the app used before profiles were a list, so an install that has warmed up does not do it again.
-        Assert.Equal("v0.113.0-full-game-integration-v1", installed.WarmupId);
+        Assert.Equal("v0.114.0-full-game-integration-v1", installed.WarmupId);
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public sealed class InstalledBuildTests : IDisposable
     [Fact]
     public void ThePreviousVersionStaysTested()
     {
-        // A phone still on v0.111.0 keeps playing it as tested after the app moves on to v0.113.0.
+        // A phone still on v0.111.0 keeps playing it as tested after the app moves on to v0.113.0 and v0.114.0.
         var previous = Assert.Single(GameProfile.Known, profile => profile.Version == "0.111.0");
         Assert.NotSame(GameProfile.Current, previous);
         Assert.Same(previous, GameProfile.ForManifest(5045320271505434676));
@@ -99,6 +99,19 @@ public sealed class InstalledBuildTests : IDisposable
         Assert.Same(previous, GameProfile.ForReleaseInfo("97c0cef5a032ff6ed0826c161f5b72778753e9645c3f6dfe9503b5c3d03a8530"));
         Assert.Equal("v0.111.0-full-game-integration-v1", previous.WarmupId);
         Assert.Equal([".godot/imported/orobas.png-7744e6bafdffb9ae994beeceb9e505ae.bptc.ctex"], previous.TexturesKeptOriginal);
+    }
+
+    [Fact]
+    public void TheVersionBeforeStaysTested()
+    {
+        // A phone still on v0.113.0 keeps playing it as tested after the app moves on to v0.114.0.
+        var previous = Assert.Single(GameProfile.Known, profile => profile.Version == "0.113.0");
+        Assert.Same(previous, GameProfile.Known[1]);
+        Assert.Same(previous, GameProfile.ForManifest(5091133015602207639));
+        Assert.Same(previous, GameProfile.ForAssembly("d009478a54a9b7c2396924a89618c50f9dcbf1503ee3fdb1e8d4aeee3bd66f24"));
+        Assert.Same(previous, GameProfile.ForReleaseInfo("38601177e63676f664cee1b4c0f619fa105cfd173940f20de7a4ba53bad37671"));
+        Assert.Equal("v0.113.0-full-game-integration-v1", previous.WarmupId);
+        Assert.Equal(7, previous.TexturesKeptOriginal.Count);
     }
 
     [Fact]

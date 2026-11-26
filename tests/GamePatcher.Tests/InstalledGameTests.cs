@@ -36,16 +36,19 @@ internal static class InstalledGame
 }
 
 /// <summary>
-/// The app's preparation on v0.113.0, pinned to the assembly first played on the phone. Update the pin when a patch changes on purpose, and only
+/// The app's preparation on v0.114.0, pinned to the assembly first played on the phone. Update the pin when a patch changes on purpose, and only
 /// after a fight on the phone: nothing else tells whether the new assembly plays.
 /// </summary>
 public sealed class InstalledGameTests : IDisposable
 {
-    /// <summary>The patched assembly with no mods, byte for byte the one first played on the phone.</summary>
-    private const string PlayedSha256 = "c00cf938078c407dbf9af5616d0e4a665ae779bc68a08a5e31223ff149dc983e";
+    /// <summary>
+    /// The patched assembly with no mods. The phone played v0.114.0 on the preparation just before the Osty patch, whose bytes
+    /// (42707dadb5fca4a089dee439e842bb5a3ef90f72ade690607ab1f59b213825dc) that commit reproduces here; this is the same plus that patch.
+    /// </summary>
+    private const string PlayedSha256 = "611ad986a6f17b855099a51ac5be360acb4ca664ed07619440fcda5e99f1dd87";
 
     /// <summary>The same with the launcher's mods switch on and no mods: <see cref="PlayedSha256"/> plus the mods agreement.</summary>
-    internal const string ModsOnSha256 = "63a6fb1788b417ec9f0d0206261f94890cb6463ab6f6bf0f5fce6c32c527d64f";
+    internal const string ModsOnSha256 = "6afc4339c454a2d94186aaa7d3ab6c72d2cf7e9c796fa94cde2e729b434983c3";
 
     private readonly string _work = Directory.CreateTempSubdirectory("installed-game-").FullName;
 

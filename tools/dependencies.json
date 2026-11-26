@@ -1,5 +1,30 @@
 {
   "game": {
+    "version": "0.114.0",
+    "steam_depot": 2868842,
+    "steam_manifest": "2305978130846092196",
+    "peak_disk_bytes": 5400000000,
+    "release_info_sha256": "07d0e47e32200265a098c338fabe336b635b1ac9a0df43807ffb45ac757372ee",
+    "pack_sha256": "7d2d7c92d7eb34545d53e428221cd142c22be522f672a2209100c9a082bc68d0",
+    "textures_kept_original": [
+      ".godot/imported/ironclad_energy_icon.png-cf532e31e429b7e23041fd3ab27a6f2e.bptc.ctex",
+      ".godot/imported/regent_energy_icon.png-5218a37f17ba04cc0e0226acc403650f.bptc.ctex",
+      ".godot/imported/silent_energy_icon.png-aa52ed1daede024237fa8bed92d8b6e6.bptc.ctex",
+      ".godot/imported/star_icon.png-55d4d3f0924ad28460f588cf7155aa5d.bptc.ctex",
+      ".godot/imported/watcher_energy_icon.png-d78cce20ff259976fe72ddbff4342c3f.bptc.ctex",
+      ".godot/imported/score_dread.png-3e2cd146e789187265d75927aff4e05a.bptc.ctex",
+      ".godot/imported/orobas.png-7744e6bafdffb9ae994beeceb9e505ae.bptc.ctex"
+    ],
+    "assembly_sha256": "ae309f852fb69204a59c04b7b5af63acc839829c65c1349777621ce616e65310",
+    "other_assemblies_sha256": {
+      "Sentry.dll": "4f1619b048d0b0f604265075bc5311f9f2e4a0ecdc09662009b7ee11d50c216c",
+      "Sentry.Godot.dll": "bef522b322662f6dbf280891e23e2001483107f8bb981f1692c264928753112a",
+      "Steamworks.NET.dll": "1dac8e6e05d89dc1445cebc6e02744c64cdf063adf42f6d1bb22da287ee7d665",
+      "SmartFormat.dll": "6220cde1dafffde5c51a4e23db4bb16e8ec620ef52bac51c0ad5f48c4769f168",
+      "SmartFormat.ZString.dll": "723e9ffdb9cec9565d9bbbdb27b4d19a9b0ba4ff006e1ab8b94022ae5c426450"
+    }
+  },
+  "previous_game_profiles": [{
     "version": "0.113.0",
     "steam_depot": 2868842,
     "steam_manifest": "5091133015602207639",
@@ -23,8 +48,7 @@
       "SmartFormat.dll": "6220cde1dafffde5c51a4e23db4bb16e8ec620ef52bac51c0ad5f48c4769f168",
       "SmartFormat.ZString.dll": "723e9ffdb9cec9565d9bbbdb27b4d19a9b0ba4ff006e1ab8b94022ae5c426450"
     }
-  },
-  "previous_game_profiles": [{
+  }, {
     "version": "0.111.0",
     "steam_depot": 2868842,
     "steam_manifest": "5045320271505434676",

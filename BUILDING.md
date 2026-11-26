@@ -128,9 +128,9 @@ These paths are not publication files. Do not share generated game packs or comp
 
 ## Updating inputs
 
-A different game version needs its own patch profile: the patches, their count guards and the input hashes are written for v0.113.0, and still accept v0.111.0, the previous profile. Never replace expected hashes just to make setup accept a new game build.
+A different game version needs its own patch profile: the patches, their count guards and the input hashes are written for v0.114.0, and still accept v0.113.0 and v0.111.0, the previous profiles. Never replace expected hashes just to make setup accept a new game build.
 
-Moving to a new game version (as done for v0.111.0 to v0.113.0):
+Moving to a new game version (as done for v0.111.0 to v0.113.0, and v0.113.0 to v0.114.0):
 
 1. Install the new build with Steam on the Mac. The depot manifest id is the name of `depotcache/2868842_<manifest>.manifest` and `InstalledDepots` in `steamapps/appmanifest_2868840.acf`.
 2. In `tools/dependencies.json`, move the `game` block unchanged into `previous_game_profiles` (newest first), so a phone on that build stays tested. Write the new `game` block from `shasum -a 256` of the installed files (`release_info.json`, the pack, `sts2.dll` and the other assemblies), never from an error message.
@@ -148,7 +148,7 @@ QuickMatch's relay is not in its release: whoever builds chooses it. `QUICKMATCH
 
 ## Troubleshooting
 
-- **Unsupported game hash (game files only):** supply the supported v0.113.0 installation. A matching version label alone is insufficient.
+- **Unsupported game hash (game files only):** supply the supported v0.114.0 installation. A matching version label alone is insufficient.
 - **Missing Xcode components:** finish Xcode's first-launch setup and install its iOS platform.
 - **Signing error:** check `team` in `.local/device.json` is your own team, signed in to Xcode. Do not copy another person's certificate or provisioning profile.
 - **Stale prepared inputs:** rerun `./setup.sh`, then reopen or rebuild the generated project.

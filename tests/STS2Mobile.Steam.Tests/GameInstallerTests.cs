@@ -353,7 +353,7 @@ public sealed class RealManifestTests : IDisposable
             Assert.Equal(new FileInfo(installed).Length, (long)file.Source.TotalSize);
         }
         Assert.InRange(GameInstaller.DownloadBytes(plan), 1_100_000_000, 1_300_000_000);
-        // The estimate from the manifest covers what v0.113.0 needs at its fullest: Steam's files, the converted textures and the game's pack.
+        // The estimate from the manifest covers what v0.114.0 needs at its fullest: Steam's files, the converted textures and the game's pack.
         Assert.InRange(GameInstaller.PeakDiskBytes(null, plan), GameProfile.Current.Steam.PeakDiskBytes, 5_500_000_000);
     }
 

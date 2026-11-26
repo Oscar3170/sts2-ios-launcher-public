@@ -4,12 +4,12 @@ using STS2Mobile.GamePatcher;
 namespace STS2Mobile.GamePatcher.Tests;
 
 /// <summary>
-/// Tolerant mode on the real game. A build with no profile is stood in for by v0.113.0 itself and by copies with one method renamed,
-/// since no other build's files are on this Mac. Skipped where there is no Steam install of v0.113.0.
+/// Tolerant mode on the real game. A build with no profile is stood in for by v0.114.0 itself and by copies with one method renamed,
+/// since no other build's files are on this Mac. Skipped where there is no Steam install of v0.114.0.
 /// </summary>
 public sealed class UntestedBuildTests : IDisposable
 {
-    private const string PlayedSha256 = "c00cf938078c407dbf9af5616d0e4a665ae779bc68a08a5e31223ff149dc983e";
+    private const string PlayedSha256 = "611ad986a6f17b855099a51ac5be360acb4ca664ed07619440fcda5e99f1dd87";
     private readonly string _work = Directory.CreateTempSubdirectory("untested-build-").FullName;
 
     public void Dispose() => Directory.Delete(_work, recursive: true);
@@ -122,7 +122,7 @@ public sealed class UntestedBuildTests : IDisposable
             "No JIT warmup", "No Steam invite dialog", "Mods from the app's own folder", "Mods screen opens Files", "Fewer background loads at once, to bound memory",
             "No mouse cursor", "A card let go below the play zone goes back", "A hand card is picked up when the finger moves", "The game fills the screen",
             "The game keeps clear of the notch and the island", "The game's version read from its folder",
-            "The phone lays out the hand's cards itself",
+            "The phone lays out the hand's cards itself", "Osty grows without leaving his portrait slot",
         ], steps.Where(step => !step.Required).Select(step => step.Name));
     }
 }

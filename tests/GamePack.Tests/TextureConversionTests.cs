@@ -14,7 +14,7 @@ public sealed class TextureConversionTests : IDisposable
     /// to the encoder, but not a missing -ffp-contract=off: these bytes stay the same without it. Only InstalledGameTests catches that.
     /// The texture profile id is written into the overlay manifest, so a new game version's id changes it too.
     /// </summary>
-    private const string MadeUpTexturesSha256 = "b70311c48e5add7ed1002764fb767eb4fe540aeb1d9ede5df3462f6cd0bafd37";
+    private const string MadeUpTexturesSha256 = "f511a3b4999f5679ef62ac14f7ba844946ca82f5e070610733f4131438f606bd";
     private static readonly TextureConversionOptions Small = new(Workers: 2, LargeThreads: 2, BatchBytes: 64 * 1024, LargeBytes: 48 * 1024);
     private readonly string _work = Directory.CreateTempSubdirectory("texture-conversion-").FullName;
     private readonly string _folder;

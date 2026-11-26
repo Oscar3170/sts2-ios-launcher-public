@@ -178,8 +178,8 @@ LiveContainer's own folder for the app, apart from an installed copy.
 
 ## Game versions
 
-The app has been tested with v0.113.0 from Steam's beta branch, and an iPhone still on v0.111.0 keeps
-playing it as tested. A newer Beta is still offered, marked
+The app has been tested with v0.114.0 from Steam's beta branch, and an iPhone still on v0.113.0 or v0.111.0
+keeps playing it as tested. A newer Beta is still offered, marked
 untested, and patched on the iPhone in a tolerant mode; if a change the game needs cannot be made to this
 build, the app tells you then. An untested Stable build is not offered until the app is tested with it. The
 app never updates the game by itself.

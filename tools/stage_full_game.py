@@ -13,7 +13,7 @@ from profiles import ASSET_PROFILE
 
 DEPENDENCIES = Path(__file__).resolve().parent / "dependencies.json"
 # The pinned pack's entry count; with the hash pinned, any other count means the directory was misread.
-GAME_PACK_ENTRIES = 13576
+GAME_PACK_ENTRIES = 13601
 BLOCKED = {
     "HTTPRequest",
     "HTTPClient",
