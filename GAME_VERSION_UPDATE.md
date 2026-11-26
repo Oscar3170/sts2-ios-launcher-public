@@ -27,13 +27,28 @@ Other places name the version and have to move with it:
   - `MadeUpTexturesSha256` in `tests/GamePack.Tests/TextureConversionTests.cs`. The texture profile id is written into the overlay manifest, so this hash changes with every bump.
 - `README.md` "Game versions", and the version named in `BUILDING.md` "Updating inputs" and "Troubleshooting".
 
+## On a Mac or on Linux
+
+The steps are the same on both. A few use different tools, and Linux can't produce two values on its own:
+
+| Step | On a Mac (how v0.111.0 → v0.113.0 was done) | On Linux (how v0.113.0 → v0.114.0 was done) |
+|---|---|---|
+| 1. Download | The Steam client, game switched to `public-beta` | `steamcmd`, forced to macOS and `public-beta` |
+| 4. Patch | `./setup.sh --prepare-only` and `scripts/prepare-game-files.sh` | `tools/FullGamePatcher` run directly with `dotnet10` |
+| 5. Textures | `scripts/godot.sh` (setup's Godot) | The official Linux Godot 4.5.1 editor |
+| 7. Tests | `scripts/test.sh`, everything | `dotnet10 test` per project. The pack tests that need the Mac's `analysis/` output are skipped, and the macOS-only tests fail. |
+| 8. Pack pin | Built here and checked against the phone | The phone's own record only: the Linux encoder gives different texture bytes |
+| 8. Encoder | `vendor/texture-encoder/macos/*.dylib` from setup | Built by hand, used only for `MadeUpTexturesSha256` |
+
+Either way, the phone's run in step 7 is what turns "it prepares" into "it plays".
+
 ## Steps
 
 ### 1. Get the macOS build of the new version
 
 Profile hashes are of the **macOS** depot (2868842). The Linux or Windows depots have different files, so their hashes are wrong for a profile.
 
-For v0.114.0, downloading through the Steam client's console did not work, so `steamcmd` was used. It must be forced to the macOS platform and the beta branch. Without the platform line, a Linux host fetches the Linux depot; without `-beta`, it fetches the public branch.
+**On Linux** (v0.114.0; the Steam client's console download did not work), use `steamcmd`. It must be forced to the macOS platform and the beta branch. Without the platform line it fetches the Linux depot, and without `-beta` it fetches the public branch.
 
 ```sh
 steamcmd \
@@ -54,7 +69,7 @@ rg -n '"buildid"|"BetaKey"|"manifest"' .work/sts2-macos-beta/steamapps/appmanife
 
 `InstalledDepots → 2868842 → manifest` in the `.acf` file is the `steam_manifest` to pin, and `buildid` is the Steam build id used in the preview and in `VersionScreenTests`. As a cross-check, the depot's size can be compared with Steam's public app info (`https://api.steamcmd.net/v1/info/2868840`, branch `public-beta`).
 
-On a Mac with the Steam client, switching the game to the `public-beta` branch in its Betas properties works too; then the files are under `~/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/`.
+**On a Mac** (v0.113.0), switch the game to the `public-beta` branch in its Steam Betas properties and let it update. The files are then under `~/Library/Application Support/Steam/steamapps/common/Slay the Spire 2/`, and the manifest id is also the name of `depotcache/2868842_<manifest>.manifest`. Run the same checks with `R` pointing there.
 
 ### 2. Write the profile
 
@@ -78,13 +93,15 @@ cd tools && python3 -c "from godot_pack import read_directory; print(len(read_di
 
 ### 4. Patch the new assembly and fix what fails
 
-On the Mac, run `./setup.sh --prepare-only` and `scripts/prepare-game-files.sh`. On Linux, run the patcher directly with the pinned SDK (`dotnet10`); it accepts the assembly once the profile has its hash:
+**On a Mac**, run `./setup.sh --prepare-only` and `scripts/prepare-game-files.sh`. The patch report is `analysis/full-game-managed/public/game/profile.json`.
+
+**On Linux**, run the patcher directly with the pinned SDK (`dotnet10`). It accepts the assembly once the profile has its hash, and writes its report as `profile.json` in the output folder:
 
 ```sh
 dotnet10 run --project tools/FullGamePatcher -- stage "$A/sts2.dll" .work/<new dir> mods/builtin.json
 ```
 
-Fix every patch that fails in `src/STS2Mobile.GamePatcher`. Phones on the previous profile run the same patches, so find a renamed target by either name (`GamePatch.Method(type, name, earlierName)`). Then compare the patch report (`profile.json` in the output, or `analysis/full-game-managed/public/game/profile.json` on the Mac) with the previous version's, and look at every method whose patch moved.
+Fix every patch that fails in `src/STS2Mobile.GamePatcher`. Phones on the previous profile run the same patches, so find a renamed target by either name (`GamePatch.Method(type, name, earlierName)`). Then compare the patch report with the previous version's, and look at every method whose patch moved.
 
 If the patch roster changes, `UntestedBuildTests.TheShortListOfPatchesTheGameCannotRunWithout` lists every patch by name and must change in the same commit.
 
@@ -95,11 +112,11 @@ Stage the pack, then run the ASTC pass. A texture whose ASTC result falls below 
 ```sh
 python3 tools/stage_full_game.py --pack "$R/Slay the Spire 2.pck" --output .work/<v>/assets
 python3 tools/transcode_textures_astc.py --assets .work/<v>/assets --output .work/<v>/textures --workers "$(nproc)" \
-  --godot <Godot 4.5.1>        # default: scripts/godot.sh, the Mac's Godot from setup
+  --godot <Godot 4.5.1>        # Mac: omit (scripts/godot.sh); Linux: the editor binary
 jq -c '.keptOriginal | map(.source)' .work/<v>/textures/texture-report.json
 ```
 
-On Linux, the official `Godot_v4.5.1-stable_linux.x86_64` editor runs the same GDScript worker and the same encoder version. For v0.114.0 it kept the same 7 textures as v0.113.0 (1565 converted, lowest 40.16 dB). The report's `textures` count is the new `Total` in `tests/GamePack.Tests/InstalledGameTests.cs`.
+**On Linux**, download the official `Godot_v4.5.1-stable_linux.x86_64` editor; it runs the same GDScript worker and the same encoder version. For v0.114.0 it kept the same 7 textures as v0.113.0 (1565 converted, lowest 40.16 dB). The report's `textures` count is the new `Total` in `tests/GamePack.Tests/InstalledGameTests.cs`.
 
 ### 6. Check QuickMatch
 
@@ -107,17 +124,20 @@ Build QuickMatch against the new game and run its tests (its repository says how
 
 ### 7. Run the tests and play it on a phone
 
-Run `scripts/test.sh` on the Mac. On Linux, point the installed-game tests at the downloaded files:
+**On a Mac**, run `scripts/test.sh`. It finds the Steam install and the `analysis/` output of steps 4 and 5 on its own.
+
+**On Linux**, point the installed-game tests at the downloaded files, and put the hand-built encoder (step 8) beside the GamePack tests:
 
 ```sh
 export STS2_GAME_DATA=$PWD/$A                       # GamePatcher.Tests
-export STS2_GAME_PACK="$PWD/$R/Slay the Spire 2.pck" # GamePack.Tests (also needs analysis/ from the Mac)
+export STS2_GAME_PACK="$PWD/$R/Slay the Spire 2.pck" # GamePack.Tests
 dotnet10 test tests/GamePatcher.Tests
 dotnet10 test tests/GamePack.Tests
 dotnet10 test tests/STS2Mobile.Steam.Tests
+(cd tests && python3 -m unittest discover -p 'test_*.py')
 ```
 
-`GameProfileTests.FootprintIsReadable` and some Python tests need macOS and fail on Linux whatever the version.
+On Linux these always fail, whatever the version: `GameProfileTests.FootprintIsReadable` and 13 Python tests that need macOS tools. Compare against the same run on the previous commit. The GamePack tests that compare with the Mac's `analysis/` reference skip, so the full-pack pin is checked only on a Mac.
 
 Build the app and set the new version up on a phone. Until the profile ships, the phone offers the build as untested and prepares it in tolerant mode; that is fine for this check. Play at least a fight.
 
@@ -138,10 +158,14 @@ Then set the pins:
   - If patches changed after the phone's build, the pin is the phone's bytes plus those patches. Say so in the pin's comment.
   - For v0.114.0 the phone ran `1095dc6`. The commit before the Osty patch reproduced the phone's `42707dad…`, and the pin is HEAD's `611ad986…`.
 - **Pack.** Pin the phone's `outputSha256` as the GamePack `PlayedSha256`, after checking that `src/STS2Mobile.GamePack` hasn't changed between the phone's commit and HEAD. `PlayedEntries` is the entry count of a pack built here; it depends only on the entries, not the texture bytes.
-- **`MadeUpTexturesSha256`.** Recompute it with the new id. A Linux build of the encoder works for this one: the old v0.113.0 pin reproduces exactly on Linux, and so does the new one. To build it:
-  - Compile `src/STS2Mobile.GamePack/native/texture_encoder.cpp` and the astc-encoder sources pinned in `tools/dependencies.json` with the flags in `tools/build_texture_encoder.py`, except `-DASTCENC_NEON=0` and `-fPIC -shared` on x86.
-  - Put the `.so` beside the test output.
-  - The Linux encoder does **not** reproduce the phone's full pack bytes. The output is the same size but different, so it can't stand in for the phone's pack hash.
+  - **On a Mac**, `scripts/test.sh` then rebuilds the pack and checks the pin. The Mac's arm64 encoder is the phone's.
+  - **On Linux**, the encoder can't check it. A Linux build gives a pack of the same size with different bytes, so the pin rests on the phone's record until a Mac run confirms it.
+- **`MadeUpTexturesSha256`.** Recompute it with the new id.
+  - **On a Mac**, use setup's encoder.
+  - **On Linux**, a hand-built encoder gives the Mac's bytes for these small made-up textures: the old v0.113.0 pin reproduced exactly. Build it this way:
+    - Compile `src/STS2Mobile.GamePack/native/texture_encoder.cpp` and the astc-encoder sources pinned in `tools/dependencies.json` with the flags in `tools/build_texture_encoder.py`, except use `-DASTCENC_NEON=0` and add `-fPIC -shared`.
+    - The test project copies `vendor/texture-encoder/macos/libsts2_texture_encoder.dylib`, so put the `.so` there under that name for the build, and beside the test output as `libsts2_texture_encoder.so`.
+    - Remove it afterwards. `vendor/` is git-ignored, and a Mac setup builds its own.
 - **`peak_disk_bytes`.** Measure the most disk space setup uses on the phone. Without a measurement, use the installer's estimate, `files + 1.5 × pack` from `GameInstaller.PeakDiskBytes`, and say so in the commit. It must not exceed that estimate, since `RealManifestTests` checks that the estimate covers it. v0.114.0 uses the estimate, 5.40 GB.
 
 ### 9. Commit and update the docs
