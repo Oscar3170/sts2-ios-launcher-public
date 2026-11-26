@@ -66,10 +66,8 @@ internal sealed class PortraitCardGridLayout
         public bool Logged;
         public ulong BorderFade;
         public bool BorderFadeVisible;
-        public ulong MaskScroll;
-        public CanvasItem.ClipChildrenMode NativeClipChildren;
-        public Action? MaskDraw;
-        public Action? MaskRedraw;
+        public ulong EdgeShade;
+        public float EdgeShadeHeight;
     }
 
     /// <summary>One text control's own wrapping and sizing, before portrait took it in hand.</summary>
@@ -301,19 +299,20 @@ internal sealed class PortraitCardGridLayout
         return true;
     }
 
-    // ---- the grid's soft ends ------------------------------------------------------------------------------------
+    // ---- the grid's shaded ends ----------------------------------------------------------------------------------
 
-    private static GradientTexture2D? _maskFadeIn;
-    private static GradientTexture2D? _maskFadeOut;
+    private const string EdgeShadeName = "PortraitGridEdgeShade";
 
     /// <summary>
     /// The game darkens the grid's first and last 5 % with a black BorderGradient over the cards, which in landscape fades
-    /// them into the screen's edges. Portrait ends the grid mid-screen over the stage, so its bottom band read as a black
-    /// stripe ending in a hard cut. Portrait hides that band and fades the cards themselves instead: the scroll area (a
-    /// clip_children parent in the game's scene) draws an opaque mask over the grid's rectangle whose first and last
-    /// <see cref="PortraitGridMath.GridMaskFade"/> units ramp to transparent, so the cards thin out into the stage.
+    /// them into the screen's edges. Portrait ends the grid mid-screen over the stage, so the bottom band was a black stripe
+    /// ending in a hard cut. Portrait hides that band and draws the same black in a sibling over the grid, which the grid's
+    /// clip does not cut: the top keeps the game's fade inside the grid, and the foot's shade straddles the edge, rising to
+    /// the cut and falling away over the stage below it, so the cut cards sink into a soft shadow instead of a hard line.
+    /// (Fading the cards themselves through the scroll area's clip_children mask blanks their portraits, which are masked
+    /// the same way.)
     /// </summary>
-    private static void InstallScrollMask(Control grid, Control scroll, GridState state)
+    private static void ShadeGridEdges(Control grid, GridState state, float top, float bottom, float width)
     {
         if (state.BorderFade == 0 && grid.GetNodeOrNull<CanvasItem>("BorderGradient") is { } fade)
         {
@@ -323,56 +322,58 @@ internal sealed class PortraitCardGridLayout
         if (state.BorderFade != 0 && GodotObject.InstanceFromId(state.BorderFade) is CanvasItem border &&
             GodotObject.IsInstanceValid(border) && border.Visible)
             border.Visible = false;
-        if (state.MaskScroll == scroll.GetInstanceId()) return;
-        state.MaskScroll = scroll.GetInstanceId();
-        state.NativeClipChildren = scroll.ClipChildren;
-        scroll.ClipChildren = CanvasItem.ClipChildrenMode.Only;
-        Action draw = () => DrawScrollMask(grid, scroll);
-        Action redraw = scroll.QueueRedraw;
-        state.MaskDraw = draw;
-        state.MaskRedraw = redraw;
-        scroll.Draw += draw;
-        // The scroll is the content's own position: the mask is redrawn where the grid stands each time it moves.
-        scroll.ItemRectChanged += redraw;
-        scroll.QueueRedraw();
+        if (grid.GetParent() is not Control parent) return;
+        float edge = PortraitGridMath.GridEdgeFade;
+        float height = bottom - top + edge;
+        if (state.EdgeShade == 0 || GodotObject.InstanceFromId(state.EdgeShade) is not TextureRect shade || !GodotObject.IsInstanceValid(shade))
+        {
+            shade = new TextureRect
+            {
+                Name = EdgeShadeName,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Scale,
+            };
+            parent.AddChild(shade);
+            parent.MoveChild(shade, grid.GetIndex() + 1);
+            state.EdgeShade = shade.GetInstanceId();
+            state.EdgeShadeHeight = 0f;
+        }
+        if (Math.Abs(state.EdgeShadeHeight - height) > 0.5f)
+        {
+            state.EdgeShadeHeight = height;
+            shade.Texture = EdgeShadeTexture(bottom - top, edge);
+        }
+        shade.Position = new Vector2(grid.Position.X, top);
+        shade.Size = new Vector2(width, height);
     }
 
-    private static void RemoveScrollMask(GridState state)
+    /// <summary>
+    /// The shade over a grid <paramref name="gridHeight"/> tall plus <paramref name="edge"/> below it: the game's 0.9 black
+    /// fading in over the grid's first <paramref name="edge"/> units, clear down the middle, then 0.75 black at the foot's
+    /// cut, falling off to clear on both sides. The game's own smoothstep-like (cubic) interpolation.
+    /// </summary>
+    private static GradientTexture2D EdgeShadeTexture(float gridHeight, float edge)
     {
-        if (state.MaskScroll != 0 && GodotObject.InstanceFromId(state.MaskScroll) is Control scroll && GodotObject.IsInstanceValid(scroll))
+        float total = gridHeight + edge;
+        Color clear = new(0f, 0f, 0f, 0f);
+        var gradient = new Gradient
         {
-            if (state.MaskDraw is { } draw) scroll.Draw -= draw;
-            if (state.MaskRedraw is { } redraw) scroll.ItemRectChanged -= redraw;
-            scroll.ClipChildren = state.NativeClipChildren;
-            scroll.QueueRedraw();
-        }
+            InterpolationMode = Gradient.InterpolationModeEnum.Cubic,
+            Offsets = [0f, edge / total, (gridHeight - edge) / total, gridHeight / total, 1f],
+            Colors = [new Color(0f, 0f, 0f, 0.9f), clear, clear, new Color(0f, 0f, 0f, 0.75f), clear],
+        };
+        return new GradientTexture2D { Gradient = gradient, Width = 2, Height = 1024, FillTo = new Vector2(0f, 1f) };
+    }
+
+    private static void RemoveEdgeShade(GridState state)
+    {
+        if (state.EdgeShade != 0 && GodotObject.InstanceFromId(state.EdgeShade) is Node shade && GodotObject.IsInstanceValid(shade))
+            shade.QueueFree();
         if (state.BorderFade != 0 && GodotObject.InstanceFromId(state.BorderFade) is CanvasItem border && GodotObject.IsInstanceValid(border))
             border.Visible = state.BorderFadeVisible;
-        state.MaskScroll = state.BorderFade = 0;
-        state.MaskDraw = state.MaskRedraw = null;
-    }
-
-    /// <summary>The mask, in the scroll area's coordinates: the grid's rectangle, opaque, with transparent ends.</summary>
-    private static void DrawScrollMask(Control grid, Control scroll)
-    {
-        if (!GodotObject.IsInstanceValid(grid)) return;
-        _maskFadeIn ??= MaskRamp(transparentFirst: true);
-        _maskFadeOut ??= MaskRamp(transparentFirst: false);
-        Vector2 size = grid.Size;
-        float fade = MathF.Min(PortraitGridMath.GridMaskFade, size.Y * 0.25f);
-        Vector2 origin = -scroll.Position;
-        scroll.DrawTextureRect(_maskFadeIn, new Rect2(origin, new Vector2(size.X, fade)), false);
-        scroll.DrawRect(new Rect2(origin + new Vector2(0f, fade), new Vector2(size.X, size.Y - 2f * fade)), Colors.White);
-        scroll.DrawTextureRect(_maskFadeOut, new Rect2(origin + new Vector2(0f, size.Y - fade), new Vector2(size.X, fade)), false);
-    }
-
-    private static GradientTexture2D MaskRamp(bool transparentFirst)
-    {
-        Color clear = new(1f, 1f, 1f, 0f);
-        var gradient = new Gradient();
-        gradient.SetColor(0, transparentFirst ? clear : Colors.White);
-        gradient.SetColor(1, transparentFirst ? Colors.White : clear);
-        return new GradientTexture2D { Gradient = gradient, Width = 2, Height = 64, FillTo = new Vector2(0f, 1f) };
+        state.EdgeShade = state.BorderFade = 0;
+        state.EdgeShadeHeight = 0f;
     }
 
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
@@ -389,7 +390,7 @@ internal sealed class PortraitCardGridLayout
             }
             if (GodotObject.InstanceFromId(id) is not Control grid || !GodotObject.IsInstanceValid(grid)) continue;
             if (state.ClipSaved) grid.ClipContents = state.NativeClip;
-            RemoveScrollMask(state);
+            RemoveEdgeShade(state);
             if (state.YOffsetSaved && _yOffsetProperty != null) _yOffsetProperty.SetValue(grid, state.NativeYOffset);
             if (_cardSizeField != null && state.NativeCardSize.X > 0.5f) _cardSizeField.SetValue(grid, state.NativeCardSize);
             RestoreGridHolderScales(grid, state);
@@ -476,6 +477,7 @@ internal sealed class PortraitCardGridLayout
         grid.OffsetTop = top;
         grid.OffsetBottom = bottom;
         grid.ClipContents = true;
+        ShadeGridEdges(grid, state, top, bottom, canvas.X);
 
         // The deck view's sort row is measured from the scroll area's children before it is moved out of them.
         Control? header = SortRowOf(grid, state);
@@ -489,7 +491,6 @@ internal sealed class PortraitCardGridLayout
             scroll.OffsetLeft = PortraitGridMath.SideInset;
             scroll.OffsetRight = -PortraitGridMath.SideInset;
             scroll.Size = new Vector2(scrollWidth, gridHeight);
-            InstallScrollMask(grid, scroll, state);
         }
         if (grid.GetNodeOrNull<Control>("Scrollbar") is { } scrollbar)
         {
