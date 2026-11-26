@@ -70,11 +70,15 @@ internal sealed class PortraitLayout
     public void Apply(SceneTree tree, bool portrait)
     {
         _tree = tree;
+        SwitchTrace.Note("apply begin");
         SafeAreaCanvas.SetPortrait(portrait);
         ScreenOrientation.SetDeferEdges(true);
         ScreenOrientation.Set(landscape: !portrait);
+        SwitchTrace.Note("orientation set");
         UpdateWindowCanvas(tree.Root);
+        SwitchTrace.Note("canvas updated");
         ApplyImmediate();
+        SwitchTrace.Note("applied");
         _ = FollowGeometryRotationAsync(tree, portrait, ++_switchGeneration);
     }
 
@@ -233,15 +237,24 @@ internal sealed class PortraitLayout
 
     private void RestoreLandscape(Node root)
     {
+        SwitchTrace.Note("restore combat");
         _combat.RestoreLandscape(root);
+        SwitchTrace.Note("restore previews");
         _previews.RestoreLandscape();
+        SwitchTrace.Note("restore between");
         _between.RestoreLandscape();
+        SwitchTrace.Note("restore fit");
         _fit.RestoreLandscape();
+        SwitchTrace.Note("restore menus");
         _menus.RestoreLandscape();
         _mainMenu.RestoreLandscape();
+        SwitchTrace.Note("restore settings");
         _settings.Restore();
+        SwitchTrace.Note("restore pads");
         _navPads.RestoreLandscape();
+        SwitchTrace.Note("restore overlays");
         _overlays.RestoreLandscape();
+        SwitchTrace.Note("restore snapshots");
 
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
         {
@@ -249,7 +262,9 @@ internal sealed class PortraitLayout
                 snapshot.Restore(control);
         }
 
+        SwitchTrace.Note("restore header");
         _header.RestoreLandscape(Traverse(root));
+        SwitchTrace.Note("restore done");
     }
 
     private void LayoutEarlyAccessPortrait(Control disclaimer)
@@ -313,4 +328,10 @@ internal sealed class PortraitLayout
                 stack.Push(current.GetChild(i));
         }
     }
+}
+
+/// <summary>Temporary: unbuffered trace of the live landscape switch, to find a native crash.</summary>
+internal static class SwitchTrace
+{
+    internal static void Note(string step) => Console.Error.WriteLine("[switch] " + step);
 }
