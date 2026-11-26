@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes;
+using MegaCrit.Sts2.Core.Nodes.Combat;
 using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
@@ -43,6 +44,8 @@ internal sealed class PhoneHoverTips
     public const float MinFitScale = 0.9f;
 
     private static Control? _parkedEndTurn;
+    private static bool _parkedAfterCardRelease;
+    private static Control? _parkedOwner;
 
     private readonly Dictionary<ulong, ColumnState> _columns = new();
     private FieldInfo? _ownerField;
@@ -66,6 +69,38 @@ internal sealed class PhoneHoverTips
     /// <summary>The player pressed somewhere else: the End Turn tip may show again.</summary>
     public static void UnparkEndTurn() => _parkedEndTurn = null;
 
+    /// <summary>
+    /// A dragged hand card was let go: the engine's pointer stays where the finger lifted, so whatever is under it (an
+    /// enemy's statuses, End Turn) would open its tip although nothing was tapped. Tips stay down until the next press.
+    /// </summary>
+    public static void ParkAfterCardRelease()
+    {
+        _parkedAfterCardRelease = true;
+        _parkedOwner = null;
+    }
+
+    /// <summary>
+    /// The next press: tips follow touches again. A press on the creature whose tips were kept down does not enter it again
+    /// (the pointer never left it), so its tips are opened here, as the game's own focus would have.
+    /// </summary>
+    public static void UnparkAfterCardRelease(Vector2? pressCanvas = null)
+    {
+        bool wasParked = _parkedAfterCardRelease;
+        Control? owner = _parkedOwner;
+        _parkedAfterCardRelease = false;
+        _parkedOwner = null;
+        if (!wasParked || pressCanvas is not { } point || owner == null || !GodotObject.IsInstanceValid(owner)) return;
+        NCreature? creature = null;
+        for (Node? node = owner.GetParent(); node != null && creature == null; node = node.GetParent()) creature = node as NCreature;
+        if (creature == null || !creature.IsFocused || creature.Hitbox != owner) return;
+        if (!owner.GetGlobalRect().HasPoint(point)) return;
+        Callable.From(() =>
+        {
+            if (GodotObject.IsInstanceValid(creature) && creature.IsFocused && creature.Entity is { } entity)
+                creature.ShowHoverTips(entity.HoverTips);
+        }).CallDeferred();
+    }
+
     private sealed class ColumnState
     {
         public Vector2 Original;
@@ -80,6 +115,7 @@ internal sealed class PhoneHoverTips
     public void Release()
     {
         _parkedEndTurn = null;
+        _parkedAfterCardRelease = false;
         if (_fitSubscribed)
         {
             RenderingServer.FramePreDraw -= FitFrame;
@@ -101,6 +137,7 @@ internal sealed class PhoneHoverTips
     /// </summary>
     private static bool ShouldRemove(Control owner)
     {
+        if (_parkedAfterCardRelease) return true;
         if (PhoneTouchCards.CardIsBeingDragged && owner.GetType().FullName == HandHolderTypeName) return true;
         // A finger dragging the header rows is not hovering: touch is emulated as a mouse, so the pointer passes over every
         // relic and potion on the way and the game would show each one's tip. Take those down until the gesture is over.
@@ -170,6 +207,7 @@ internal sealed class PhoneHoverTips
                 if (_ownerField?.GetValue(set) is Control owner && GodotObject.IsInstanceValid(owner) && ShouldRemove(owner))
                 {
                     RemoveTipSet(owner);
+                    if (_parkedAfterCardRelease) _parkedOwner = owner;
                     continue;
                 }
                 try

@@ -246,6 +246,7 @@ internal sealed class PhoneTouchCards
         if (_dragHolder != null) EndDrag();
         RestoreInspectShield();
         HoverFromTouch = true;
+        PhoneHoverTips.UnparkAfterCardRelease(_fingerCanvas);
         _down = true;
         _pickedUp = false;
         _released = false;
@@ -290,6 +291,8 @@ internal sealed class PhoneTouchCards
         _released = true;
         _releaseFrame = Engine.GetProcessFrames();
         _releaseCanvasPos = _fingerCanvas;
+        // Letting a dragged card go is not a tap on whatever the finger lifted over.
+        if (_pickedUp) PhoneHoverTips.ParkAfterCardRelease();
         if (!_pickedUp)
         {
             _pendingHolder = null;
@@ -698,6 +701,7 @@ internal sealed class PhoneTouchCards
         RestoreInspectUpgrade();
         HandPickupGate.Disable();
         PhoneHoverTips.UnparkEndTurn();
+        PhoneHoverTips.UnparkAfterCardRelease();
     }
 
     private float MovedCanvas() =>
