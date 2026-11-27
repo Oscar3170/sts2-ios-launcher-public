@@ -54,6 +54,7 @@ internal static partial class PortraitSubmenuLayout
         public bool AdvancedOpen;
         public ulong Toggle;
         public Callable? ToggleHandler;
+        public Callable? VisibilityHandler;
         public ulong Screen;
         public Vector2 NativeCardSize;
         public bool CardSizeSaved;
@@ -378,12 +379,14 @@ internal static partial class PortraitSubmenuLayout
             state = new CardLibraryState { Screen = id };
             CardLibraryStates[id] = state;
             ulong screenId = id;
-            screen.Connect("visibility_changed", Callable.From(() =>
+            Callable visibility = Callable.From(() =>
             {
                 if (GodotObject.InstanceFromId(screenId) is Control live && GodotObject.IsInstanceValid(live) && live.Visible &&
                     CardLibraryStates.TryGetValue(screenId, out CardLibraryState? known))
                     known.AdvancedOpen = false;
-            }));
+            });
+            state.VisibilityHandler = visibility;
+            screen.Connect("visibility_changed", visibility);
             WatchCardLibraryTree(screen);
         }
         return state;
@@ -456,8 +459,12 @@ internal static partial class PortraitSubmenuLayout
         if (CardLibraryStates.Count == 0) return;
         foreach (CardLibraryState state in CardLibraryStates.Values)
         {
-            if (GodotObject.InstanceFromId(state.Screen) is Control screen && GodotObject.IsInstanceValid(screen) &&
-                screen.GetNodeOrNull<Control>("%CardGrid") is { } grid)
+            Control? screen = GodotObject.InstanceFromId(state.Screen) as Control;
+            if (screen is not null && !GodotObject.IsInstanceValid(screen)) screen = null;
+            if (screen is not null && state.VisibilityHandler is { } visibility &&
+                screen.IsConnected("visibility_changed", visibility))
+                screen.Disconnect("visibility_changed", visibility);
+            if (screen is not null && screen.GetNodeOrNull<Control>("%CardGrid") is { } grid)
             {
                 if (state.CardSizeSaved && _cardLibraryCardSizeField != null)
                 {
