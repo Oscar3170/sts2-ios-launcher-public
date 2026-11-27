@@ -83,4 +83,25 @@ internal static class TestWindowScope
         root.SizeChanged += Correct;
         Correct();
     }
+
+    /// <summary>
+    /// Waits, before the scenario starts, for the window manager's startup growth to be undone. Without slow-starting mods
+    /// the main menu can be ready before the late title-bar growth arrives, and the size-change corrections above can then
+    /// see a stale size and stop. Re-requests the size a bounded number of times; returns the final root size.
+    /// </summary>
+    public static async System.Threading.Tasks.Task<Vector2I> SettleAsync(SceneTree tree)
+    {
+        Window root = tree.Root;
+        if (!_borderless || _requested is not { } requested) return root.Size;
+        for (int frame = 0; frame < 180 && root.Size != requested; frame++)
+        {
+            if (frame % 30 == 0)
+            {
+                Log.Info($"[TEST] window settle: root={root.Size} display={DisplayServer.WindowGetSize()}; requesting {requested}");
+                DisplayServer.WindowSetSize(requested);
+            }
+            await tree.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
+        }
+        return root.Size;
+    }
 }

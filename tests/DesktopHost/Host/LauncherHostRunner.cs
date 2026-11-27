@@ -106,8 +106,8 @@ internal sealed class LauncherHostRunner
             _report.Pass("main_menu_ready", "launcher wiring attached and portrait applied at the main menu");
             _report.Phase("menu_ready");
             // The portrait profile follows the canvas aspect, so a window the startup resized is a different test.
-            if (_options.WindowSize is { } requested && _tree.Root.Size != requested)
-                throw new InvalidOperationException($"Requested test window {requested}, got {_tree.Root.Size}.");
+            if (_options.WindowSize is { } requested && await TestWindowScope.SettleAsync(_tree) is var settled && settled != requested)
+                throw new InvalidOperationException($"Requested test window {requested}, got {settled}.");
             // Detection-first: the host is Wayland (the game is an X11 client), so raising the window is best effort;
             // the pointer readback is what proves another window is not covering the game. Every scenario here touches
             // the game, so this runs before the dispatch.
