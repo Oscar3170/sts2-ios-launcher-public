@@ -101,10 +101,7 @@ internal sealed partial class TestDriver
         }
     }
 
-    /// <summary>
-    /// A hand card that may be dragged onto a single enemy. Kept here rather than in TestDriver.cs so this scenario links into
-    /// both hosts: the TouchSpire driver's own copy does the same check.
-    /// </summary>
+    /// <summary>A hand card that may be dragged onto a single enemy.</summary>
     private static bool IsTargetedPlayableCard(NHandCardHolder holder)
     {
         CardModel? card = holder.CardNode?.Model;

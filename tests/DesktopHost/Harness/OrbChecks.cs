@@ -5,9 +5,9 @@ using MegaCrit.Sts2.Core.Nodes.Orbs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// Orb checks shared by both hosts: the native queue must contain the expected number of orbs. Their placement (safe frame,
-/// spacing, order, values) is each host's own layout and is implemented by a host partial: TouchSpireUI's arc in
-/// HostLayoutChecks.cs, the launcher's compact arc in LauncherHeaderChecks.cs.
+/// Orb checks: the native queue must contain the expected number of orbs. Their placement (safe frame,
+/// spacing, order, values) is the host's own layout and is implemented by a host partial: the launcher's compact arc in
+/// LauncherHeaderChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -23,6 +23,6 @@ internal sealed partial class TestDriver
         _report.Check($"orbs_{phase}_count", orbs.Length == expected, $"slots={orbs.Length}");
     }
 
-    // Implemented by the TouchSpire host only (Orbs.cs): TouchSpireUI's portrait arc and safe frame.
+    // Implemented by the host (LauncherHeaderChecks.cs): the launcher's portrait arc and safe frame.
     partial void CheckOrbLayout(string phase, int expected);
 }

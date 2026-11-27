@@ -9,7 +9,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 internal sealed partial class TestDriver
 {
     /// <summary>
-    /// The map's drawing toolbar and Share, shared by both hosts: a finger on the toolbar toggles the native drawing mode,
+    /// The map's drawing toolbar and Share: a finger on the toolbar toggles the native drawing mode,
     /// a drag draws under the finger, the stroke moves exactly with the graph when the chart scrolls, erasing and clearing
     /// work, and Share's native toast stays inside the host's portrait frame. Only the sizes and rocks are host partials.
     /// </summary>

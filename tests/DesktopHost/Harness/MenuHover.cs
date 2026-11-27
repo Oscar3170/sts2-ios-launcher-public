@@ -10,9 +10,8 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <summary>
 /// The <c>menu-hover</c> scenario: the main menu's native hover on Continue, Settings and Quit with a real mouse pointer, the
 /// mod-config label's outline, and the saved run's Continue details. The fixture (a real save in the isolated test profile),
-/// the pointer moves and the step names are shared; each host asserts its own hover geometry in
-/// <c>CheckModConfigOutlineAsync</c> / <c>CheckMenuButtonHover</c> (TouchSpireUI on the TouchSpire host, the launcher's
-/// native carets and 1.607x Continue details on the launcher).
+/// the pointer moves and the step names are shared; the host asserts its own hover geometry in
+/// <c>CheckModConfigOutlineAsync</c> / <c>CheckMenuButtonHover</c> (native carets and 1.607x Continue details).
 /// </summary>
 internal sealed partial class TestDriver
 {

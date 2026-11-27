@@ -14,29 +14,27 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// allowlist per screen so every exemption is named in the step's detail.
 /// <para>
 /// The measurement is the launcher's own audit definition (PortraitAudit.DescribeSmall): the smaller side of the drawn rect,
-/// merged with an invisible larger touch area when the host has one. TouchSpireUI scales the drawn control itself, so its
-/// host answer adds nothing. Labels and other text are not targets here (they are the launcher audit's 11 point text list).
+/// merged with an invisible larger touch area when the host has one. Labels and other text are not targets here (they are
+/// the launcher audit's 11 point text list).
 /// </para>
 /// <para>
 /// Host answers: the safe frame, the minimum in canvas units and the effective target box are partials implemented in
-/// HostMenuChecks.cs (TouchSpire) and LauncherMenuChecks.cs (launcher). The gate is skipped in landscape, where both hosts
-/// keep the game's desktop layout.
+/// LauncherMenuChecks.cs. The gate is skipped in landscape, where the launcher keeps the game's desktop layout.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver
 {
     // The launcher's own audit already reports these as small and keeps them: they are the game's navigation arrows and back
-    // buttons, drawn at their native 72x64 / 200x110 units on both hosts (25-38 pt). Named here once so every screen's
-    // detail says why they are exempt rather than silently dropping them.
+    // buttons, drawn at their native 72x64 / 200x110 units (25-38 pt). Named here once so every screen's detail says why
+    // they are exempt rather than silently dropping them.
     private const string NativeArrowAllow = "NGoldArrowButton";
     private const string NativeBackAllow = "NBackButton";
-    // A dropdown's open list is one scrolling column of native 44-unit rows; both hosts scale the list, not the rows, so the
-    // rows are 20-35 pt. The closed dropdown anchor itself is still gated.
+    // A dropdown's open list is one scrolling column of native 44-unit rows; the launcher scales the list, not the rows, so
+    // the rows are 20-35 pt. The closed dropdown anchor itself is still gated.
     private const string DropdownRowsAllow = "NDropdownItem";
     // The game over summary's award chips (NBadge, and NDiscoveredItem whose runtime type name is Nn). They scroll with the
-    // summary; the TouchSpire host draws them at its 2.08 summary scale (30 u short of 44 pt) and the launcher pads each one
-    // to 127 u. The launcher's own summary check (game_over_summary_chip_targets) enforces that, so the shared gate names
-    // them as the host-checked exemption instead of failing the TouchSpire reference for a layout it does not own.
+    // summary; the launcher pads each one to 127 u. The launcher's own summary check (game_over_summary_chip_targets)
+    // enforces that, so the shared gate names them as the host-checked exemption.
     private const string SummaryBadgeAllow = "NBadge";
     private const string SummaryItemAllow = "Nn";
 

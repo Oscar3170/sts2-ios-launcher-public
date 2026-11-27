@@ -18,11 +18,10 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>upgrade</c> on both hosts: the native upgrade selector over a real rest site, its three-column grid and View Upgrades
-/// box, the scrolled deck, a single-card comparison, Back and Confirm. The grid's columns and card width, the toggle's place
-/// and touch size, the preview's fit and Back's place above the toggle are each host's own phone geometry: TouchSpireUI's
-/// answers keep the original checks in HostCardGridChecks.cs, the launcher's (three columns on a narrower canvas, 127-unit
-/// targets, the footer under the grid) are in TouchSpire.LauncherHost/src/LauncherCardGridChecks.cs.
+/// <c>upgrade</c>: the native upgrade selector over a real rest site, its three-column grid and View Upgrades box, the
+/// scrolled deck, a single-card comparison, Back and Confirm. The grid's columns and card width, the toggle's place and
+/// touch size, the preview's fit and Back's place above the toggle are the host's own phone geometry, in
+/// LauncherCardGridChecks.cs (three columns on a narrower canvas, 127-unit targets, the footer under the grid).
 /// </summary>
 internal sealed partial class TestDriver
 {

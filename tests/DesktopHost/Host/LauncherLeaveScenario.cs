@@ -70,7 +70,7 @@ internal sealed partial class TestDriver
         "Shadow", "Highlight", "EnergyIcon", "StarIcon", "CardVfxContainer", "CardSparkles",
     };
 
-    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--touchspire-test=portrait-leave</c>.</summary>
+    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--sts2mobile-test=portrait-leave</c>.</summary>
     internal static async Task RunLauncherPortraitLeaveAsync(TestOptions options, TestReport report,
         ScreenshotService screenshots, VirtualPointer pointer)
     {

@@ -12,7 +12,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// Failure-only diagnostics both hosts use (never a check, never a pass/fail change): a screenshot and one block of state at
+/// Failure-only diagnostics (never a check, never a pass/fail change): a screenshot and one block of state at
 /// the moment a scenario gives up — a tap whose target never became visible/enabled, or a scenario exception. It answers the
 /// questions a timeout cannot: what the screen/stack/modal/focus state was, what a finger at a given point would actually
 /// hit, and which control was asked for and why it could not be tapped.

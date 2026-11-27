@@ -12,10 +12,10 @@ using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The Courier restock fixture, shared by both hosts. Each purchase goes through <see cref="ConfirmShopSlotAsync"/>: one
-/// tap on TouchSpireUI, first-press-select then second-tap-confirm on the launcher. The slot node and its merchant entry
-/// survive the restock; only the card/relic/potion model changes, which is exactly the identity the launcher's selection
-/// must key on, so every purchase also checks that the replacement did not inherit the confirmation.
+/// The Courier restock fixture. Each purchase goes through <see cref="ConfirmShopSlotAsync"/>: first-press-select then
+/// second-tap-confirm on the launcher. The slot node and its merchant entry survive the restock; only the
+/// card/relic/potion model changes, which is exactly the identity the launcher's selection must key on, so every
+/// purchase also checks that the replacement did not inherit the confirmation.
 /// </summary>
 internal sealed partial class TestDriver
 {

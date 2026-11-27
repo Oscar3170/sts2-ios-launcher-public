@@ -25,7 +25,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// </summary>
 internal sealed partial class TestDriver
 {
-    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--touchspire-test=reward-guard</c>.</summary>
+    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--sts2mobile-test=reward-guard</c>.</summary>
     internal static async Task RunLauncherRewardGuardAsync(TestOptions options, TestReport report,
         ScreenshotService screenshots, VirtualPointer pointer)
     {

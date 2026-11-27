@@ -43,8 +43,8 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// The grid's own bottom scroll limit. It is not simply the viewport-to-content difference: the game sizes the scroll
-    /// content with its bottom padding and clamps to <c>ScrollLimitBottom</c> (which TouchSpireUI overrides). Read the
-    /// grid's live value so both hosts report the limit the game actually applies.
+    /// content with its bottom padding and clamps to <c>ScrollLimitBottom</c>. Read the grid's live value so the host
+    /// reports the limit the game actually applies.
     /// </summary>
     private static float GridScrollLimitBottom(NCardGrid grid)
     {
@@ -460,7 +460,7 @@ internal sealed partial class TestDriver
     /// <summary>
     /// Checks every native Back the screen currently shows: an enabled one must be wholly inside the safe rect and clear of
     /// the footer tips, a disabled one wholly outside the canvas. Portrait only: landscape is the game's own layout, and the
-    /// host partials own the safe rect (the reference host keeps the game's edge overhang).
+    /// host partials own the safe rect.
     /// </summary>
     private void CheckScreenBacks(string name, Control screen)
     {

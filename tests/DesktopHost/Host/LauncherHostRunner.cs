@@ -13,9 +13,9 @@ using STS2Mobile.DesktopHost.Harness;
 namespace STS2Mobile.DesktopHost;
 
 /// <summary>
-/// The test run on the launcher host, started by <see cref="LauncherHostEntry"/> when <c>--touchspire-test</c> is present.
+/// The test run on the launcher host, started by <see cref="LauncherHostEntry"/> when <c>--sts2mobile-test</c> is present.
 /// Scenarios: with <c>STS2_PORTRAIT_PROOF</c> set, the launcher's own <c>PortraitProof</c> is run and driven (screenshot and
-/// acknowledgement per step); otherwise <c>menu</c>, <c>touch-probe</c>, the shared harness scenarios (<c>potion-reward</c>,
+/// acknowledgement per step); otherwise <c>menu</c>, <c>touch-probe</c>, the harness scenarios (<c>potion-reward</c>,
 /// <c>orbs-ovicopter</c>, <c>enemy-order</c>, <c>decimillipede</c>, <c>hand-rows</c>, <c>hand-selection</c>,
 /// <c>regent-stars</c>, <c>combat-piles</c>, <c>status-scaling</c>, <c>shop</c>, <c>rewards</c>, <c>treasure</c>,
 /// <c>rest</c>, <c>rest-options</c>, <c>rest-tour</c>, <c>deck-view</c>, <c>upgrade</c>, <c>enchant</c>, <c>transform</c>, <c>map</c>,
@@ -87,7 +87,7 @@ internal sealed class LauncherHostRunner
         await new LauncherHostRunner(tree, options, wiring, wiringError, captureError, before, source).RunInternalAsync();
     }
 
-    // Seconds since the engine started, which is the clock run-test.sh's timeout is closest to.
+    // Seconds since the engine started, which is the clock run.sh's timeout is closest to.
     private static double Uptime => Time.GetTicksMsec() / 1000.0;
 
     private bool PastDeadline => Uptime > _deadlineSeconds;
@@ -322,9 +322,9 @@ internal sealed class LauncherHostRunner
     }
 
     /// <summary>
-    /// The main-menu scenarios shared with the TouchSpire host (<c>menus</c>, <c>menu-hover</c>, <c>menu-utilities</c>,
-    /// <c>settings</c>): no run is started except the isolated saved-run fixture <c>menu-hover</c> needs. The flow, the taps
-    /// and the T5 gate are shared; this host's screen geometry is LauncherMenuChecks.cs.
+    /// The main-menu scenarios (<c>menus</c>, <c>menu-hover</c>, <c>menu-utilities</c>, <c>settings</c>): no run is
+    /// started except the isolated saved-run fixture <c>menu-hover</c> needs. The flow, the taps and the T5 gate come from
+    /// the harness; this host's screen geometry is LauncherMenuChecks.cs.
     /// </summary>
     private async Task RunMenuScenarioAsync()
     {
@@ -383,7 +383,7 @@ internal sealed class LauncherHostRunner
             _report.Check("touch-probe-direct", probe.SawAll,
                 $"Input.ParseInputEvent -> Root.WindowInput: {probe.Describe()}; expected press at {toWindow * start}");
 
-            // Our harness's injection (VirtualPointer, touch mode), linked unchanged from tests/TouchSpire.TestHarness.
+            // Our harness's injection (VirtualPointer, touch mode).
             probe.Reset();
             var pointer = new VirtualPointer(_tree, PointerMode.Touch);
             await pointer.DragAsync(start, end, steps: 4);
@@ -456,7 +456,7 @@ internal sealed class LauncherHostRunner
     }
 
     /// <summary>
-    /// The harness scenarios that run on both hosts: <c>potion-reward</c> (Attack Potion use, Peek, Skip and select),
+    /// The harness scenarios: <c>potion-reward</c> (Attack Potion use, Peek, Skip and select),
     /// <c>orbs-ovicopter</c> (a real End Turn press, native eggs and hatching, three-to-ten orbs), <c>status-scaling</c>
     /// (the native power row for the player, a lone small enemy and the act boss), the shop scenarios and, since Batch B,
     /// <c>rewards</c>, <c>rewards-variants</c> (the seven-row loot list, alternative counts, choose-a-card 1/2/4/5, relic
@@ -470,14 +470,14 @@ internal sealed class LauncherHostRunner
     private async Task RunHarnessScenarioAsync()
     {
         // The launcher's portrait handlers (PhoneTouchCards, PhoneSelectConfirm, the tap guard) listen for screen touches;
-        // touch mode also matches every other launcher-host run the broker starts (run-test.sh --touch).
+        // touch mode also matches every other launcher-host run the broker starts (run.sh --touch).
         var pointer = new VirtualPointer(_tree, PointerMode.Touch);
         await TestDriver.RunLinkedScenarioAsync(_options, _report, _screenshots, pointer);
     }
 
     /// <summary>
-    /// The launcher's own combat-stage acceptance run (C1/C2/C3): the fixed encounter fixture from TouchSpire's
-    /// <c>combat-stage</c> scenario, measured against the launcher's portrait bands. The scenario and its geometry live in
+    /// The launcher's own combat-stage acceptance run (C1/C2/C3): the fixed encounter fixture from the <c>combat-stage</c>
+    /// scenario, measured against the launcher's portrait bands. The scenario and its geometry live in
     /// LauncherStageChecks.cs, which is compiled only into this host.
     /// </summary>
     private async Task RunStageEncountersAsync()
@@ -719,8 +719,8 @@ internal sealed class LauncherHostRunner
     }
 
     /// <summary>
-    /// The game under test is the game plus this host: a Harmony patch from any other mod (the retired TouchSpireUI, BaseLib,
-    /// a gameplay mod) changes what the checks measure.
+    /// The game under test is the game plus this host: a Harmony patch from any other mod (BaseLib, a gameplay mod) changes
+    /// what the checks measure.
     /// </summary>
     private void ReportOnlyOwnPatches()
     {

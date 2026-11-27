@@ -14,16 +14,15 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The launcher host's answers for the shared scenarios' host-specific input. The declarations live in HarnessCore.cs, which
-/// this project compiles; the TouchSpire host implements them in HostRewardChecks.cs. In portrait on this host a first press
-/// only selects the item (its native reticle, with its native hover tip) and the second tap on the same instance confirms
-/// through the screen's own native commit path (card reward option, choose-a-card SelectHolder, treasure PickRelic); there is
-/// no Choose button any more. A treasure chest whose every relic can be taken (a single player with no more visible relics
-/// than picks left: a normal one-relic chest, or the Blitz chest's two relics for two rounds) keeps the game's own single
-/// tap instead: its release takes the relic and no selection or reticle appears (<see cref="ReadTreasureChestContract"/>).
-/// Landscape is the game's own single tap, so these
-/// take the item with one press/release and check that no selection or reticle appears (the select-then-confirm pass is
-/// portrait-only).
+/// The launcher host's answers for the shared scenarios' host-specific input. The declarations live in HarnessCore.cs,
+/// which this project compiles. In portrait on this host a first press only selects the item (its native reticle, with its
+/// native hover tip) and the second tap on the same instance confirms through the screen's own native commit path (card
+/// reward option, choose-a-card SelectHolder, treasure PickRelic); there is no Choose button any more. A treasure chest
+/// whose every relic can be taken (a single player with no more visible relics than picks left: a normal one-relic chest,
+/// or the Blitz chest's two relics for two rounds) keeps the game's own single tap instead: its release takes the relic
+/// and no selection or reticle appears (<see cref="ReadTreasureChestContract"/>). Landscape is the game's own single tap,
+/// so these take the item with one press/release and check that no selection or reticle appears (the select-then-confirm
+/// pass is portrait-only).
 /// </summary>
 internal sealed partial class TestDriver
 {

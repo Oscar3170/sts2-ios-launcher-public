@@ -84,7 +84,7 @@ internal static class PerfClock
 /// </summary>
 internal sealed partial class TestDriver
 {
-    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--touchspire-test=perf-combat</c>.</summary>
+    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--sts2mobile-test=perf-combat</c>.</summary>
     internal static async Task RunLauncherPerfCombatAsync(TestOptions options, TestReport report, ScreenshotService screenshots,
         VirtualPointer pointer)
     {

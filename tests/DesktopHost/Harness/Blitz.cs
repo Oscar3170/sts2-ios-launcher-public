@@ -27,9 +27,8 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// The Blitz run: Neow's three-card blessing, the native Blitz chest (two relics for two rounds, so every relic is taken on
 /// the game's own single tap), the native Blitz merchant room and its stock, the map marker, the fight and its loot, the
 /// card reward and Proceed. The chest runs before the merchant and the fight so a random fight relic cannot change its
-/// fixture (Silver Crucible would). The run is the same on both hosts; the header band, the merchant room's framing, the
-/// stock inside the cloth, the action lane and the loot panel are host partials (TouchSpireUI's in HostShopChecks.cs, the
-/// launcher's in TouchSpire.LauncherHost/src/LauncherShopChecks.cs), and a card reward is taken through
+/// fixture (Silver Crucible would). The header band, the merchant room's framing, the stock inside the cloth, the action
+/// lane and the loot panel are host partials (Host/LauncherShopChecks.cs), and a card reward is taken through
 /// <see cref="TakeBlitzRewardCardAsync"/> because the launcher confirms on a second tap.
 /// </summary>
 internal sealed partial class TestDriver

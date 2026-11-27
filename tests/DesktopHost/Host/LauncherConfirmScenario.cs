@@ -115,7 +115,7 @@ internal sealed partial class TestDriver
     private static readonly FieldInfo? TipCardsField =
         typeof(NHoverTipSet).GetField("_cardHoverTipContainer", BindingFlags.Instance | BindingFlags.NonPublic);
 
-    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--touchspire-test=select-confirm</c>.</summary>
+    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--sts2mobile-test=select-confirm</c>.</summary>
     internal static async Task RunLauncherSelectConfirmAsync(TestOptions options, TestReport report,
         ScreenshotService screenshots, VirtualPointer pointer)
     {

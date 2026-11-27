@@ -21,17 +21,15 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>shop-states</c> on both hosts: the merchant's exhausted and sold-out states. Three native states were never reached
+/// <c>shop-states</c>: the merchant's exhausted and sold-out states. Three native states were never reached
 /// by the shop scenarios: a Blitz merchant after all its picks are spent (used slots with their art gone, the rest
 /// dimmed and untappable, the choices-remaining line changing and, on the launcher, still fitting the cloth), the
 /// <c>TwoMoreChoices</c> entry that raises the count again, a normal shop with every card, relic and potion sold and the
 /// removal used, and a shop entered in a later act.
 /// <para>
-/// The run is the same on both hosts. Every layout answer is a host partial: the footer's fit in
-/// <c>CheckBlitzFooterLayout</c> and the leftover selection reticle in <c>ShopHighlightCount</c> live in
-/// HostShopChecks.cs for the reference host and TouchSpire.LauncherHost/src/LauncherShopChecks.cs for the launcher.
-/// Purchases go through <see cref="ConfirmShopSlotAsync"/>, which is a single native tap on the reference host and the
-/// launcher's first-press-select / second-tap-confirm flow.
+/// Every layout answer is a host partial: the footer's fit in <c>CheckBlitzFooterLayout</c> and the leftover selection
+/// reticle in <c>ShopHighlightCount</c> live in Host/LauncherShopChecks.cs. Purchases go through
+/// <see cref="ConfirmShopSlotAsync"/>, the launcher's first-press-select / second-tap-confirm flow.
 /// </para>
 /// <para>
 /// The Blitz stock is seeded from a fixture: the merchant's six random entries can open card, relic or potion screens
@@ -328,7 +326,9 @@ internal sealed partial class TestDriver
         return line.GetFormattedText();
     }
 
-    /// <summary>The choices-remaining line's text, plus each host's answer about where it sits and whether it fits.</summary>
+    /// <summary>
+    /// The choices-remaining line's text, plus the host's answer about where it sits and whether it fits.
+    /// </summary>
     private void CheckBlitzFooter(NMerchantInventory inventory, Control? footer, int remaining, string when)
     {
         string textStep = "shop_states_blitz_footer_text_" + when;

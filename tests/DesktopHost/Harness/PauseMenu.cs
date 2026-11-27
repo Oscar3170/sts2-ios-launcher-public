@@ -9,9 +9,9 @@ namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
 /// The <c>pause-menu</c> scenario: the top bar's gear opens the pause menu in a live fight, Settings opens and returns without
-/// resuming, Resume and Back keep the same combat room, and reopening does not accumulate scale. The flow and step names are
-/// shared; the layout answer (44 point rows, the title, the panel's place) is the host's
-/// (HostMenuChecks.cs / LauncherMenuChecks.cs). The T5 gate runs on the pause menu and on the in-run Settings it opens.
+/// resuming, Resume and Back keep the same combat room, and reopening does not accumulate scale. The layout answer (44 point
+/// rows, the title, the panel's place) is in Host/LauncherMenuChecks.cs. The T5 gate runs on the pause menu and on the
+/// in-run Settings it opens.
 /// </summary>
 internal sealed partial class TestDriver
 {

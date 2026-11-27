@@ -13,8 +13,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <summary>
 /// <c>header-inventory</c>: the run header, the potion row and the relic band. The fixture (real owned relics and potions)
 /// and the stage-stability comparisons are host-neutral; the band geometry, the scrolling interaction and the presentational
-/// modes are partial methods implemented per host (TouchSpireUI in HostLayoutChecks.cs, the launcher in
-/// TouchSpire.LauncherHost/src/LauncherHeaderChecks.cs).
+/// modes are partial methods implemented by the host (Host/LauncherHeaderChecks.cs).
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -77,7 +76,7 @@ internal sealed partial class TestDriver
     }
 
     /// <summary>
-    /// The native hold inspection both hosts share: a stationary finger shows the holder's own tip (inside the safe frame),
+    /// The native hold inspection: a stationary finger shows the holder's own tip (inside the safe frame),
     /// the release opens the native relic inspector and a tap outside it closes that screen.
     /// </summary>
     private async Task CheckRelicHoldAndInspectAsync(string id, NRelicInventoryHolder holder, bool capture = false)

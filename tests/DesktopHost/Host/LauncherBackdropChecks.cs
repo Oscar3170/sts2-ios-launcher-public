@@ -55,7 +55,9 @@ internal sealed partial class TestDriver
         bool CustomArena,
         bool FloorAligned);
 
-    /// <summary>Entry for <see cref="TouchSpire.LauncherHost.LauncherHostRunner"/>'s <c>stage-backdrops</c> scenario.</summary>
+    /// <summary>
+    /// Entry for <see cref="STS2Mobile.DesktopHost.LauncherHostRunner"/>'s <c>stage-backdrops</c> scenario.
+    /// </summary>
     internal static async Task RunBackdropScenarioAsync(TestOptions options, TestReport report,
         ScreenshotService screenshots, VirtualPointer pointer)
     {

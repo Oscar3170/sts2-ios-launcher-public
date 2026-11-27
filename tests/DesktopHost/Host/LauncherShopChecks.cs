@@ -32,8 +32,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <para>
 /// Everything here is measured against the launcher's own contract: <see cref="SafeAreaCanvas"/>, <see cref="PortraitBands"/>
 /// and <c>PortraitShopLayout.ShopPage</c>, with the merchant inventory's cloth named <c>PhoneShopCloth</c>, its tabs
-/// <c>PhoneShopCardsTab</c>/<c>PhoneShopItemsTab</c>, and the selection published by <c>PhoneSelectConfirm</c>. Compiled only
-/// into TouchSpire.LauncherHost; the TouchSpire host's answers are in HostShopChecks.cs.
+/// <c>PhoneShopCardsTab</c>/<c>PhoneShopItemsTab</c>, and the selection published by <c>PhoneSelectConfirm</c>.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver
@@ -44,8 +43,8 @@ internal sealed partial class TestDriver
     private const string LauncherSelectedReticleNode = "PhoneSelectedReticle";
     // PortraitShopLayout.ShopPriceUnits: the price number's on-screen height the launcher's portrait shop keeps.
     private const float LauncherShopPriceUnits = 32f;
-    // The measured opaque backdrop of the native merchant room, in BgContainer space (TouchSpireUI's measurements of the
-    // same spine attachments; the launcher keeps the native room, so the same rectangle applies).
+    // The measured opaque backdrop of the native merchant room, in BgContainer space (the original reference layout's
+    // measurements of the same spine attachments; the launcher keeps the native room, so the same rectangle applies).
     private static readonly Rect2 NativeShopArtRect = new(-320f, -60f, 2560f, 1200f);
     private static readonly Rect2 WeirdShopArtRect = new(-575.64f, -179.23f, 2433f, 1440f);
     // Numbered page switch, so repeated switches report distinct steps.

@@ -14,7 +14,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
 /// <c>orbs</c>: the Defect queue's behaviour from three orbs to the native maximum and back. The counts and the native
-/// queue order are host-neutral; the arc's placement, spacing and value labels are checked by each host's own
+/// queue order are host-neutral; the arc's placement, spacing and value labels are checked by the host's own
 /// <see cref="CheckOrbLayout"/> (OrbChecks.cs), and the launcher additionally samples every drawn frame across each
 /// transition to prove the arc tweens instead of snapping.
 /// </summary>

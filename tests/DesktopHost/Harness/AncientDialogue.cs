@@ -13,7 +13,7 @@ internal sealed partial class TestDriver
     /// <summary>
     /// The stacked-dialogue fixture (L8): six real bubbles, each visible over the stable art, earlier ones dimmed and
     /// re-brightened by the native hover, rewards hidden until the last line, then the last bubble above the options. The
-    /// art clip, its crop and the content column are the same native/portrait nodes on both hosts.
+    /// art clip, its crop and the content column are the same native portrait nodes.
     /// </summary>
     private async Task RunAncientDialogueScenarioAsync()
     {
@@ -124,10 +124,10 @@ internal sealed partial class TestDriver
     }
 
     /// <summary>
-    /// Whether the ancient painting is still where the setup put it on this dialogue line. TouchSpireUI compares the whole art
-    /// rectangle with the one captured after setup, unchanged; the launcher places the painting once and only eases the clip's
-    /// bottom edge, so it holds Position and Size.X fixed, holds the camera fixed, and requires the clip height recorded on
-    /// line 1 to persist through the dialogue lines (the final line may show the rewards height). Detail prints top/width/height.
+    /// Whether the ancient painting is still where the setup put it on this dialogue line. The launcher places the painting
+    /// once and only eases the clip's bottom edge, so it holds Position and Size.X fixed, holds the camera fixed, and
+    /// requires the clip height recorded on line 1 to persist through the dialogue lines (the final line may show the
+    /// rewards height). Detail prints top/width/height.
     /// </summary>
     private partial bool CheckAncientArtStable(int index, int count, Control? art, Rect2 initialArt, Control artScene,
         Transform2D initialCamera, ref float? dialogueClipHeight, out string detail);

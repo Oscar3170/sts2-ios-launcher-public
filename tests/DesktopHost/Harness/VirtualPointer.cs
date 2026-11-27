@@ -67,8 +67,8 @@ internal sealed class VirtualPointer
     // is learned only from a read that confirms the correction landed, and is applied to later warps so the engine's pointer
     // is already right in the frame the injected event is processed. The offset is in canvas units.
     /// <summary>
-    /// Set by the launcher host's pointer shim. Only that host needs the canvas warp and its learned offset; the
-    /// TouchSpire host keeps the harness's original window-relative warp so its own input/targeting timing is unchanged.
+    /// Set by the launcher host's pointer shim: its game paths read the OS cursor, so they need the canvas warp and its
+    /// learned offset.
     /// </summary>
     internal static bool UseViewportWarp { get; set; }
 
@@ -88,7 +88,7 @@ internal sealed class VirtualPointer
     // focus, or another window owns the cursor). Retry the same target; never add that read to the correction. The
     // bound is in window pixels, scaled by the canvas: a WM frame/title bar is ~53-100 window px, while the stray-cursor
     // reads this guards against are hundreds of pixels. A fixed canvas-unit bound wrongly rejected a 53-px frame offset
-    // at the 1680-wide TouchSpireUI canvas (167 canvas units) while accepting it at 720 wide (125 units).
+    // at the original 1680-wide reference canvas (167 canvas units) while accepting it at 720 wide (125 units).
     private const float MaxSettleCorrectionPixels = 128f;
 
     /// <summary>
@@ -165,8 +165,7 @@ internal sealed class VirtualPointer
 
     /// <summary>
     /// The pointer warp for a harness move. The launcher host installs the pointer shim because its game paths read the OS
-    /// cursor; there the canvas warp with its learned offset is used. The TouchSpire host's own input and targeting code was
-    /// written against the original window-relative warp, so it keeps exactly that path, with no extra frame waits.
+    /// cursor; there the canvas warp with its learned offset is used.
     /// </summary>
     private async Task WarpForMoveAsync(Vector2 canvasPoint)
     {
@@ -272,8 +271,8 @@ internal sealed class VirtualPointer
     private static bool _guardBlocked;
 
     /// <summary>
-    /// Registers the scenario's window/pointer guard. Called once at each host's scenario entry; the state is static so
-    /// every VirtualPointer instance on the host (the entries create several) shares it.
+    /// Registers the scenario's window/pointer guard. Called once at the host's scenario entry; the state is static so
+    /// every VirtualPointer instance (the entries create several) shares it.
     /// </summary>
     internal static void RegisterWindowGuard(SceneTree tree, TestReport report)
     {
@@ -326,9 +325,9 @@ internal sealed class VirtualPointer
             await tree.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
 
         Vector2 point = ParkPoint(viewport);
-        // Viewport.WarpMouse and Viewport.GetMousePosition share one coordinate space on both hosts. Input.WarpMouse is
-        // relative to the window-manager frame (its title bar), which on the TouchSpireUI host lands ~53 window pixels
-        // above the client point and read back as a false "obstructed" (Y short by a varied canvas amount, X right).
+        // Viewport.WarpMouse and Viewport.GetMousePosition share one coordinate space. Input.WarpMouse is relative to the
+        // window-manager frame (its title bar), which lands ~53 window pixels above the client point and reads back as a
+        // false "obstructed" (Y short by a varied canvas amount, X right).
         RequestSettledWarp(tree, viewport, point);
         Vector2 mouse = viewport.GetMousePosition();
         for (int i = 0; i < 10 && mouse.DistanceTo(point) > GuardTolerance; i++)

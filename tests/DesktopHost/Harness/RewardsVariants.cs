@@ -25,14 +25,14 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>rewards-variants</c> on both hosts: the count variants the rewards audit found untested. The loot list gets seven rows
+/// <c>rewards-variants</c>: the count variants the rewards audit found untested. The loot list gets seven rows
 /// (gold, potion, two card rewards, two relics and a second gold), so the window shrinks, its mask is re-cut and the list
 /// scrolls: every row must be reachable, the last one inside the mask and the Proceed/Skip in its lane, and a card taken
 /// from the second card row (which has only its Skip alternative) must leave the first card row in the list. Then the same
 /// choice screens over a rest site: a card reward with three alternatives (the native generator refuses more than two, so
 /// the screen is driven directly), choose-a-card with 1, 2, 4 and 5 cards, relic choices with 1, 2 and 5 relics, and the
-/// ScrollBoxes bundle choice. Card, relic and bundle sizes are each host's own geometry: the launcher answers are partials
-/// in LauncherRewardChecks.cs; TouchSpireUI implements none, so its run only records the captures and the native counts.
+/// ScrollBoxes bundle choice. Card, relic and bundle sizes are the launcher's own geometry, answered by partials in
+/// Host/LauncherRewardChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -342,8 +342,8 @@ internal sealed partial class TestDriver
             Task<IEnumerable<CardModel>> selected = choose.CardsSelected();
             if (count == 2 && holders.Count > 0)
             {
-                // The launcher's first tap only selects; the second confirms. TouchSpireUI's native release takes it on the
-                // first, so the second tap is only sent while the screen is still open.
+                // The launcher's first tap only selects; the second confirms, so the second tap is only sent while the
+                // screen is still open.
                 int confirms = 0;
                 await _pointer.TapAsync(CenterOf(holders[0].Hitbox));
                 await WaitSecondsAsync(0.6);
@@ -423,8 +423,8 @@ internal sealed partial class TestDriver
             Task<IEnumerable<RelicModel>> selected = screen.RelicsSelected();
             if (count == 2 && holders.Count > 0)
             {
-                // Select then confirm: the launcher's first tap shows the relic's reticle, the second taps it again; one tap is
-                // enough on TouchSpireUI, so the second is only sent while the screen is still open.
+                // Select then confirm: the launcher's first tap shows the relic's reticle, the second taps it again, so that
+                // second tap is only sent while the screen is still open.
                 await _pointer.TapAsync(CenterOf(holders[0]));
                 await WaitSecondsAsync(0.6);
                 if (screen.IsVisibleInTree() && !selected.IsCompleted)

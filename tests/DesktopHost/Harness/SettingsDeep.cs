@@ -162,8 +162,7 @@ internal sealed partial class TestDriver
         if (dropdowns.Length == 0)
         {
             _report.Skip("settings_deep_graphics_dropdown_open",
-                "this host's Graphics page has no native dropdown (the phone rows replace the desktop ones); " +
-                "the launcher host runs the game's own rows, so this is the reference host's state");
+                "the Graphics page has no native dropdown (the phone rows replace the desktop ones)");
             return;
         }
 
@@ -301,8 +300,8 @@ internal sealed partial class TestDriver
     /// <summary>
     /// Taps outside the open list but inside the settings rows, at a clean top-right point: the host dismiss point is low on
     /// the screen where, in a run, the settings Back button sits (the outside tap would close the screen instead of the list).
-    /// The launcher dismisses there for real; the reference host's outside tap is informational and the list is closed
-    /// through its own <c>CloseDropdown</c> afterwards so the scenario can continue.
+    /// The launcher dismisses there for real; a list the tap leaves open is closed through its own <c>CloseDropdown</c>
+    /// afterwards so the scenario can continue.
     /// </summary>
     private async Task DismissDropdownAsync(NDropdown dropdown, string slug, Control clip)
     {

@@ -16,7 +16,7 @@ internal sealed partial class TestDriver
 {
     /// <summary>
     /// An exact native Calling Bell tip over a full-width ancient option (fixture, not a reward selection). The tip's own
-    /// placement and scale are the host's: TouchSpireUI's in HostLayoutChecks.cs, the launcher's in LauncherEventChecks.cs.
+    /// placement and scale are the launcher's: Host/LauncherEventChecks.cs.
     /// </summary>
     private async Task RunEventPopupAsync(RunState state)
     {

@@ -15,10 +15,9 @@ using MegaCrit.Sts2.addons.mega_text;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The standard-event scenario (L7), shared by both hosts: enter a real default-scene event, inspect the page, drag its copy
-/// and choices (a drag must never choose), take the first option, see the result page pinned, and Proceed back to the map.
-/// TouchSpireUI's own checks (the translucent text panel, the desktop veil, the row text fit) live in HostLayoutChecks.cs;
-/// the launcher's composition (art crop and fade, the text slot, four pinned rows, the first drawn frame, exclusions) in
+/// The standard-event scenario (L7): enter a real default-scene event, inspect the page, drag its copy and choices (a drag
+/// must never choose), take the first option, see the result page pinned, and Proceed back to the map. The launcher's
+/// composition (art crop and fade, the text slot, four pinned rows, the first drawn frame, exclusions) lives in
 /// LauncherEventChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
@@ -87,10 +86,10 @@ internal sealed partial class TestDriver
         await CheckEventExclusionsAsync(runState);
     }
 
-    /// <summary>TouchSpireUI's configured row minimums; the launcher pins four full-size rows instead.</summary>
+    /// <summary>The launcher pins four full-size rows.</summary>
     private partial void CheckEventOptionMinimums(IReadOnlyList<NEventOptionButton> options);
 
-    /// <summary>The host's composed event nodes, by the host's own names (the TSUI host keeps TouchSpirePortrait…).</summary>
+    /// <summary>The host's composed event nodes, by the launcher's own names.</summary>
     private partial string EventArtNodeName();
     private partial string EventArtFadeNodeName();
     private partial string EventTextSlotNodeName();
@@ -103,7 +102,7 @@ internal sealed partial class TestDriver
     /// <summary>The event's own text at the host's readable size.</summary>
     private partial void CheckEventLabelFonts(IReadOnlyList<MegaRichTextLabel> labels);
 
-    /// <summary>The whole page: TouchSpireUI's panel and veil, the launcher's crop, fade, slot and pinned rows.</summary>
+    /// <summary>The whole page: the launcher's crop, fade, slot and pinned rows.</summary>
     private partial void CheckEventPage(NEventLayout layout, IReadOnlyList<NEventOptionButton> options,
         IReadOnlyList<MegaRichTextLabel> labels);
 

@@ -23,14 +23,12 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The shop scenarios, shared by both hosts: the fixture (merchant room, weird event shop, Courier restock), the room and
-/// inventory geometry, the Cards/Items pages, hold inspection, swipes, purchases, card removal and the return to the map.
+/// The shop scenarios: the fixture (merchant room, weird event shop, Courier restock), the room and inventory geometry,
+/// the Cards/Items pages, hold inspection, swipes, purchases, card removal and the return to the map.
 /// <para>
-/// The stock's shape is TouchSpireUI's (rotated rug, 190-unit tabs, staggered Power) or the launcher's (cloth, two
-/// <c>NSettingsTab</c> pages, rows) depending on the host, so every assertion about it is a host partial; the TSUI
-/// implementations live in HostShopChecks.cs, the launcher's in TouchSpire.LauncherHost/src/LauncherShopChecks.cs. The
-/// interaction is the same on both: <see cref="ConfirmShopSlotAsync"/> is one tap on TouchSpireUI and first-press-select
-/// plus second-tap-confirm on the launcher.
+/// The stock's shape is the launcher's (cloth, two <c>NSettingsTab</c> pages, rows), so every assertion about it is a host
+/// partial; the implementations live in Host/LauncherShopChecks.cs. The interaction is first-press-select plus
+/// second-tap-confirm on the launcher through <see cref="ConfirmShopSlotAsync"/>.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver

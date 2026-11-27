@@ -44,13 +44,12 @@ namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
 /// The host-neutral part of <see cref="TestDriver"/>: the services every scenario uses (tree, report, screenshots, pointer,
-/// cancellation), the run start and combat entry, and the waits, captures and finds. It references no TouchSpireUI type, so
-/// it is compiled into both TouchSpire.TestHarness and TouchSpire.LauncherHost.
+/// cancellation), the run start and combat entry, and the waits, captures and finds.
 /// <para>
-/// Behaviour that depends on the host's own portrait layout is declared here as a partial method and implemented in a file
-/// that only one host compiles: the TouchSpire layout assertions in HostLayoutChecks.cs, the launcher's tap-then-Choose input
-/// and combat-stage run in TouchSpire.LauncherHost. A <c>partial void</c> with no implementation is dropped by the compiler,
-/// so the launcher still runs the behaviour checks without the TouchSpire geometry ones.
+/// Behaviour that depends on the launcher's portrait layout is declared here as a partial method and implemented in the
+/// Host/ files: the layout assertions, the tap-then-Choose input and the combat-stage run. A <c>partial void</c> with no
+/// implementation is dropped by the compiler, so a scenario still runs its behaviour checks without the host's geometry
+/// ones.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver
@@ -72,7 +71,7 @@ internal sealed partial class TestDriver
     private static readonly FieldInfo? AssetLoaderCurrentSession = AccessTools.Field(typeof(NAssetLoader), "_currentSession");
     private static readonly FieldInfo? AssetSessionName = AccessTools.Field(typeof(AssetLoadingSession), "_name");
 
-    // Native animation state for the condition waits below. The fields are private (found by name, so both hosts work), and
+    // Native animation state for the condition waits below. The fields are private (found by name), and
     // only their running/not-running bit is read: the checks still read the same settled state they read after a fixed sleep.
     private static readonly FieldInfo? CreatureScaleTween = AccessTools.Field(typeof(NCreature), "_scaleTween");
     private static readonly FieldInfo? CreatureShakeTween = AccessTools.Field(typeof(NCreature), "_shakeTween");
@@ -117,8 +116,8 @@ internal sealed partial class TestDriver
     }
 
     /// <summary>
-    /// Runs one of the scenarios that both hosts share, on a host that owns the run itself (the launcher host). The caller
-    /// has already waited for the main menu and keeps its own report, screenshots and pointer.
+    /// Runs one of the shared scenarios on the launcher host, which owns the run itself. The caller has already waited for
+    /// the main menu and keeps its own report, screenshots and pointer.
     /// </summary>
     internal static async Task RunLinkedScenarioAsync(TestOptions options, TestReport report, ScreenshotService screenshots,
         VirtualPointer pointer)
@@ -439,13 +438,13 @@ internal sealed partial class TestDriver
         await WaitUntilAsync(() => ((Tween?)AccessTools.Field(typeof(NPotionPopup), "_tween").GetValue(popup))?.IsRunning() != true,
             prefix + " action panel settled", ShortWait);
         _report.Pass(prefix + "_native_popup_created", $"tapped {holder.GetGlobalRect()}");
-        // The popup's placement and touch targets are the host's own layout: TouchSpireUI on the TouchSpire host.
+        // The popup's placement and touch targets are the launcher's own layout.
         CheckPotionPopupLayout(prefix, popup);
         return popup;
     }
 
-    // Implemented by both hosts: popup placement inside the host's portrait band and safe frame, touch target sizes and
-    // native tip clearance (TouchSpireUI in HostLayoutChecks.cs, the launcher in LauncherHeaderChecks.cs).
+    // Implemented by the host: popup placement inside the portrait band and safe frame, touch target sizes and native tip
+    // clearance (LauncherHeaderChecks.cs).
     partial void CheckPotionPopupLayout(string prefix, NPotionPopup popup);
 
     private static NPotionPopupButton Action(NPotionPopup popup, string name) => popup.GetNode<NPotionPopupButton>($"%{name}Button");
@@ -1070,12 +1069,10 @@ internal sealed partial class TestDriver
         NButton confirm, CardModel last);
 
     // ---- Shop and Blitz (Batch B) ---------------------------------------------------------------------------------------
-    // The shop scenarios run on both hosts. TouchSpireUI reflows the stock into its Cards/Items pages under a rotated rug;
-    // the launcher lays the same groups out in rows and pages them between a cloth, two tabs and select-then-confirm
-    // purchases. Everything the two do differently is a host partial: the TSUI implementations are in HostShopChecks.cs,
-    // the launcher's in TouchSpire.LauncherHost/src/LauncherShopChecks.cs.
+    // The shop scenarios run on the launcher host: the stock's groups are laid out in rows and paged between a cloth, two
+    // tabs and select-then-confirm purchases. The layout is a host partial in LauncherShopChecks.cs.
 
-    /// <summary>The host's cloth node under the merchant inventory (TSUI's rotated rug, the launcher's cloth).</summary>
+    /// <summary>The host's cloth node under the merchant inventory.</summary>
     private partial string ShopClothNodeName();
     /// <summary>The host's Cards / Items tab nodes, empty in a shop without pages (weird, Blitz).</summary>
     private partial string ShopCardsTabNodeName();
@@ -1087,20 +1084,18 @@ internal sealed partial class TestDriver
     /// <summary>The Items page's own layout: selected stock, target sizes and price legibility.</summary>
     private partial void CheckShopItemsLayout(NMerchantInventory inventory, Rect2 clip);
     /// <summary>
-    /// The room around the inventory: TouchSpireUI frames the merchant, party and backdrop itself; the launcher keeps the
-    /// native room and must still cover the canvas below the header.
+    /// The room around the inventory: the launcher keeps the native room and must still cover the canvas below the header.
     /// </summary>
     private partial void CheckShopRoomFraming(NMerchantButton merchant, bool weird);
 
     /// <summary>
-    /// Confirms one slot through the host's native commit path: TouchSpireUI taps once (the native release buys), the
-    /// launcher's first press selects and its second tap confirms.
+    /// Confirms one slot through the host's native commit path: the launcher's first press selects and its second tap
+    /// confirms.
     /// </summary>
     private partial Task ConfirmShopSlotAsync(NMerchantSlot slot);
     /// <summary>
-    /// One purchase through the host's commit path. TouchSpireUI taps once; the launcher selects on the first press, checks
-    /// the reticle, selection and native tip with nothing bought, then confirms on the second tap and pays exactly the
-    /// listed price.
+    /// One purchase through the host's commit path. The launcher selects on the first press, checks the reticle, selection
+    /// and native tip with nothing bought, then confirms on the second tap and pays exactly the listed price.
     /// </summary>
     private partial Task BuyShopSlotAsync(NMerchantSlot slot);
     /// <summary>Launcher-only: a Courier restock clears the selection, so a further tap cannot buy the replacement.</summary>
@@ -1111,32 +1106,32 @@ internal sealed partial class TestDriver
     private partial Task CheckShopSwipeHostAsync(NMerchantSlot slot, int goldBefore, int commitsBefore, int clearsBefore);
     /// <summary>Launcher-only: closing the inventory clears the selection.</summary>
     private partial void CheckShopCleared(string reason, bool hadSelection, int commitsBefore, int clearsBefore);
-    /// <summary>Selects one stocked slot before a page change or a close, so the clear can be observed; TouchSpireUI no-ops.</summary>
+    /// <summary>Selects one stocked slot before a page change or a close, so the clear can be observed.</summary>
     private partial Task ArmShopSelectionAsync(NMerchantInventory inventory);
-    /// <summary>Whether a slot is selected right now (the launcher's select-then-confirm state); TouchSpireUI has none.</summary>
+    /// <summary>Whether a slot is selected right now (the launcher's select-then-confirm state).</summary>
     private partial bool ShopSelected();
     /// <summary>Launcher-only: the Proceed button is a reachable phone-sized target.</summary>
     private partial void CheckShopProceedTarget(Control proceed);
     /// <summary>The native deck-select preview a card removal opens; the host sizes and places it differently.</summary>
     private partial void CheckShopRemovalPreview(NCard previewCard, NConfirmButton confirm);
-    /// <summary>The launcher's select-then-confirm counters; TouchSpireUI has no selection so reports zero.</summary>
+    /// <summary>The launcher's select-then-confirm counters.</summary>
     private partial int ShopCommits();
     private partial int ShopClears();
     /// <summary>A point outside the shop's stock that dismisses the native inspector and clears any selection.</summary>
     private partial Vector2 ShopDismissPoint();
 
-    /// <summary>Blitz's own header band: TouchSpireUI measures its stone header and potion row.</summary>
+    /// <summary>Blitz's own header band: the map points on the canvas.</summary>
     private partial void CheckBlitzHeaderLayout(string name, NTopBar topBar);
-    /// <summary>The native Blitz merchant room (TouchSpireUI scales and underlays it) and its action lane.</summary>
+    /// <summary>The native Blitz merchant room and its action lane, with the merchant and party on the canvas.</summary>
     private partial void CheckBlitzMerchantLayout(NBlitzMerchantRoom room);
     /// <summary>Blitz stock inside the host's cloth, including the native choices-remaining footer.</summary>
     private partial void CheckBlitzInventoryLayout(NMerchantInventory inventory, NBlitzMerchantSlot[] slots);
     /// <summary>
     /// The choices-remaining footer after a purchase: the launcher checks that its text still fits the cloth at the
-    /// phone font size; the reference host only reports the line is present.
+    /// phone font size.
     /// </summary>
     private partial void CheckBlitzFooterLayout(NMerchantInventory inventory, Control footer, int remaining);
-    /// <summary>The number of host-owned selection reticles left anywhere in the inventory; the reference host has none.</summary>
+    /// <summary>The number of host-owned selection reticles left anywhere in the inventory.</summary>
     private partial int ShopHighlightCount(NMerchantInventory inventory);
     /// <summary>Neow's three-card blessing grid under the host's header.</summary>
     private partial void CheckBlitzChooseThreeLayout(NCardGrid grid, NGridCardHolder[] cards);
@@ -1144,12 +1139,12 @@ internal sealed partial class TestDriver
     private partial void CheckBlitzActionLane(string name, NProceedButton action, Rect2? content);
     /// <summary>
     /// Skip / Proceed in the loot screen's lane. The launcher's loot layout is Batch E (L12): at 9:16 its panel's bottom
-    /// right reaches into the native lane, so the launcher reports the measurement as deferred; TouchSpireUI checks it.
+    /// right reaches into the native lane, so the launcher reports the measurement as deferred.
     /// </summary>
     private partial void CheckBlitzLootAction(string name, NProceedButton action, Rect2? content);
     /// <summary>
     /// Whether Skip and Proceed hold one position in the loot lane. The launcher's loot layout is Batch E (L12), so it
-    /// reports the measurement as deferred there; TouchSpireUI keeps its own check.
+    /// reports the measurement as deferred there.
     /// </summary>
     private partial void CheckBlitzSkipProceedPosition(Vector2 skipCenter, Vector2 proceedCenter);
     /// <summary>The loot panel and its reward rows at phone size.</summary>
@@ -1158,12 +1153,11 @@ internal sealed partial class TestDriver
     private partial Task TakeBlitzRewardCardAsync(NCardRewardSelectionScreen screen, NGridCardHolder holder);
 
     // ---- Rewards, card screens and treasure (Batch B) -------------------------------------------------------------------
-    // These scenarios run on both hosts. Taking a card or a relic is the host's own input: TouchSpireUI's native release
-    // takes it on one tap; the launcher selects on the first press and confirms on the second tap of the same instance,
-    // except for a treasure chest whose every relic can be taken (a single player with no more visible relics than picks
-    // left: a normal one-relic chest), which keeps the game's own single tap. The rows' fonts and sizes, the choice
-    // screens' card/Skip geometry and the treasure room's framing are each host's own: the TouchSpire implementations are
-    // in HostRewardChecks.cs, the launcher's in TouchSpire.LauncherHost/src/LauncherRewardChecks.cs.
+    // Taking a card or a relic is the host's own input: the launcher selects on the first press and confirms on the second
+    // tap of the same instance, except for a treasure chest whose every relic can be taken (a single player with no more
+    // visible relics than picks left: a normal one-relic chest), which keeps the game's own single tap. The rows' fonts and
+    // sizes, the choice screens' card/Skip geometry and the treasure room's framing are host partials in
+    // LauncherRewardChecks.cs.
 
     /// <summary>A card is taken from the card reward screen.</summary>
     private partial Task TakeRewardCardAsync(NGridCardHolder holder);
@@ -1217,16 +1211,14 @@ internal sealed partial class TestDriver
         NTreasureRoomRelicCollection collection);
 
     // ---- Rest site (L9) --------------------------------------------------------------------------------------------------
-    // `rest` and `rest-tour` run on both hosts. TouchSpireUI scales the native option buttons to their phone size and leaves
-    // the room's art where the game framed it; the launcher grows the row, measures its touch targets and covers the canvas
-    // with the act's rest-site illustration. The TSUI implementations are in HostLayoutChecks.cs, the launcher's in
-    // TouchSpire.LauncherHost/src/LauncherRewardChecks.cs.
+    // `rest` and `rest-tour`: the launcher grows the row, measures its touch targets and covers the canvas with the act's
+    // rest-site illustration. The host implementation is in LauncherRewardChecks.cs.
 
     /// <summary>The rest site's option buttons at the host's phone size, reported as <c>rest_site_buttons_scaled</c>.</summary>
     private partial void CheckRestSiteButtons(IReadOnlyList<NRestSiteButton> buttons);
     /// <summary>The rest room's portrait framing: the options row inside the canvas and the act art covering it.</summary>
     private partial void CheckRestRoomLayout(NRestSiteRoom room);
-    /// <summary>Whether a rest option takes two taps on this host (the launcher's select-then-confirm) or one (the reference).</summary>
+    /// <summary>Whether a rest option takes two taps on this host (the launcher's portrait select-then-confirm) or one.</summary>
     private partial bool RestOptionsTakeTwoTaps();
     /// <summary>Whether this host draws its selection reticle on a rest option that is selected but not taken.</summary>
     private partial bool RestOptionSelected(NRestSiteButton button);
@@ -1238,15 +1230,13 @@ internal sealed partial class TestDriver
     private partial void CheckRestProceedLane(string name, NRestSiteRoom room);
 
     // ---- Card grids and selection flows (Batch F) ------------------------------------------------------------------------
-    // `deck-view`, `upgrade`, `enchant` and `transform` run on both hosts. The grids' columns and card width, the sort row,
-    // the View Upgrades box, the previews and their confirm buttons, and where Back sits are each host's own phone
-    // geometry: TouchSpireUI's answers keep the original checks in HostCardGridChecks.cs, the launcher's (three columns on
-    // its narrower canvas, 127-unit targets, the screen's own footer under the grid) are in
-    // TouchSpire.LauncherHost/src/LauncherCardGridChecks.cs.
+    // `deck-view`, `upgrade`, `enchant` and `transform`: the grids' columns and card width, the sort row, the View Upgrades
+    // box, the previews and their confirm buttons, and where Back sits are the launcher's own phone geometry (three columns
+    // on its narrower canvas, 127-unit targets, the screen's own footer under the grid), in LauncherCardGridChecks.cs.
 
     /// <summary>The deck sort row below the host's header band, reported as <c>deck_sorters_high_below_header</c>.</summary>
     private partial void CheckDeckSortersPosition(Control header);
-    /// <summary>The deck's four-way sort row (the game keeps it in the grid's scroll; TouchSpireUI re-parents it).</summary>
+    /// <summary>The deck's four-way sort row (the game keeps it in the grid's scroll).</summary>
     private partial Control DeckSortRow(NDeckViewScreen screen, NCardGrid grid);
     /// <summary>The sort row and grid top: four 44-point sorters with the grid below the header.</summary>
     private partial bool DeckGridStartFits(Control header, Rect2 view, Rect2 firstCard,

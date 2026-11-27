@@ -16,18 +16,16 @@ namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
 /// The launcher's answers for the shared deck-view, upgrade, enchant and transform scenarios (Batch F). Each method
-/// implements a partial declared in HarnessCore.cs that the TouchSpire host implements in HostCardGridChecks.cs.
+/// implements a partial declared in HarnessCore.cs.
 /// <para>
 /// Every measurement is in the launcher's canvas units: 1080 across, so a 44-point touch target is 127 units and the three
 /// grid columns are <c>(canvas − 80 − the grid's own side insets) / 3</c> wide (about 300, as the phone layout specifies).
-/// TouchSpireUI's numbers quoted on its 1680-wide canvas are converted by 1080/1680 where a converted floor is useful.
+/// Numbers quoted on the original 1680-wide reference canvas are converted by 1080/1680 where a converted floor helps.
 /// Nodes are found by the game's own names and measured from live rectangles; nothing here reaches into the portrait pass.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver
 {
-    // TouchSpireUI's portrait canvas is 1680 wide; the launcher's is 1080.
-    private const float TsuiToLauncher = 1080f / 1680f;
     // The native grid's CardPadding, reserved once around the three columns.
     private const float LauncherGridPadding = 80f;
     // The game's own card is 300 units wide; a three-column card in the launcher's canvas is that or wider.
@@ -168,7 +166,7 @@ internal sealed partial class TestDriver
         Rect2 safe = PortraitSafeRect();
         Rect2 button = confirm.GetGlobalRect();
         Rect2 icon = confirm.GetNode<Control>("Image/Icon").GetGlobalRect();
-        float cardFloor = 405f * TsuiToLauncher;
+        float cardFloor = 405f * ReferenceToCanvas;
         _report.Check($"enchant_{count}_preview_and_confirm_fit", cards.Count == 2
             && cards.All(c => c.Size.X >= cardFloor - 1f && safe.Encloses(c))
             && button.Size.Y >= LauncherTouchTarget - 1f && safe.Encloses(button) && button.Encloses(icon),
@@ -195,7 +193,7 @@ internal sealed partial class TestDriver
         {
             // Landscape is the game's own window and the game's own scale: NGridCardHolder.Create/InitGrid set every holder
             // to NCardHolder.smallScale (0.8), no selection holder is scaled up, and a card draws NCard.defaultSize (300)
-            // x 0.8 = 240 units wide. (The TouchSpire grid patch's 1.25 does not exist here.)
+            // x 0.8 = 240 units wide.
             float cardWidth = NCard.defaultSize.X;
             bool nativeScale = holders.Count > 0
                 && holders.All(holder => Mathf.Abs(holder.Scale.X - holder.SmallScale.X) <= 0.01f);

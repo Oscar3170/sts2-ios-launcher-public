@@ -15,7 +15,7 @@ using MegaCrit.Sts2.addons.mega_text;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// Variant coverage for standard events (L7), shared by both hosts: every act's widest and longest pages, not just
+/// Variant coverage for standard events (L7): every act's widest and longest pages, not just
 /// <c>ByrdonisNest</c>.
 /// <para>
 /// The selection is read from v0.113.1's event models. Four visible options is the native maximum on an initial page
@@ -27,13 +27,13 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <c>ZenWeaver</c>, <c>Amalgamator</c>, <c>BattlewornDummy</c>, <c>ThermaeNonupeipe</c>), including the four the known
 /// 9:16 clipping report names (Wood Carvings, Wuppy, Amalgamator, Welcome to Wongos). The localized
 /// strings themselves are only inside the game pack, so the copy length is measured from the live
-/// <c>%EventDescription</c> and logged per event rather than pre-sorted from the reference.
+/// <c>%EventDescription</c> and logged per event.
 /// </para>
 /// <para>
 /// For each event the page must fit the host's portrait contract (row minimums, readable copy, the host's page check), the
 /// copy must fit its slot or scroll to its last line, every option must sit inside the safe rect without overlap, and a page
 /// that cannot show all rows at once must scroll without selecting. Two events then take an option and prove the result page
-/// and Proceed. The host layout answers are the existing partials (LauncherEventChecks.cs, HostLayoutChecks.cs).
+/// and Proceed. The host layout answers are the existing partials (LauncherEventChecks.cs).
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver

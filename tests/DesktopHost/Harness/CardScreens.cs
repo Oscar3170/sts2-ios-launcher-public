@@ -17,10 +17,9 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>screens</c> on both hosts: the native choose-a-card and card reward screens over a rest site, their cards, Skip and
-/// Peek controls, and the hover-scale behaviour of a card holder. The cards' and Skip's phone sizes are each host's own
-/// layout: those checks are partials implemented by the TouchSpire host (HostRewardChecks.cs) and dropped on the launcher,
-/// where the choice-screen control geometry is the launcher's own.
+/// <c>screens</c>: the native choose-a-card and card reward screens over a rest site, their cards, Skip and Peek controls,
+/// and the hover-scale behaviour of a card holder. The cards' and Skip's phone sizes are the launcher's own layout: those
+/// checks are partials in Host/LauncherRewardChecks.cs, as is the choice-screen control geometry.
 /// </summary>
 internal sealed partial class TestDriver
 {

@@ -7,10 +7,10 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The main-menu scenarios both hosts run (<c>menus</c>, <c>menu-hover</c>, <c>menu-utilities</c>, <c>settings</c>) and the
-/// entry the launcher host uses for them: they open and close native screens, they never start a run except for the saved-run
-/// fixture <c>menu-hover</c> needs. Each screen's geometry is the host's own partial (HostMenuChecks.cs / LauncherMenuChecks.cs);
-/// the T5 gate runs inside the scenario files.
+/// The main-menu scenarios (<c>menus</c>, <c>menu-hover</c>, <c>menu-utilities</c>, <c>settings</c>) and the entry the
+/// launcher host uses for them: they open and close native screens, they never start a run except for the saved-run
+/// fixture <c>menu-hover</c> needs. Each screen's geometry is the host's own partial (LauncherMenuChecks.cs); the T5 gate
+/// runs inside the scenario files.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -35,8 +35,8 @@ internal sealed partial class TestDriver
         if (waitForMenu) await WaitForMainMenuSceneAsync();
         // The game fades its whole window in over the main menu for two seconds after startup (and again after returning
         // from a run). NTransition is a full-window ColorRect above the menu, so a press or a hover delivered during the
-        // fade is lost before it reaches a button: the TSUI host's first menu tap landed inside it and its quit popup never
-        // opened. Wait for the game's own transition to finish before touching anything.
+        // fade is lost before it reaches a button: a tap during the fade lands inside it and the button never opens its
+        // popup. Wait for the game's own transition to finish before touching anything.
         await WaitForMainMenuTransitionAsync();
         if (waitForMenu)
             // The game keeps loading common/menu assets after the main menu appears; wait for that real preload instead of
@@ -72,7 +72,7 @@ internal sealed partial class TestDriver
             "main menu fade-in", MediumWait);
     }
 
-    /// <summary>Waits for the game's main menu to be the shown, opaque screen (the TouchSpire host's own wait, shared).</summary>
+    /// <summary>Waits for the game's main menu to be the shown, opaque screen.</summary>
     private async Task WaitForMainMenuSceneAsync()
     {
         await WaitUntilAsync(

@@ -17,11 +17,10 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>rewards</c> on both hosts: the loot list over a real fight, the gold row, the native card reward's Skip and reroll,
-/// the return to the list and taking a card. The rows' fonts and sizes are each host's own layout: those checks are
-/// partials implemented by the TouchSpire host (HostRewardChecks.cs) and dropped on the launcher. Taking the card goes
-/// through the host partial <see cref="TakeRewardCardAsync"/>: one tap takes it natively, the launcher selects first and
-/// takes it on the second tap.
+/// <c>rewards</c>: the loot list over a real fight, the gold row, the native card reward's Skip and reroll, the return to
+/// the list and taking a card. The rows' fonts and sizes are the host's own layout: those checks are partials implemented
+/// by the launcher (LauncherRewardChecks.cs). Taking the card goes through the host partial
+/// <see cref="TakeRewardCardAsync"/>: the launcher selects first and takes it on the second tap.
 /// </summary>
 internal sealed partial class TestDriver
 {

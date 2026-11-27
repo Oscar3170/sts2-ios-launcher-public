@@ -15,10 +15,9 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// The <c>menus</c> scenario: the native touch path from the main menu through the quit confirmation, the four Settings tabs,
 /// the singleplayer mode picker, Blitz/Dread setup, character select with its ascension control, and Embark into a run.
 /// <para>
-/// The flow, the taps and the step names are the same on both hosts. Every screen's geometry answer is a partial: the
-/// TouchSpire host keeps its TouchSpireUI assertions verbatim (HostMenuChecks.cs), the launcher answers with its own layout
-/// numbers (LauncherMenuChecks.cs, 127 units = 44 points, TouchSpire numbers x0.643). The T5 gate runs on the main menu, the
-/// quit popup and each Settings tab.
+/// The flow, the taps and the step names are the same throughout the scenario. Every screen's geometry answer is a partial:
+/// the launcher answers with its own layout numbers (LauncherMenuChecks.cs, 127 units = 44 points, reference numbers
+/// x0.643). The T5 gate runs on the main menu, the quit popup and each Settings tab.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver

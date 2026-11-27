@@ -15,10 +15,9 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The Ancient scenarios (L8), shared by both hosts: advance the native dialogue, inspect the relic options at phone size,
-/// sweep them over 2..4 choices, walk every act's Ancient art, and check Pael's inline energy icons. TouchSpireUI's own
-/// checks (its nameplate scale, its option-scale config, its icon size) live in HostLayoutChecks.cs; the launcher's (art
-/// crop and fade into the room cover, settled nameplate, 62.5 pt rows, 37.5 pt icons) in LauncherAncientChecks.cs.
+/// The Ancient scenarios (L8): advance the native dialogue, inspect the relic options at phone size, sweep them over 2..4
+/// choices, walk every act's Ancient art, and check Pael's inline energy icons. The launcher's own checks (art crop and
+/// fade into the room cover, settled nameplate, 62.5 pt rows, 37.5 pt icons) live in LauncherAncientChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -206,7 +205,7 @@ internal sealed partial class TestDriver
         }
     }
 
-    /// <summary>The settled nameplate and the art reaching the rewards (TouchSpireUI's numbers, the launcher's bands).</summary>
+    /// <summary>The settled nameplate and the art reaching the rewards (the launcher's bands).</summary>
     /// <summary>The host's ancient art clip, its fade and the shared room cover, by the host's own names.</summary>
     private partial string AncientArtNodeName();
     private partial string AncientArtFadeNodeName();
@@ -218,9 +217,9 @@ internal sealed partial class TestDriver
 
     private partial void SetAncientOptionScale(float scale);
 
-    /// <summary>The smallest relic icon side in the host's units: TouchSpireUI's 33.5 pt, the launcher's 37.5 pt.</summary>
+    /// <summary>The smallest relic icon side in the launcher's units: 37.5 pt.</summary>
     private partial float AncientRelicIconMinSize();
 
-    /// <summary>The launcher's own row height, font and icon rule; TouchSpireUI checks them in its own partial.</summary>
+    /// <summary>The launcher's own row height, font and icon rule.</summary>
     private partial void CheckAncientOptionLayout(NEventOptionButton button, string id);
 }

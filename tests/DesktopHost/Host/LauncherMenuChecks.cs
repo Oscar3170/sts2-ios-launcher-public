@@ -19,10 +19,10 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The launcher host's answers for the shared menu/settings/pause/game-over scenarios. Same step names as the TouchSpire host
-/// where the check exists on both, with the launcher's thresholds: 127 units are 44 points on the 1080 unit canvas
-/// (<see cref="PortraitBands.MinTarget"/>), TouchSpire numbers are converted by 1080/1680 = 0.643, and a control's target is its
-/// drawn rectangle merged with the launcher's larger <see cref="PhoneHitArea"/>.
+/// The launcher host's answers for the shared menu/settings/pause/game-over scenarios, with the launcher's thresholds:
+/// 127 units are 44 points on the 1080 unit canvas (<see cref="PortraitBands.MinTarget"/>), numbers from the original
+/// 1680-wide reference canvas are converted by 1080/1680 = 0.643, and a control's target is its drawn rectangle merged with
+/// the launcher's larger <see cref="PhoneHitArea"/>.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -35,8 +35,8 @@ internal sealed partial class TestDriver
         return rect;
     }
 
-    // No reference limits on this host: its settings controls (paginator arrows, dropdowns) are gated at 127 units like any
-    // other touch target.
+    // No settings exemptions on this host: its settings controls (paginator arrows, dropdowns) are gated at 127 units like
+    // any other touch target.
     private partial string[] HostSettingsGateAllowlist() => Array.Empty<string>();
 
     /// <summary>
@@ -101,8 +101,8 @@ internal sealed partial class TestDriver
     private partial void CheckModeSetupLayout(string mode, Control setup, IReadOnlyList<NCharacterSelectButton> roster)
     {
         if (!SafeAreaCanvas.IsPortrait) return;
-        // Two rows of character cards, each card a 44 point target across (TouchSpire's 190 units at 1680 are 122 here; the
-        // launcher's standard is 127).
+        // Two rows of character cards, each card a 44 point target across (190 units on the original 1680-wide reference
+        // canvas are 122 here; the launcher's standard is 127).
         _report.Check($"menu_{mode}_portrait_roster", roster.Count > 1
             && roster.All(b => HostTouchTargetBox(b).Size.X >= PortraitBands.MinTarget - 0.5f)
             && roster.Select(b => Mathf.RoundToInt(b.GetGlobalRect().GetCenter().Y)).Distinct().Count() == 2,
@@ -132,7 +132,7 @@ internal sealed partial class TestDriver
                 && icon.GetGlobalRect().HasPoint(number.GetGlobalRect().GetCenter()),
             $"number={number.GetGlobalRect().GetCenter()} flame={icon.GetGlobalRect()}");
         Rect2 safe = PortraitSafeRect();
-        // TouchSpire's 54 point card width: the same 54 points at the launcher's 2.88 units per point.
+        // The original 54 point card width: the same 54 points at the launcher's 2.88 units per point.
         float minimumWidth = PortraitBands.MinTarget * (54f / 44f);
         _report.Check("menu_character_phone_targets" + suffix, buttons.All(b => HostTouchTargetBox(b).Size.X >= minimumWidth),
             $"minimum={minimumWidth:F0}, targets={string.Join(", ", buttons.Select(b => b.GetGlobalRect().Size.X))}");
@@ -204,7 +204,7 @@ internal sealed partial class TestDriver
                 Vector2 local = p.ToLocal(corner).Abs();
                 return local.X <= p.EmissionRectExtents.X && local.Y <= p.EmissionRectExtents.Y;
             })), $"live ambient emitter covers both top corners (found {ambient.Length})");
-        // The backdrop must actually draw under the figure at the reference's cover size: the split masks the original
+        // The backdrop must actually draw under the figure at full-canvas cover size: the split masks the original
         // playback to the scenery slots, so the named backdrop attachment has to remain attached and the cover fill the canvas.
         string? backdropSlot = name switch
         {
@@ -304,20 +304,20 @@ internal sealed partial class TestDriver
         _report.Check(name + "_native_outline", label.GetThemeConstant("outline_size") >= label.GetThemeFontSize("font_size") * 0.5f
             && label.GetThemeColor("font_outline_color").R < 0.01f, $"font={label.GetThemeFontSize("font_size")} outline={label.GetThemeConstant("outline_size")}");
         _report.Check(name + "_carets_visible", left.Modulate.A > 0.9f && right.Modulate.A > 0.9f, "native hover is active");
-        // TouchSpire's 24 unit tolerance is 15 on the 1080 canvas.
+        // The original 24 unit tolerance is 15 on the 1080 canvas.
         _report.Check(name + "_carets_aligned", Math.Abs(left.GetGlobalRect().GetCenter().Y - text.GetCenter().Y) < 15f
             && Math.Abs(right.GetGlobalRect().GetCenter().Y - text.GetCenter().Y) < 15f,
             $"left={left.GetGlobalRect()} right={right.GetGlobalRect()} text={text}");
         _report.Check(name + "_carets_in_frame", safe.Encloses(left.GetGlobalRect()) && safe.Encloses(right.GetGlobalRect()),
             "native carets stay inside the phone frame");
-        // TouchSpire's 80 unit caret width is 51 here.
+        // The original 80 unit caret width is 51 here.
         _report.Check(name + "_carets_sized", left.Size.X >= 51f && right.Size.X >= 51f, $"left={left.Size} right={right.Size}");
         if (name != "ContinueButton") return;
         var info = menu.ContinueRunInfo;
         _report.Check("continue_info_visible", info.HasResult && info.Modulate.A > 0.9f, "saved-run information opens on hover");
         _report.Check("continue_info_in_frame", safe.Encloses(info.GetGlobalRect()), $"info={info.GetGlobalRect()} safe={safe}");
         _report.Check("continue_info_above_buttons", info.GetGlobalRect().End.Y < button.GetGlobalRect().Position.Y, "native information does not cover menu targets");
-        // TouchSpire's 2.5 is 1.607 on the 1080 canvas (contract decision 1).
+        // The original 2.5 is 1.607 on the 1080 canvas (contract decision 1).
         _report.Check("continue_info_readable_scale", info.Scale.X >= 1.607f, $"scale={info.Scale}");
     }
 
@@ -387,7 +387,7 @@ internal sealed partial class TestDriver
         Rect2 safe = PortraitSafeRect();
         Rect2 rect = list.GetGlobalRect();
         _report.Check("settings_language_list_safe", safe.Grow(1).Encloses(rect), rect.ToString());
-        // TouchSpire's 600 unit list cap is 386 here.
+        // The original 600 unit list cap is 386 here.
         _report.Check("settings_language_list_capped", rect.Size.Y <= 386f + 2f, $"height={rect.Size.Y:F0} cap=386");
     }
 
@@ -517,9 +517,9 @@ internal sealed partial class TestDriver
         _report.Check("game_over_scores_visible_inside_scroll", summary is not null && scores.IsVisibleInTree()
             && summary.Clip.Grow(2f).Encloses(scores.GetGlobalRect()),
             $"scoreRect={scores.GetGlobalRect()} clip={summary?.Clip}");
-        // The shared gate exempts the summary's award chips (NBadge/Nn) because the TouchSpire host does not pad them; on this
-        // host they are padded, so they are measured here: every interactive control inside the clipped window keeps a
-        // 127 u target (the pads' overlaps are allowed, each target is measured on its own).
+        // The shared gate exempts the summary's award chips (NBadge/Nn); on this host they are padded, so they are measured
+        // here: every interactive control inside the clipped window keeps a 127 u target (the pads' overlaps are allowed,
+        // each target is measured on its own).
         if (summary is null) return;
         var chips = new List<string>();
         foreach (Node node in FindAll<Control>(summary.Window))

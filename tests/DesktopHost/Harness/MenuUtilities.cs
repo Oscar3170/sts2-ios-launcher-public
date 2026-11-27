@@ -10,8 +10,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <summary>
 /// The <c>menu-utilities</c> scenario: the profile button, the patch notes button and the mod status in the main menu's
 /// corners, opened and closed by touch, plus the native hover that reveals the mod details. The flow and step names are
-/// shared; the layout answers (corners, sizes, the mod status' place and the button reflow) are the host's
-/// (HostMenuChecks.cs on the TouchSpire host, LauncherMenuChecks.cs on the launcher).
+/// shared; the layout answers (corners, sizes, the mod status' place and the button reflow) are in LauncherMenuChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -73,7 +72,7 @@ internal sealed partial class TestDriver
     // does not move the menu column and stays in its corner.
     private partial Task CheckMenuUtilitiesLayoutAsync(NMainMenu menu, Control profile, Control profileRow, Control notes, Label modded);
 
-    // Host answer: the profile button's own hover growth (TouchSpireUI keeps the content larger; the launcher keeps native).
+    // Host answer: the profile button's own hover growth (the launcher keeps native).
     private partial void CheckMenuProfileHover(Control profile, Control profileRow);
 
     // Host answer: the mod details panel stays inside the frame, above the status.

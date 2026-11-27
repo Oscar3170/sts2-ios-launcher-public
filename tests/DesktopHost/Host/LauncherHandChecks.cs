@@ -20,11 +20,11 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The launcher host's answers for the hand scenarios that run on both hosts: measured against
-/// <see cref="PortraitCombatMath.ComputeCombatBands"/> and the 1080-wide portrait canvas instead of TouchSpireUI's safe
-/// frame. They assert behaviour and invariants (rows fill the upper row first, the rail stays put, touch targets are 44
-/// points) rather than the exact numbers a host happens to use today. The declarations live in HarnessCore.cs; the
-/// TouchSpire host implements them in HostLayoutChecks.cs.
+/// The launcher host's answers for the hand scenarios: measured against
+/// <see cref="PortraitCombatMath.ComputeCombatBands"/> and the 1080-wide portrait canvas instead of the original reference
+/// layout's safe frame. They assert behaviour and invariants (rows fill the upper row first, the rail stays put, touch
+/// targets are 44 points) rather than the exact numbers a host happens to use today. The declarations live in
+/// HarnessCore.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -499,8 +499,8 @@ internal sealed partial class TestDriver
         _regentStarOrb = orb;
 
         // 1. Size and aspect: the native 128-unit scene at its 0.8 scale under the energy counter's scale. The launcher
-        //    canvas is 1080 wide, so TouchSpireUI's 184.32-unit badge (1680 canvas) is the same fraction of the width
-        //    here: 184.32 * 1080/1680 = 118.5, and the scene/energy scales give 128 * 0.8 * 1.12 = 114.688 (within 5%).
+        //    canvas is 1080 wide, so the original reference 184.32-unit badge (1680 canvas) is the same fraction of the
+        //    width: 184.32 * 1080/1680 = 118.5, and the scene/energy scales give 128 * 0.8 * 1.12 = 114.688, within 5%.
         Vector2 energyScale = energy is null ? Vector2.One : energy.GetGlobalTransform().Scale.Abs();
         Vector2 expectedSize = new Vector2(128f, 128f) * 0.8f * energyScale;
         float larger = Mathf.Max(starBadge.Size.X, starBadge.Size.Y);
@@ -515,9 +515,9 @@ internal sealed partial class TestDriver
             $"badge={starBadge} local={counter.Size} icon={icon?.Size} " +
             $"scale={counter.GetGlobalTransform().Scale.Abs()} " +
             $"energy scale={energyScale} expected={expectedSize} " +
-            $"TSUI-equivalent={starBadge.Size * (1680f / SafeAreaCanvas.PortraitWidth)}");
+            $"reference-equivalent={starBadge.Size * (1680f / SafeAreaCanvas.PortraitWidth)}");
 
-        // 2. TouchSpireUI's lower-left corner badge: orb centre + orb size * (-0.4, +0.3).
+        // 2. The reference lower-left corner badge: orb centre + orb size * (-0.4, +0.3).
         Vector2 expectedOffset = orb.Size * new Vector2(-0.4f, 0.3f);
         Vector2 actualOffset = starBadge.GetCenter() - orb.GetCenter();
         float offsetError = (actualOffset - expectedOffset).Length();
@@ -526,7 +526,7 @@ internal sealed partial class TestDriver
             $"actual offset={actualOffset} error={offsetError:F2}");
 
         // 3. Draw order, not rects: the star must be the energy counter's last child, after the orb art and the "3/3"
-        //    label, so the orb's spikes and front VFX cannot paint over it (TouchSpireUI's native order).
+        //    label, so the orb's spikes and front VFX cannot paint over it (the native order).
         Control? starParent = counter.GetParent() as Control;
         string[] artNames = { "EnergyVfxBack", "Layers", "EnergyVfxFront" };
         Control[] orbArt = artNames
@@ -544,13 +544,13 @@ internal sealed partial class TestDriver
             $"star index={counter.GetIndex()} z={counter.ZIndex} parent={starParent?.Name}; " +
             $"orb art={string.Join("; ", orbArt.Select(art => $"{art.Name}@{art.GetIndex()}z{art.ZIndex}"))} " +
             $"label index={labelIndex}");
-        // The step name is kept from the earlier ordering; TouchSpireUI draws the star last (in front), not below.
+        // The step name is kept from the earlier ordering; the star draws last (in front), not below.
         _report.Check("regent_star_art_below_energy_label", starAfterLabel && starLast,
             $"star index={counter.GetIndex()} of {starParent?.GetChildCount()} in {starParent?.Name}; " +
-            $"energy label index={labelIndex}: the star draws last, as in TouchSpireUI");
+            $"energy label index={labelIndex}: the star draws last, as in the reference layout");
 
-        // 4. The digit is centred in the badge in TouchSpireUI; the native label keeps that when the badge is not moved
-        //    relative to its own rect.
+        // 4. The digit is centred in the badge; the native label keeps that when the badge is not moved relative to its
+        //    own rect.
         float inkError = starBadge.GetCenter().DistanceTo(starInk.GetCenter());
         _report.Check("regent_star_number_centred", starInk.Size.X > 0f && inkError <= 6f,
             $"digit ink={starInk} centre={starInk.GetCenter()} badge centre={starBadge.GetCenter()} error={inkError:F2} " +

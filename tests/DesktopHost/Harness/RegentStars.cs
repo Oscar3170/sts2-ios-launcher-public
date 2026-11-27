@@ -12,8 +12,8 @@ internal sealed partial class TestDriver
 {
     /// <summary>
     /// Checks that the Regent's native star counter is visible on the combat rail and follows the native star signal. The
-    /// host places the rail (TouchSpireUI on the TouchSpire host, PortraitCombatMath on the launcher), so only the shared
-    /// behaviour lives here and the rail assertion is a host partial.
+    /// host places the rail (PortraitCombatMath), so only the shared behaviour lives here and the rail assertion is a host
+    /// partial.
     /// </summary>
     private async Task RunRegentStarsAsync(RunState state)
     {
@@ -27,7 +27,7 @@ internal sealed partial class TestDriver
             $"stars={initial} native label={label.Text}");
         CheckRegentStarRail("standard", room, counter, initial);
         // The launcher reads one frame for the star/energy ink and saves the draw-pile + star + energy detail crop. It
-        // measures against the host's own rail; the TouchSpire host keeps the native placement untouched.
+        // measures against the host's own rail.
         await CheckRegentStarDetailAsync(room, counter);
         await CaptureAsync("regent_star_counter");
         // Exercise the native signal and counter animation without depending on the opening hand.

@@ -11,8 +11,7 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 // Global settings are NOT profile-scoped. Exercise actual native widgets while suppressing disk persistence, then restore
-// every touched value in finally. The write guard itself is the host's (HostMenuChecks.cs on TouchSpire, where nothing else
-// suppresses settings writes; the launcher host already suppresses every write and needs none).
+// every touched value in finally. The launcher host already suppresses every settings write.
 internal sealed partial class TestDriver
 {
     private async Task RunSettingsInteractionsAsync()
@@ -135,13 +134,13 @@ internal sealed partial class TestDriver
     // Host answer: where an outside tap lands to dismiss the open language list.
     private partial Vector2 SettingsDismissPoint();
 
-    // Host answer: the Input page's columns are inside the frame (TouchSpireUI checks each header cell).
+    // Host answer: the Input page's columns are inside the frame (the launcher checks each header cell).
     private partial void CheckSettingsInputLayout(NSettingsScreen settings, Control input);
 
     // Host answer: the reopened page is still at its portrait scale, not stacked or reset.
     private partial void CheckSettingsReopenStable(NSettingsScreen settings, Control general);
 
-    // Host answer: one Settings tab's page, after the native tab switch (TouchSpireUI's page is already sized by its
-    // service; the launcher checks the tabs and rows sit under its measured cap).
+    // Host answer: one Settings tab's page, after the native tab switch (the launcher checks the tabs and rows sit under
+    // its measured cap).
     private partial void CheckSettingsTabLayout(Control settings, string tab, Control page);
 }

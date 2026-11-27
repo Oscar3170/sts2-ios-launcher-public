@@ -16,9 +16,9 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// </summary>
 internal sealed partial class TestDriver
 {
-    /// <summary>TouchSpireUI's map-node scale, kept by the launcher's neighbour-aware 44 pt pads.</summary>
+    /// <summary>The original map-node scale, kept by the launcher's neighbour-aware 44 pt pads.</summary>
     private const float LauncherMapPointScale = 1.25f;
-    /// <summary>The native legend's TouchSpire size in points: 2.3 at 1680 ≈ 1.48 at 1080.</summary>
+    /// <summary>The native legend's original size in points: 2.3 at 1680 ≈ 1.48 at 1080.</summary>
     private const float LauncherLegendScale = 1.4f;
     /// <summary>Six phone points: below this no legend line reads, whatever the native theme's base size.</summary>
     private const float LauncherLegendMinFont = 6f * PortraitBands.UnitsPerPoint;

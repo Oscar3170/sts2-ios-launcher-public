@@ -9,10 +9,9 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The Spire Map scenario (L6), shared by both hosts: open the real act map, count its points, toggle the host's legend,
-/// draw / erase / clear strokes and Share, swipe the chart and travel by tapping a reachable node. Everything the hosts do
-/// differently is a host partial: TouchSpireUI's answers keep the original checks in HostLayoutChecks.cs, the launcher's
-/// (its clipped chart, band coverage, legend size, footer targets and the native landscape) are in LauncherMapChecks.cs.
+/// The Spire Map scenario (L6): open the real act map, count its points, toggle the host's legend, draw / erase / clear
+/// strokes and Share, swipe the chart and travel by tapping a reachable node. The launcher's answers (its clipped chart,
+/// band coverage, legend size, footer targets and the native landscape) are in Host/LauncherMapChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -136,8 +135,8 @@ internal sealed partial class TestDriver
     }
 
     /// <summary>
-    /// The node whose picture must cover the band below the header without empty bands (TouchSpireUI's backdrop, the
-    /// launcher's parchment) and the portrait-only chart framing and legend geometry.
+    /// The node whose picture must cover the band below the header without empty bands (the launcher's parchment) and the
+    /// portrait-only chart framing and legend geometry.
     /// </summary>
     private partial void CheckMapBackdrop(NMapScreen map);
 
@@ -153,10 +152,10 @@ internal sealed partial class TestDriver
     /// <summary>Taps the host's legend toggle once and returns whether the host has one.</summary>
     private partial Task<bool> ToggleMapLegendAsync(NMapScreen map);
 
-    /// <summary>The legend after the toggle: TouchSpireUI's repaired clip, the launcher's readable native one.</summary>
+    /// <summary>The legend after the toggle: the launcher's readable native one.</summary>
     private partial void CheckMapLegend(NMapScreen map, bool open);
 
-    /// <summary>The point scale the host gives every room node (TouchSpireUI's config, the launcher's constant).</summary>
+    /// <summary>The point scale the host gives every room node (the launcher's constant).</summary>
     private partial float MapNodeExpectedScale();
 
     /// <summary>The smallest footer tool side in the host's units: 44 points.</summary>
@@ -167,7 +166,7 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// The chart's scroll range: dragging to one end must bring the act's boss fully into the chart and the other end the
-    /// starting point. TouchSpireUI's own map suite covers its range, so this is a launcher check.
+    /// starting point.
     /// </summary>
     private partial Task CheckMapScrollBoundsAsync(NMapScreen map, Control? viewport);
 
@@ -177,7 +176,7 @@ internal sealed partial class TestDriver
     /// </summary>
     private partial void CheckMapNodesInsidePaper(NMapScreen map, string suffix);
 
-    /// <summary>An act-2 map pass for the same framing check (the launcher rebuilds the chart on Hive); hosts without one do nothing.</summary>
+    /// <summary>An act-2 map pass for the same framing check (the launcher rebuilds the chart on Hive).</summary>
     private partial Task CheckMapSecondActAsync(NMapScreen map);
 
     /// <summary>

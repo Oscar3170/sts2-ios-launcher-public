@@ -49,9 +49,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <item>End Turn is clear of the hand and tappable at five and ten cards, and a back-row card of a ten-card hand can be
 /// dragged and played.</item>
 /// </list>
-/// This is a partial of <see cref="TestDriver"/> so it can use the shared run start, combat entry, waits and screenshots; the
-/// file is compiled into the launcher host only (files under <c>tests/TouchSpire.LauncherHost/src</c> are included by the
-/// project's default glob), so the TouchSpire host never sees it.
+/// This is a partial of <see cref="TestDriver"/> so it can use the shared run start, combat entry, waits and screenshots.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -68,7 +66,7 @@ internal sealed partial class TestDriver
     /// <summary>A check or screenshot name with an optional pass suffix (the flat-hand pass uses <c>flat</c>).</summary>
     private static string WithSuffix(string name, string suffix) => suffix.Length == 0 ? name : name + "_" + suffix;
 
-    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--touchspire-test=touch-combat</c>.</summary>
+    /// <summary>Called by <c>LauncherHostRunner</c> for <c>--sts2mobile-test=touch-combat</c>.</summary>
     internal static async Task RunLauncherTouchCombatAsync(TestOptions options, TestReport report, ScreenshotService screenshots,
         VirtualPointer pointer)
     {

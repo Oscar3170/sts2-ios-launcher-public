@@ -19,10 +19,9 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The launcher's answers for the shared header-inventory, potions and orbs scenarios, compiled only into the launcher host.
-/// Each method implements a partial declared in HarnessCore.cs (or OrbChecks.cs) that the TouchSpire host implements in
-/// HostLayoutChecks.cs. Everything is found by node name, measured from live rectangles and the launcher's own
-/// <see cref="PortraitBands"/>, so the harness compiles against both launcher trees.
+/// The launcher's answers for the shared header-inventory, potions and orbs scenarios.
+/// Each method implements a partial declared in HarnessCore.cs (or OrbChecks.cs). Everything is found by node name,
+/// measured from live rectangles and the launcher's own <see cref="PortraitBands"/>.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -36,7 +35,7 @@ internal sealed partial class TestDriver
     private const float StoneTornEdgeAllowance = 40f;
     /// <summary>A relic holder's touch target in the wrapped band.</summary>
     private const float RelicHolderTarget = 96f;
-    /// <summary>Value labels stay readable down to nine phone points, as TouchSpireUI's arc does.</summary>
+    /// <summary>Value labels stay readable down to nine phone points.</summary>
     private const float OrbValueFontFloor = 26f;
     /// <summary>One drawn frame of a 0.45 s retarget never moves an orb this far, or faster than the speed below.</summary>
     private const float OrbMotionStepLimit = 60f;
@@ -272,7 +271,7 @@ internal sealed partial class TestDriver
         _report.Check("header_potion_swipe_does_not_open_popup",
             !FindAll<NPotionPopup>(_tree.Root).Any(p => p.IsVisibleInTree()), "swiping must not activate a potion");
 
-        // Map and deck sit to the right of the potion row, as TouchSpireUI places them.
+        // Map and deck sit to the right of the potion row.
         Control? map = TopBarControl(topBar, "%Map");
         Control? deck = TopBarControl(topBar, "%Deck");
         Rect2 mapRect = map?.GetGlobalRect() ?? default;
@@ -294,7 +293,7 @@ internal sealed partial class TestDriver
     /// <summary>
     /// The stone header's top row for a locked ascension run: the native ascension badge (and its number) and the
     /// achievement lock, beside the health, gold, floor, boss and settings the header always shows - and the run's native
-    /// modifier chips, which portrait keeps hidden like the reference layout does. Each visible indicator is inside the stone
+    /// modifier chips, which portrait keeps hidden. Each visible indicator is inside the stone
     /// and the row, inside the phone's width and clear of every other one; the potion row below keeps its band and map and
     /// deck keep their 44 point buttons beside it.
     /// </summary>
@@ -374,9 +373,8 @@ internal sealed partial class TestDriver
                 $"number font={readSize:F1} (9 points at 1080 across)");
         }
 
-            // The native modifier chips stay hidden in portrait: the phone's top row has no room for a 44 point row of them,
-        // and the reference layout (TouchSpireUI) hides them the same way. The chips themselves are untouched children of
-        // the bar, so a landscape run keeps the game's own presentation.
+        // The native modifier chips stay hidden in portrait: the phone's top row has no room for a 44 point row of them.
+        // The chips themselves are untouched children of the bar, so a landscape run keeps the game's own presentation.
         Control? modifierBox = TopBarControl(topBar, "%Modifiers");
         Control[] chips = modifierBox?.GetChildren().OfType<Control>()
             .Where(child => !child.IsQueuedForDeletion()).ToArray() ?? [];

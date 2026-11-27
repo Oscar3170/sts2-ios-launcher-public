@@ -4,10 +4,9 @@ using MegaCrit.Sts2.Core.Nodes.Rooms;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The room transforms behind the merchant that must not move when the inventory opens, takes stock or closes. Both hosts
-/// use the native shop scenes, so the reading is shared; what each host does with those transforms is a host partial
-/// (TouchSpireUI re-frames the room in HostShopChecks.cs, the launcher keeps the native composition in
-/// TouchSpire.LauncherHost/src/LauncherShopChecks.cs).
+/// The room transforms behind the merchant that must not move when the inventory opens, takes stock or closes. The host
+/// uses the native shop scenes; what it does with those transforms is a host partial (the launcher keeps the native
+/// composition in LauncherShopChecks.cs).
 /// </summary>
 internal sealed partial class TestDriver
 {

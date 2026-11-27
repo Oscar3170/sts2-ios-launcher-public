@@ -29,8 +29,8 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The launcher host's own combat-stage acceptance run (C1/C2/C3): the fixed encounter fixture of TouchSpire's
-/// <c>combat-stage</c> scenario, measured against the launcher's portrait bands instead of TouchSpireUI's layout metadata.
+/// The launcher host's own combat-stage acceptance run (C1/C2/C3): the fixed encounter fixture of the <c>combat-stage</c>
+/// scenario, measured against the launcher's portrait bands.
 /// <para>
 /// Every fight is checked for a stage that stays inside the canvas and under the run bars, one body scale per row, one
 /// ground line, legible hit boxes and health bars/intents, a broad floor that ends at the hand rail (a narrow pier under
@@ -107,7 +107,7 @@ internal sealed partial class TestDriver
     // the ground line explicitly; every other creature in these seventeen fights is treated as standing on the floor.
     private static readonly string[] FlyingMonsters = { "Ovicopter" };
     private const float GroundHorizonTolerance = 4f;
-    // TouchSpireUI's tall formation lifts a pair's first enemy by about this many launcher units; the stage may publish
+    // The tall formation lifts a pair's first enemy by about this many launcher units; the stage may publish
     // the exact offset as portrait_formation_offset.
     private const float StageFormationRaise = 64f;
     private static readonly string[] FormationOffsetMetaNames =
@@ -127,8 +127,7 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// The launcher's answer for the shared orbs scenario's clearance hook: it runs the same body/bar/intent, player-size
-    /// and orb-readability checks the stage fixture uses after every egg spawn and hatch. The TouchSpire host keeps its own
-    /// implementation, so its step list is unchanged.
+    /// and orb-readability checks the stage fixture uses after every egg spawn and hatch.
     /// </summary>
     partial void CheckOrbEncounterClearance(string name, NCombatRoom room)
     {
@@ -148,8 +147,7 @@ internal sealed partial class TestDriver
     /// The launcher's answer for the status fixture: where the power icons sit against the hand-control rail
     /// (<c>PortraitCombatBands.RailTopY</c>) and the hand rows below <c>HandTopY</c>. Information only while the 9:16 space
     /// question is open: the step always passes and reports the deepest icon and its overflow in canvas units, and the
-    /// geometry file carries the band, the deepest icon, how much of it lies in the band and the overflow. The TouchSpire
-    /// host has no portrait bands, so there it is not implemented and the call is dropped.
+    /// geometry file carries the band, the deepest icon, how much of it lies in the band and the overflow.
     /// </summary>
     partial void CheckStatusBands(string step, Rect2 canvas, IReadOnlyList<Rect2> iconRects, List<string> lines)
     {
@@ -183,7 +181,7 @@ internal sealed partial class TestDriver
             $"deepest icon {Q(worstFraction * 100f, 1)}% in the band) — information only");
     }
 
-    /// <summary>Entry for <see cref="TouchSpire.LauncherHost.LauncherHostRunner"/>'s <c>stage-encounters</c> scenario.</summary>
+    /// <summary>Entry for <see cref="LauncherHostRunner"/>'s <c>stage-encounters</c> scenario.</summary>
     internal static async Task RunStageScenarioAsync(TestOptions options, TestReport report, ScreenshotService screenshots,
         VirtualPointer pointer)
     {
@@ -847,8 +845,8 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// Waits out an enemy turn. Some enemies (the Knowledge Demon's Curse of Knowledge) open the game's choose-a-card
-    /// screen during their move and block until the player answers; those are answered through the same select-then-confirm
-    /// path the reference fixture uses (first tap selects, second tap takes). With <paramref name="stopWhenFightEnds"/> a
+    /// screen during their move and block until the player answers; those are answered through the host's select-then-confirm
+    /// path (first tap selects, second tap takes). With <paramref name="stopWhenFightEnds"/> a
     /// combat that is over or ending answers false instead of waiting for a player turn the game will never give.
     /// </summary>
     private async Task<bool> WaitThroughEnemyTurnAsync(string name, bool stopWhenFightEnds = false)
@@ -1706,7 +1704,7 @@ internal sealed partial class TestDriver
             Vector2 centre = orb.GlobalPosition;
             return new Rect2(centre - new Vector2(diameter * 0.5f, diameter * 0.5f), new Vector2(diameter, diameter));
         }
-        // The game's orb art is 104 units across at scale 1 (the same figure TouchSpireUI measures with).
+        // The game's orb art is 104 units across at scale 1.
         Vector2 scale = orb.GetGlobalTransform().Scale.Abs();
         float fallback = 104f * Math.Max(scale.X, scale.Y);
         source = "art-scale";
@@ -1777,7 +1775,7 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// The tall formation's lift for a pair's first enemy (about 64 launcher units), from the stage's published offset
-    /// meta when present, otherwise the TouchSpireUI value.
+    /// meta when present, otherwise the fixed lift above.
     /// </summary>
     private static float FormationRaise(NCombatRoom room)
     {

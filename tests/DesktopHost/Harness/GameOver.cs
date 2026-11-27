@@ -15,8 +15,8 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <summary>
 /// The end screens (<c>game-over</c> defeat, <c>game-over-win</c> victory, <c>game-over-boss</c> the act boss): fight, win or
 /// die, open the native game over, Continue, then the settled scoring and summary, a long summary scrolled by finger, and
-/// Main Menu. The fixture, the taps and the step names are shared; the pillarbox and the summary are the host's
-/// (HostMenuChecks.cs / LauncherMenuChecks.cs). The T5 gate runs on the opening and the settled screen. GameOverVariants.cs
+/// Main Menu. The fixture, the taps and the step names are shared; the pillarbox and the summary are the launcher's
+/// (LauncherMenuChecks.cs). The T5 gate runs on the opening and the settled screen. GameOverVariants.cs
 /// reuses <see cref="RunGameOverScreenAsync"/> for a death outside combat and a boss victory.
 /// </summary>
 internal sealed partial class TestDriver
@@ -91,9 +91,9 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// The settled run summary as this host scrolls it: the window that clips it (its canvas rect), and where it is scrolled
-    /// to and how far it can go, in canvas units. The TouchSpire host uses its own ScrollContainer; the launcher keeps the
-    /// game's own CenterContainer in place and clips it, carrying the offset in node metadata. Null when the host has no
-    /// scrolling summary (landscape, or a fixed native summary), which the landscape check relies on.
+    /// to and how far it can go, in canvas units. The launcher keeps the game's own CenterContainer in place and clips it,
+    /// carrying the offset in node metadata. Null when the host has no scrolling summary (landscape, or a fixed native
+    /// summary), which the landscape check relies on.
     /// </summary>
     private sealed record GameOverSummary(Control Window, Rect2 Clip, Func<int> Offset, Func<int> Max);
 
@@ -106,8 +106,7 @@ internal sealed partial class TestDriver
         IReadOnlyList<(Node2D Actor, float Y)> actors, bool win);
 
     // Host answer: after the long-summary stress fixture, the summary's rows are really clipped by a ClipContents ancestor
-    // inside the reported window and any row it does not clip clears the banner and the act art (the launcher); the TouchSpire
-    // host has its own summary and no such check (no-op there).
+    // inside the reported window and any row it does not clip clears the banner and the act art.
     private partial void CheckGameOverSummaryClipping(NGameOverScreen screen, GameOverSummary? summary, GridContainer scores);
 
     // Host answer: the settled screen's Main Menu button and scoring, the summary window inside the frame over the tableau

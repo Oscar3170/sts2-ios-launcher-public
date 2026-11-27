@@ -17,8 +17,8 @@ internal sealed partial class TestDriver
 {
     /// <summary>
     /// Draws the hand one card at a time and checks that every count lands in the upper row first and leaves the rest of the
-    /// fight alone. The host supplies its row policy: TouchSpire's original three-card row and six-card fixture, or the
-    /// launcher's permanent two-row hand with up to ten cards (HostLayoutChecks.cs / LauncherHandChecks.cs).
+    /// fight alone. The host supplies its row policy: the launcher's permanent two-row hand with up to ten cards
+    /// (LauncherHandChecks.cs).
     /// </summary>
     private async Task RunHandRowsAsync(RunState state)
     {

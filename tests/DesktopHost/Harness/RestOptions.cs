@@ -24,7 +24,7 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>rest-options</c> on both hosts: the rest site with more than the two base options.
+/// <c>rest-options</c>: the rest site with more than the two base options.
 /// <para>
 /// First with the relics that add options (Shovel gives Dig, Girya gives Lift), so the room must offer Heal, Smith, Dig and
 /// Lift together and both extra options must work: Lift raises Girya's counter and consumes the option, Dig grants its
@@ -39,8 +39,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// </para>
 /// <para>
 /// The room's phone geometry is a host partial (<see cref="CheckRestSiteButtons"/> and <see cref="CheckRestRoomLayout"/>):
-/// 127-unit targets inside the safe frame, no overlap and readable labels on the launcher; TouchSpireUI's own button scale
-/// on the TouchSpire host.
+/// 127-unit targets inside the safe frame, no overlap and readable labels.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver
@@ -513,8 +512,8 @@ internal sealed partial class TestDriver
     }
 
     /// <summary>
-    /// Taps a rest option the host's way: the launcher's first tap only selects it (reticle, and the room's own description,
-    /// checked against the options) and the second takes it; the reference host takes it on the first tap.
+    /// Taps a rest option the host's way: in portrait the launcher's first tap only selects it (reticle, and the room's own
+    /// description, checked against the options) and the second takes it; in landscape the first tap takes it.
     /// </summary>
     private async Task TapRestOptionAsync(NRestSiteRoom room, NRestSiteButton button, int count, string label)
     {

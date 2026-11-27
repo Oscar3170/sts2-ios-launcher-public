@@ -18,11 +18,11 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// </summary>
 internal sealed partial class TestDriver
 {
-    /// <summary>TouchSpireUI's 280 u row at 1680: 62.5 points.</summary>
+    /// <summary>The original 1680-wide canvas's 280 u row: 62.5 points.</summary>
     private const float LauncherAncientRowHeight = 62.5f * PortraitBands.UnitsPerPoint;
-    /// <summary>TouchSpireUI's 168 u relic icon at 1680: 37.5 points.</summary>
+    /// <summary>The original 1680-wide canvas's 168 u relic icon: 37.5 points.</summary>
     private const float LauncherAncientIconSize = 37.5f * PortraitBands.UnitsPerPoint;
-    /// <summary>TouchSpireUI's 60 u option text at 1680: 13.4 points.</summary>
+    /// <summary>The original 1680-wide canvas's 60 u option text: 13.4 points.</summary>
     private const float LauncherAncientTextFont = 13.4f * PortraitBands.UnitsPerPoint * 0.96f;
 
     private partial string AncientArtNodeName() => "PortraitAncientArt";

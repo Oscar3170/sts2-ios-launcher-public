@@ -26,21 +26,20 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// holders and labels, and the rest site's option row and act cover.
 /// <para>
 /// Every measurement is in the launcher's canvas units (1080 across; 2.88 units are one phone point, so a touch target is
-/// 127). Thresholds that TouchSpireUI states in its 1680-wide canvas are converted by 1080/1680 here, and phone-derived
-/// ones are stated directly. The layout itself is the launcher's: nodes are found by the game's own names, never by a
-/// private method of the portrait pass. Compiled only into TouchSpire.LauncherHost; the TouchSpire host's answers are in
-/// HostRewardChecks.cs and HostLayoutChecks.cs.
+/// 127). Thresholds from the original 1680-wide reference canvas are converted by 1080/1680 here, and phone-derived ones are
+/// stated directly. The layout itself is the launcher's: nodes are found by the game's own names, never by a private method
+/// of the portrait pass.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver
 {
-    // 1080 / 1680: TouchSpireUI's layout numbers are quoted on the wider canvas; this host's are on the phone's 1080.
-    private const float TsuiToCanvas = 1080f / 1680f;
-    // A card reward or choose-a-card card is a 450 unit card in TouchSpireUI's canvas: 289 units here.
-    private const float LauncherCardWidth = 450f * TsuiToCanvas;
-    // The lane's right edge: TouchSpireUI holds it 48 of its units off the safe edge, so about 31 here.
-    private static float LauncherLaneRightEdge(float canvasWidth) => canvasWidth - 48f * TsuiToCanvas;
-    // Skip and Proceed share one vertical centre; TouchSpireUI's lane sits at 5/8 of the height.
+    // 1080 / 1680: the reference layout numbers are quoted on the wider canvas; this host's are on the phone's 1080.
+    private const float ReferenceToCanvas = 1080f / 1680f;
+    // A card reward or choose-a-card card is a 450 unit card in the original 1680-wide reference canvas: 289 units here.
+    private const float LauncherCardWidth = 450f * ReferenceToCanvas;
+    // The lane's right edge: the original canvas holds it 48 units off the safe edge, so about 31 here.
+    private static float LauncherLaneRightEdge(float canvasWidth) => canvasWidth - 48f * ReferenceToCanvas;
+    // Skip and Proceed share one vertical centre; the reference lane sits at 5/8 of the height.
     private const float LauncherLaneCentreFactor = 0.625f;
 
     private (ulong Id, Vector2 Position)[] _launcherRewardHandBefore = Array.Empty<(ulong, Vector2)>();
@@ -136,7 +135,7 @@ internal sealed partial class TestDriver
     private NHandCardHolder[] LauncherBackgroundHand() =>
         FindAll<NPlayerHand>(_tree.Root).FirstOrDefault()?.ActiveHolders.ToArray() ?? Array.Empty<NHandCardHolder>();
 
-    /// <summary>Whether the offered cards form one row: the reference's layout for one to three cards.</summary>
+    /// <summary>Whether the offered cards form one row: the launcher's layout for one to three cards.</summary>
     private static bool LauncherCardsInOneRow(IReadOnlyList<Rect2> drawn)
     {
         if (drawn.Count <= 1) return true;
@@ -145,10 +144,10 @@ internal sealed partial class TestDriver
     }
 
     /// <summary>
-    /// Whether the combat hand still shows below the card block. The reference's one row under the banner is taller than the
-    /// band above a five-card portrait hand at 9:16, so cards and the hand's upper edge overlap there on both hosts; what must
-    /// not happen (the report's bug) is a block that reaches down through the hand and hides it. The card reward over a loot
-    /// list is checked against the loot panel instead, which is drawn in front of the hand.
+    /// Whether the combat hand still shows below the card block. The launcher's one row under the banner is taller than the
+    /// band above a five-card portrait hand at 9:16, so cards and the hand's upper edge overlap there; what must not happen
+    /// (the report's bug) is a block that reaches down through the hand and hides it. The card reward over a loot list is
+    /// checked against the loot panel instead, which is drawn in front of the hand.
     /// </summary>
     private bool LauncherHandShowsBelowCards(Rect2 cards, out string detail)
     {
@@ -560,8 +559,8 @@ internal sealed partial class TestDriver
         Rect2 safe = PortraitSafeRect();
         Rect2[] drawn = holders.Select(holder => LauncherDrawnRect(holder.Hitbox)).ToArray();
         Rect2[] drawnCards = holders.Select(LauncherDrawnCard).ToArray();
-        // One to three cards are the reference's single row; four or more use the launcher's widening grid with the peek
-        // footer dropped to its native 128 units when needed, so every count keeps the phone width floor.
+        // One to three cards form a single row; four or more use the launcher's widening grid with the peek footer dropped to
+        // its native 128 units when needed, so every count keeps the phone width floor.
         _report.Check(name + "_cards_phone_width",
             drawn.All(rect => LauncherOnCanvas(rect, canvas) && rect.Size.X >= LauncherCardWidth - 0.5f),
             $"widths={string.Join(",", drawn.Select(rect => rect.Size.X.ToString("F0")))} floor={LauncherCardWidth:F0} " +

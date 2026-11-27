@@ -14,8 +14,7 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <c>game-over-room</c> dies outside combat, where the native screen has no tableau and the launcher's act-art fallback has
 /// to stand in for the room, and <c>game-over-boss-win</c> wins the act boss fight, so the victory banner and summary sit
 /// over a boss instead of the defeat tableau <c>game-over-boss</c> shows. The layout answers are host partials: the
-/// launcher's fallback art and frame are checked in LauncherMenuChecks.cs, the TouchSpire host's own summary and art in
-/// HostMenuChecks.cs.
+/// launcher's fallback art and frame are checked in LauncherMenuChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {

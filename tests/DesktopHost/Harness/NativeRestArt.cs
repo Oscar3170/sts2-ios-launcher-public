@@ -10,9 +10,9 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>rest-tour</c> (and the TouchSpire host's landscape-only <c>rest-art</c>): every act's native rest site, captured in
-/// portrait (<c>rest_&lt;act&gt;</c>), or with the characters and run UI hidden for the art-only pass. Run on both hosts; the
-/// portrait state comes from the host's own <see cref="IsPortraitHost"/>.
+/// <c>rest-tour</c> (and the landscape-only <c>rest-art</c>): every act's native rest site, captured in portrait
+/// (<c>rest_&lt;act&gt;</c>), or with the characters and run UI hidden for the art-only pass. The portrait state comes from
+/// the host's own <see cref="IsPortraitHost"/>.
 /// </summary>
 internal sealed partial class TestDriver
 {

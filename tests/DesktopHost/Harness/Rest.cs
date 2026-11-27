@@ -11,11 +11,10 @@ using MegaCrit.Sts2.Core.Runs;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>rest</c> on both hosts: a rest site entered from a wounded run, its native option buttons, the Heal option tapped
-/// through the host's own input, and the native framing staying put while it heals. The room's own phone geometry (the
-/// buttons' touch size, the options row's place and the act cover behind it) is a host partial: TouchSpireUI's answers are
-/// in HostLayoutChecks.cs, the launcher's in TouchSpire.LauncherHost/src/LauncherRewardChecks.cs. The scenario ends with the
-/// shared card-screen fixture over the same rest site.
+/// <c>rest</c>: a rest site entered from a wounded run, its native option buttons, the Heal option tapped through the
+/// host's own input, and the native framing staying put while it heals. The room's own phone geometry (the buttons' touch
+/// size, the options row's place and the act cover behind it) is a host partial: the launcher's answers are in
+/// Host/LauncherRewardChecks.cs. The scenario ends with the shared card-screen fixture over the same rest site.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -55,7 +54,7 @@ internal sealed partial class TestDriver
         int optionCount = buttons.Count;
         int optionsBefore = RestOptionTotal(restRoom);
         // Select-then-confirm: the launcher's first tap only selects (the game's own reticle and option description), the
-        // second takes the option; the reference host takes it on the first tap, as the game does.
+        // second takes the option.
         await _pointer.TapAsync(CenterOf(heal));
         if (RestOptionsTakeTwoTaps())
         {

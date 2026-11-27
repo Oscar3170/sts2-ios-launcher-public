@@ -19,8 +19,8 @@ internal sealed partial class TestDriver
 {
     /// <summary>
     /// Drives the game's own in-hand card selection (Armaments' upgrade choice, Burning Pact's exhaust choice and a whole-hand
-    /// selection) and checks select, replace, deselect and native Confirm. The selection flow is the game's on both hosts;
-    /// the host only supplies the neutral pointer resting point and its own geometry assertions for the enlarged previews.
+    /// selection) and checks select, replace, deselect and native Confirm. The selection flow is the game's; the host only
+    /// supplies the neutral pointer resting point and its own geometry assertions for the enlarged previews.
     /// </summary>
     private async Task RunHandSelectionAsync(RunState state)
     {

@@ -17,14 +17,12 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// <c>treasure</c> on both hosts: the chest, the native gold burst, the relic holders for 0 to 6 relics, Skip and Proceed.
-/// What a touch on a holder does is the host's: TouchSpireUI's native release takes the relic on one tap; the launcher takes
-/// a chest whose every relic is claimable (a single player's one-relic chest, or the Blitz chest's two relics for two rounds)
-/// with the game's own single tap, and selects on the first press and takes on a second tap only when the chest offers a
-/// choice (more visible relics than picks left, or another player) (<see cref="TakeTreasureRelicAsync"/> and
-/// <see cref="CheckTreasurePressAwardAsync"/>). The room's
-/// portrait framing and touch-target sizes are partials implemented by the TouchSpire host (HostRewardChecks.cs) and dropped
-/// on the launcher.
+/// <c>treasure</c>: the chest, the native gold burst, the relic holders for 0 to 6 relics, Skip and Proceed. What a touch
+/// on a holder does is the launcher's: it takes a chest whose every relic is claimable (a single player's one-relic chest,
+/// or the Blitz chest's two relics for two rounds) with the game's own single tap, and selects on the first press and takes
+/// on a second tap only when the chest offers a choice (more visible relics than picks left, or another player)
+/// (<see cref="TakeTreasureRelicAsync"/> and <see cref="CheckTreasurePressAwardAsync"/>). The room's portrait framing and
+/// touch-target sizes are a partial in Host/LauncherRewardChecks.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -160,7 +158,7 @@ internal sealed partial class TestDriver
     /// The contract the harness expects for an open chest, read from the game state and never from a host's own
     /// <c>PhoneSelectConfirm</c> adapter: only a single player with no more visible relics than picks left can take every
     /// relic, and only such a chest keeps the game's native single tap. More visible relics than picks left, another
-    /// player, or an unreadable state all need the select-then-confirm pass. Both hosts read the same game state, so a
+    /// player, or an unreadable state all need the select-then-confirm pass. The harness reads the game state, so a
     /// scenario can branch on the chest it really has instead of hardcoding one shape (the Blitz chest is two relics for
     /// two rounds in both v0.113.1 and v0.114.0, but a fixture that rolled differently must not be tapped as if it were).
     /// </summary>

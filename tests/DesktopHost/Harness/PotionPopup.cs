@@ -18,9 +18,8 @@ namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
 /// <c>potions</c>: the native potion actions and the scrollable potion row. The flow is the game's own (model, holder and
-/// popup), so it runs on both hosts; the popup's placement inside the host's portrait band and the row node are partial
-/// methods (TouchSpireUI in HostLayoutChecks.cs, the launcher in TouchSpire.LauncherHost/src/LauncherHeaderChecks.cs), and
-/// <see cref="CheckPotionPopupLayout"/> comes from HarnessCore.cs.
+/// popup); the popup's placement inside the host's portrait band and the row node are partial methods (the launcher's in
+/// LauncherHeaderChecks.cs), and <see cref="CheckPotionPopupLayout"/> comes from HarnessCore.cs.
 /// </summary>
 internal sealed partial class TestDriver
 {

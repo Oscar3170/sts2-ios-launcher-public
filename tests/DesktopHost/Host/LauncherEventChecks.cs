@@ -34,7 +34,9 @@ internal sealed partial class TestDriver
     /// shrinking at before the slot scrolls.
     /// </summary>
     private const float LauncherEventMinTextFont = 28f;
-    /// <summary>The title keeps TouchSpireUI's +20 u (1680) over the copy: 28 + 13 launcher units at the smallest fit.</summary>
+    /// <summary>
+    /// The title keeps the reference +20 u (1680) over the copy: 28 + 13 launcher units at the smallest fit.
+    /// </summary>
     private const float LauncherEventTitleFont = LauncherEventMinTextFont + 13f;
     /// <summary>
     /// The copy slot must show a title and at least two body lines at <see cref="LauncherEventMinTextFont"/>, or the page is
