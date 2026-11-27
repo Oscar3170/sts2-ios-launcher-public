@@ -8,8 +8,8 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.GameHost;
 
 /// <summary>
-/// The spoils screen and the card reward in portrait: the loot window scaled so its banner fits the phone, cut to its rows
-/// and centred so the reward buttons sit around the middle of the screen, the loot Skip hidden while a card reward is open
+/// The spoils screen and the card reward in portrait: the loot window scaled so its banner fits the phone, kept at the game's
+/// constant size and centred on the screen with its Skip/Proceed just under it, the loot Skip hidden while a card reward is open
 /// over it, and the reward cards in a two-column grid under the shared banner with the alternatives in one row above the
 /// footer. The game's own values are captured before the first move and put back when Portrait Mode is turned off. The
 /// action lane and the shared banner helpers stay with the between-screen coordinator.
@@ -52,9 +52,6 @@ internal sealed class PortraitRewardsLayout
         public Control? Banner;
         public int RowCount = -1;
         public float ContentHeight;
-        // The tallest block of rows this screen has shown: the window keeps the frame it had for it, so taking a reward closes
-        // its row up inside the panel instead of resizing and re-centring the panel.
-        public float FrameContentHeight;
         public Vector2 Target;
         public bool HasTarget;
         public bool Placed;
@@ -273,8 +270,8 @@ internal sealed class PortraitRewardsLayout
 
     private void UpdateLootPortrait(LootScreenState state, Vector2 canvas, float capHeight, bool cardRewardOpen)
     {
-        // The rows are laid out first: the window's height and place come from how tall their block is (the list keeps one
-        // row size; its labels read at 15 points; it is walked only when its rows change).
+        // The rows are laid out first (the list keeps one row size; its labels read at 15 points; it is walked only when its
+        // rows change). Their height only decides how far the list scrolls: the window is the game's constant panel.
         int rowCount = state.List.GetChildCount();
         if (rowCount != state.RowCount) ApplyLootRows(state, rowCount);
 
@@ -294,11 +291,9 @@ internal sealed class PortraitRewardsLayout
             }
         }
 
-        float laneTop = PortraitBetweenMath.ActionLaneTop(state.Blitz, canvas.Y, PortraitBands.MinTarget);
-        state.FrameContentHeight = Math.Max(state.FrameContentHeight, state.ContentHeight);
+        float laneTop = PortraitBetweenMath.ActionLaneTop(state.Blitz, canvas.X, canvas.Y, PortraitBands.MinTarget);
         LootWindowFit fit = PortraitBetweenMath.LootWindow(
-            canvas.X, canvas.Y, PortraitBands.HeaderBottom(capHeight), laneTop, NativeLootWidth, NativeLootHeight,
-            state.FrameContentHeight);
+            canvas.X, PortraitBands.HeaderBottom(capHeight), laneTop, NativeLootWidth, NativeLootHeight);
         Control window = state.Window;
 
         if (Math.Abs(window.Scale.X - fit.Scale) > 0.0005f)

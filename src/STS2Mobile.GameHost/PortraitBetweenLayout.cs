@@ -284,7 +284,7 @@ internal sealed partial class PortraitBetweenLayout
         float height = proceed.Size.Y;
         float centre = lane.Rest
             ? PortraitRestMath.ProceedLaneTop(canvas.Y) + height / 2f
-            : PortraitBetweenMath.ActionLaneCentreY(lane.Blitz, canvas.Y, height);
+            : PortraitBetweenMath.ActionLaneCentreY(lane.Blitz, canvas.X, canvas.Y, height);
         float width = proceed.Size.X * proceed.Scale.X;
         var target = new Vector2(canvas.X - width - PortraitBetweenMath.ActionRightMargin, centre - height / 2f);
 

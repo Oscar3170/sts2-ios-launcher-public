@@ -192,77 +192,49 @@ public class PortraitBetweenMathTests
         Assert.Equal(expected, PortraitBetweenMath.FitScale(content, available), 4);
     }
 
-    // Canvas 1080 wide, on the tall shape (cap 162, stone header bottom 390); the game's shown Y is 764/1080 of the
-    // height; the grown action is 127 units tall. The compact shape has no top cap, so its header bottom is 228.
+    // Canvas 1080 wide, on the tall shape (cap 162, stone header bottom 390); the grown action is 127 units tall. The compact
+    // shape has no top cap, so its header bottom is 228.
     private const float HeaderBottom = 390f;
     private const float CompactHeaderBottom = 228f;
     private const float ActionHeight = 127f;
     private const float ThreeRowLoot = 3f * PortraitBetweenMath.LootRowMinHeight + 2f * PortraitBetweenMath.LootRowSeparation;
-
-    private static float LootRowsMiddle(LootWindowFit fit, float contentHeight) =>
-        fit.Y + (PortraitBetweenMath.LootMaskTop + PortraitBetweenMath.LootContainerTop + contentHeight * 0.5f) * fit.Scale;
 
     [Fact]
     public void LootWindowIsThreeQuartersOfTheCanvasAcross()
     {
         float scale = PortraitBetweenMath.LootScale(1080f);
         Assert.Equal(1008f / 654f, scale, 4);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 2340f, HeaderBottom, 1655.33f, 526f, 640f, ThreeRowLoot);
+        float laneTop = PortraitBetweenMath.ActionLaneTop(false, 1080f, 2340f, ActionHeight);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, HeaderBottom, laneTop, 526f, 640f);
         Assert.Equal(526f * scale, fit.Width, 3);
         Assert.True(526f * scale >= 1080f * 0.74f);
     }
 
-    [Fact]
-    public void LootWindowCentresTheRowsOnTheTallShape()
+    // The game's 640-tall panel stays whole and centred; Skip/Proceed hang 24 units under it (1687.2 on the tall shape, 32
+    // under the game's own 764/1080 line; 1477.2 at 9:16).
+    [Theory]
+    [InlineData(2340f, HeaderBottom, 1687.21f)]
+    [InlineData(1920f, CompactHeaderBottom, 1477.21f)]
+    public void LootPanelIsTheGamesConstantPanelCentredAboveItsLane(float height, float headerBottom, float expectedLane)
     {
-        float laneTop = PortraitBetweenMath.ActionLaneTop(false, 2340f, ActionHeight);
-        Assert.Equal(PortraitBetweenMath.ProceedShowY(2340f), laneTop, 3);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 2340f, HeaderBottom, laneTop, 526f, 640f, ThreeRowLoot);
-        // The rows' middle is the canvas's middle, and the panel reaches down to the lane, as the game's reaches its Skip.
-        Assert.Equal(1170f, LootRowsMiddle(fit, ThreeRowLoot), 1);
+        float laneTop = PortraitBetweenMath.ActionLaneTop(false, 1080f, height, ActionHeight);
+        Assert.Equal(expectedLane, laneTop, 1);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, headerBottom, laneTop, 526f, 640f);
+        Assert.Equal(640f, fit.WindowHeight, 2);
+        Assert.Equal(height / 2f, fit.Y + fit.Height / 2f, 1);
         Assert.Equal(laneTop - PortraitBetweenMath.LootLaneGap, fit.Y + fit.Height, 1);
-        Assert.True(fit.WindowHeight <= 640f);
-        // Banner top (the window's top less the overhang) below the header.
-        Assert.True(fit.Y - PortraitBetweenMath.LootBannerOverhang * fit.Scale >= HeaderBottom);
+        // Banner top (the window's top less the overhang) below the header; the action inside the safe bottom.
+        Assert.True(fit.Y - PortraitBetweenMath.LootBannerOverhang * fit.Scale >= headerBottom);
+        Assert.True(laneTop + ActionHeight <= height - 90f);
+        Assert.Equal(PortraitBetweenMath.LootPanelTop(1080f, height), fit.Y, 1);
     }
 
     [Fact]
-    public void LootWindowCentresTheRowsAtTheSixteenByNineShape()
-    {
-        float laneTop = PortraitBetweenMath.ActionLaneTop(false, 1920f, ActionHeight);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(
-            1080f, 1920f, CompactHeaderBottom, laneTop, 526f, 640f, ThreeRowLoot);
-        Assert.True(fit.WindowHeight < 640f);
-        Assert.Equal(960f, LootRowsMiddle(fit, ThreeRowLoot), 1);
-        // The panel ends at the lane's gap; its top is under the header.
-        Assert.Equal(laneTop - PortraitBetweenMath.LootLaneGap, fit.Y + fit.Height, 1);
-        Assert.True(fit.Y >= CompactHeaderBottom);
-        Assert.True(fit.Y + fit.Height <= 1920f);
-        // The mask holds the three rows and the padding under them.
-        Assert.True((fit.WindowHeight - PortraitBetweenMath.LootMaskTop - PortraitBetweenMath.LootMaskBottom) * fit.Scale >=
-                    ThreeRowLoot * fit.Scale + PortraitBetweenMath.LootContentPadding * fit.Scale - 1f);
-    }
-
-    [Fact]
-    public void LootWindowKeepsAPanelForASingleReward()
-    {
-        const float oneRow = PortraitBetweenMath.LootRowMinHeight;
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 1920f, CompactHeaderBottom, 1358.22f, 526f, 640f, oneRow);
-        Assert.True(fit.WindowHeight >= PortraitBetweenMath.LootWindowMinHeight);
-        Assert.Equal(960f, LootRowsMiddle(fit, oneRow), 1);
-        Assert.Equal(1358.22f - PortraitBetweenMath.LootLaneGap, fit.Y + fit.Height, 1);
-    }
-
-    [Fact]
-    public void LootWindowGivesALongListTheRoomItHas()
+    public void LootWindowGivesALongListTheGamesScroll()
     {
         const float sevenRows = 7f * PortraitBetweenMath.LootRowMinHeight + 6f * PortraitBetweenMath.LootRowSeparation;
-        float laneTop = PortraitBetweenMath.ActionLaneTop(false, 1920f, ActionHeight);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(
-            1080f, 1920f, CompactHeaderBottom, laneTop, 526f, 640f, sevenRows);
-        // The game's own panel is the cap; the list scrolls under the mask when its rows are taller.
-        Assert.Equal(640f, fit.WindowHeight, 2);
-        Assert.True(fit.Y + fit.Height <= laneTop - 8f);
+        float laneTop = PortraitBetweenMath.ActionLaneTop(false, 1080f, 1920f, ActionHeight);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, CompactHeaderBottom, laneTop, 526f, 640f);
         float mask = (fit.WindowHeight - PortraitBetweenMath.LootMaskTop - PortraitBetweenMath.LootMaskBottom) * fit.Scale;
         Assert.True(sevenRows * fit.Scale > mask);
         Assert.True(PortraitBetweenMath.LootScrollMinimumHeight(sevenRows, fit.WindowHeight - 139f) > 0f);
@@ -273,22 +245,14 @@ public class PortraitBetweenMathTests
     {
         Assert.Equal(1200f, PortraitBetweenMath.BlitzLaneCentreY(1920f), 3);
         Assert.Equal(1462.5f, PortraitBetweenMath.BlitzLaneCentreY(2340f), 3);
-        float top = PortraitBetweenMath.ActionLaneTop(true, 1920f, ActionHeight);
+        float top = PortraitBetweenMath.ActionLaneTop(true, 1080f, 1920f, ActionHeight);
         Assert.Equal(1136.5f, top, 3);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(
-            1080f, 1920f, CompactHeaderBottom, top, 526f, 640f, ThreeRowLoot);
-        Assert.True(fit.Y + fit.Height <= top - 8f);
-        // The action lane gives the window less room, so the rows sit as close to the middle as they can.
-        Assert.InRange(LootRowsMiddle(fit, ThreeRowLoot) / 1920f, 0.40f, 0.60f);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, CompactHeaderBottom, top, 526f, 640f);
+        // The higher lane leaves less room than the game's panel: the window takes what there is, under the header.
+        Assert.Equal(top - PortraitBetweenMath.LootLaneGap, fit.Y + fit.Height, 1);
+        Assert.True(fit.WindowHeight < 640f);
+        Assert.True(fit.Y - PortraitBetweenMath.LootBannerOverhang * fit.Scale >= CompactHeaderBottom);
         Assert.True((fit.WindowHeight - 139f) * fit.Scale >= ThreeRowLoot * fit.Scale);
-    }
-
-    [Fact]
-    public void GameLaneCentreHangsFromTheShownYForTheTallShape()
-    {
-        Assert.Equal(1655.33f + ActionHeight / 2f, PortraitBetweenMath.ActionLaneCentreY(false, 2340f, ActionHeight), 2);
-        Assert.Equal(PortraitBetweenMath.ProceedShowY(2340f), PortraitBetweenMath.ActionLaneTop(false, 2340f, ActionHeight), 2);
-        Assert.Equal(1080f - PortraitBetweenMath.ActionRightMargin, 1049f, 3);
     }
 
     [Theory]

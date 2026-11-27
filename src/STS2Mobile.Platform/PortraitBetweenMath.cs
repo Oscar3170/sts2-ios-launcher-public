@@ -221,14 +221,8 @@ public static class PortraitBetweenMath
     public const float LootMaskTop = 103f;
     public const float LootMaskBottom = 36f;
 
-    /// <summary>Room the mask keeps below the last row before its lower edge, in the window's own units.</summary>
-    public const float LootContentPadding = 16f;
-
-    /// <summary>
-    /// The shortest window portrait draws, in the window's own units: a single reward still sits in a panel rather than a
-    /// sliver under the banner.
-    /// </summary>
-    public const float LootWindowMinHeight = 360f;
+    /// <summary>The game's loot window height, in its own units: portrait keeps it whatever the rows.</summary>
+    public const float LootNativeHeight = 640f;
 
     /// <summary>The action's right edge keeps this margin from the canvas's right edge (48 of the reference's 1680 units).</summary>
     public const float ActionRightMargin = 31f;
@@ -241,31 +235,19 @@ public static class PortraitBetweenMath
         Math.Max(0.2f, (canvasWidth - LootWidthInset) / LootFitWidth);
 
     /// <summary>
-    /// The loot window in portrait: its top is placed so the rows' block is centred on the canvas's middle (the banner
-    /// overhang keeps it under the stone header), and the window then reaches down to <see cref="LootLaneGap"/> above
-    /// <paramref name="laneTop"/>, as the game's panel reaches its Skip/Proceed, never taller than the game's own panel.
-    /// When the panel cannot reach that far from the centred top, the window keeps the lane and moves down; when the rows
-    /// are too many for one panel the window takes the room it has (the list scrolls).
+    /// The loot window in portrait: the game's constant panel, its bottom <see cref="LootLaneGap"/> above
+    /// <paramref name="laneTop"/> as the game's panel reaches its Skip/Proceed. Outside Blitz that lane is
+    /// <see cref="LootLaneTop"/>, so the panel stands centred on the canvas. Where the room between the stone header (with the
+    /// banner's overhang) and the lane is shorter than the panel (Blitz's higher lane), the window takes the room it has and
+    /// the list scrolls.
     /// </summary>
-    public static LootWindowFit LootWindow(
-        float canvasWidth, float canvasHeight, float headerBottom, float laneTop, float nativeWidth, float nativeHeight,
-        float contentHeight)
+    public static LootWindowFit LootWindow(float canvasWidth, float headerBottom, float laneTop, float nativeWidth, float nativeHeight)
     {
         float scale = LootScale(canvasWidth);
         float minTop = headerBottom + LootTopGap + LootBannerOverhang * scale;
         float maxBottom = Math.Max(laneTop - LootLaneGap, minTop + 1f);
-        float available = Math.Max(1f, (maxBottom - minTop) / scale);
-        float needed = contentHeight + LootMaskTop + LootMaskBottom + LootContentPadding;
-        float floor = Math.Clamp(Math.Min(Math.Max(needed, LootWindowMinHeight), available), Math.Min(120f, nativeHeight), nativeHeight);
-        // The rows start at the mask's top plus the list's own offset and keep the window's scale; their middle is the
-        // point that takes the canvas's middle.
-        float rowsOffset = (LootMaskTop + LootContainerTop) * scale + contentHeight * scale * 0.5f;
-        float y = Math.Clamp(
-            canvasHeight * 0.5f - rowsOffset,
-            minTop,
-            Math.Max(minTop, maxBottom - floor * scale));
-        float height = Math.Clamp((maxBottom - y) / scale, floor, nativeHeight);
-        y = Math.Max(minTop, maxBottom - height * scale);
+        float height = Math.Clamp((maxBottom - minTop) / scale, Math.Min(120f, nativeHeight), nativeHeight);
+        float y = maxBottom - height * scale;
         return new LootWindowFit(
             scale,
             (canvasWidth - nativeWidth * scale) * 0.5f,
@@ -275,26 +257,28 @@ public static class PortraitBetweenMath
             height);
     }
 
-    /// <summary>The game's own shown position of the proceed button as a fraction of the canvas height (764 of 1080).</summary>
-    public const float ProceedShowFraction = 764f / 1080f;
+    /// <summary>The top of the loot panel outside Blitz: the game's 640-tall panel at the width's scale, centred on the canvas.</summary>
+    public static float LootPanelTop(float canvasWidth, float canvasHeight) =>
+        (canvasHeight - LootNativeHeight * LootScale(canvasWidth)) * 0.5f;
 
-    /// <summary>Where the game slides the proceed button to, in canvas units (its top-left when the lane is the game's).</summary>
-    public static float ProceedShowY(float canvasHeight) => canvasHeight * ProceedShowFraction;
+    /// <summary>The action lane's top outside Blitz: <see cref="LootLaneGap"/> under the centred loot panel.</summary>
+    public static float LootLaneTop(float canvasWidth, float canvasHeight) =>
+        LootPanelTop(canvasWidth, canvasHeight) + LootNativeHeight * LootScale(canvasWidth) + LootLaneGap;
 
     /// <summary>The Blitz run's action centre, which is shared by the loot screen's Skip and Proceed.</summary>
     public static float BlitzLaneCentreY(float canvasHeight) => canvasHeight * BlitzLaneFraction;
 
     /// <summary>
-    /// Centre of the action lane on a screen. Without a Blitz lane the button keeps the game's own shown Y as its top edge,
-    /// so growing it for a finger only extends it downwards and the game's slide never moves its centre; in Blitz both the
-    /// Skip and the Proceed label hang from one centre at 0.625 of the canvas height.
+    /// Centre of the action lane on a screen. Without a Blitz lane the button's top is <see cref="LootLaneTop"/>, so growing
+    /// it for a finger only extends it downwards and the game's slide never moves its centre; in Blitz both the Skip and the
+    /// Proceed label hang from one centre at 0.625 of the canvas height.
     /// </summary>
-    public static float ActionLaneCentreY(bool blitz, float canvasHeight, float actionHeight) =>
-        blitz ? BlitzLaneCentreY(canvasHeight) : ProceedShowY(canvasHeight) + actionHeight * 0.5f;
+    public static float ActionLaneCentreY(bool blitz, float canvasWidth, float canvasHeight, float actionHeight) =>
+        blitz ? BlitzLaneCentreY(canvasHeight) : LootLaneTop(canvasWidth, canvasHeight) + actionHeight * 0.5f;
 
     /// <summary>Top edge the action must take so that its centre is the lane's.</summary>
-    public static float ActionLaneTop(bool blitz, float canvasHeight, float actionHeight) =>
-        ActionLaneCentreY(blitz, canvasHeight, actionHeight) - actionHeight * 0.5f;
+    public static float ActionLaneTop(bool blitz, float canvasWidth, float canvasHeight, float actionHeight) =>
+        ActionLaneCentreY(blitz, canvasWidth, canvasHeight, actionHeight) - actionHeight * 0.5f;
 
     /// <summary>The loot list's own top offset inside its mask (the game's container starts 35 below it).</summary>
     public const float LootContainerTop = 35f;
