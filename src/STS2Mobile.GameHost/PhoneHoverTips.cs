@@ -18,8 +18,10 @@ namespace STS2Mobile.GameHost;
 /// tip's height before its text has wrapped, and the column is a flow container, so tips that do not fit flow into a second column
 /// beside the first, outside the size this pass fitted. The text column is now made one column as tall as its tips, and a column
 /// with no room above or below its item is shrunk, down to <see cref="MinFitScale"/>, to fit the larger side.</para>
-/// <para>In combat a hand card's tips are clamped to the stage band (stage top to the control rail), so a keyword tip
-/// can never cover the hand's rows as it does natively in portrait.</para>
+/// <para>In combat a hand card's tips go beside the card, as the landscape game draws them: the text and card columns stack
+/// on the side with room (the right first), never over the card and always inside the canvas, at the phone scale. They may
+/// cover neighbouring hand cards, which is what lets them stay readable in the narrow portrait hand; they never cover the
+/// card they describe.</para>
 /// <para>Some tips must not show in portrait at all. While a hand card is dragged or aimed (<see cref="PhoneTouchCards.CardIsBeingDragged"/>)
 /// its card tips are removed, so the card under the finger is not covered by text; and after End Turn is pressed its tip is
 /// parked, because the finger and the engine's pointer remain on the button after the press, where a mouse would have quickly
@@ -51,11 +53,11 @@ internal sealed class PhoneHoverTips
     private FieldInfo? _ownerField;
     private FieldInfo? _textField;
     private FieldInfo? _cardField;
+    private PropertyInfo? _cardNodeProp;
     private MethodInfo? _removeMethod;
     private PropertyInfo? _containerProp;
     private PropertyInfo? _gameInstance;
     private readonly HashSet<ulong> _handTipLogged = new();
-    private readonly HashSet<ulong> _handTipShiftLogged = new();
     private SceneTree? _tree;
     private bool _fitSubscribed;
     private bool _resolved;
@@ -206,9 +208,6 @@ internal sealed class PhoneHoverTips
             }
             Rect2 canvas = tree.Root.GetVisibleRect();
             float safeTop = PortraitLayout.ComputeCapHeight(tree.Root);
-            float stageTop = safeTop + PortraitBands.RunContentTop;
-            float railTop = PortraitCombatMath.ComputeCombatBands(canvas.Size.Y, 0f).RailTopY;
-            (float Top, float Bottom) handBand = TouchCardMath.HandTipBand(stageTop, railTop);
             foreach (Node child in container.GetChildren())
             {
                 if (child is not Control set || set.GetType().FullName != TipSetTypeName || set.IsQueuedForDeletion() || !set.Visible) continue;
@@ -223,7 +222,7 @@ internal sealed class PhoneHoverTips
                 }
                 try
                 {
-                    FitSet(set, canvas, safeTop, PortraitTipScale, handBand);
+                    FitSet(set, canvas, safeTop, PortraitTipScale);
                 }
                 catch (Exception error)
                 {
@@ -255,6 +254,7 @@ internal sealed class PhoneHoverTips
                 null, [typeof(Control)], null);
             _containerProp = typeof(NGame).GetProperty("HoverTipsContainer", inst);
             _gameInstance = typeof(NGame).GetProperty("Instance", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            _cardNodeProp = typeof(NGame).Assembly.GetType(HandHolderTypeName)?.GetProperty("CardNode", inst);
             if (_textField == null || _cardField == null || _containerProp == null || _gameInstance == null)
             {
                 _failed = true;
@@ -273,17 +273,16 @@ internal sealed class PhoneHoverTips
         foreach (Node child in node.GetChildren()) MakeInputTransparent(child);
     }
 
-    private void FitSet(Control set, Rect2 canvas, float safeTop, float scale, (float Top, float Bottom) handBand)
+    private void FitSet(Control set, Rect2 canvas, float safeTop, float scale)
     {
         Control? ownerControl = _ownerField?.GetValue(set) as Control;
-        Rect2? owner = ownerControl != null && GodotObject.IsInstanceValid(ownerControl) && ownerControl.IsInsideTree()
-            ? ItemRect(ownerControl, canvas)
-            : null;
-        // A hand card's keyword tip must stay in the stage band (TouchCardMath.HandTipBand: one StageTipMargin below the
-        // stage top and above the rail) so it can never cover the hand. The game may own the tip with the holder, the NCard
-        // under it, or a child, so any node under the hand counts.
+        // A hand card's keyword tip goes beside the card as drawn (the game may own the tip with the holder, the NCard
+        // under it, or a child, so any node under the hand counts). The drawn card includes the pressed growth the hand
+        // puts on the card node, which the hit box does not.
         bool isHandTip = IsHandTip(ownerControl);
-        (float Top, float Bottom)? band = isHandTip ? handBand : null;
+        Rect2? owner = ownerControl != null && GodotObject.IsInstanceValid(ownerControl) && ownerControl.IsInsideTree()
+            ? (isHandTip ? HandCardRect(ownerControl) ?? ItemRect(ownerControl, canvas) : ItemRect(ownerControl, canvas))
+            : null;
         // A potion's popup is drawn over the middle of the screen; its description is never allowed to cover the Use and
         // Discard buttons, so a column with no room beside the popup is put under it.
         Rect2? popup = PotionPopupOf(ownerControl)?.GetGlobalRect();
@@ -303,35 +302,94 @@ internal sealed class PhoneHoverTips
         bool textParts = text is { } t && GodotObject.IsInstanceValid(t) && t.GetChildCount() > 0;
         bool cardParts = cards is { } c && GodotObject.IsInstanceValid(c) && c.GetChildCount() > 0;
         if (!textParts && !cardParts) return;
-        Rect2? placedText = null;
-        if (text != null && GodotObject.IsInstanceValid(text))
+        if (text is FlowContainer flow) MakeOneColumn(flow);
+        if (isHandTip && owner is { } handCard)
+            FitHandColumns(set, toCanvas, canvas, handCard, text, cards, scale);
+        else
         {
-            if (text is FlowContainer flow) MakeOneColumn(flow);
-            placedText = FitColumn(text, toCanvas, canvas, owner, scale, popup, band, safeTop);
+            Rect2? placedText = null;
+            if (text != null && GodotObject.IsInstanceValid(text))
+                placedText = FitColumn(text, toCanvas, canvas, owner, scale, popup, safeTop);
+            if (cards != null && GodotObject.IsInstanceValid(cards))
+                FitColumn(cards, toCanvas, canvas, owner, scale, placedText, safeTop);
         }
-        if (cards != null && GodotObject.IsInstanceValid(cards))
-            FitColumn(cards, toCanvas, canvas, owner, scale, placedText, band, safeTop);
 
         Rect2? union = UnionRect(set);
         if (_handTipLogged.Add(set.GetInstanceId()))
             GD.Print($"Phone hover tips: tip set owner={ownerControl?.GetType().FullName ?? "none"} hand={isHandTip} " +
-                $"band={(band is { } b ? $"{b.Top:F1}..{b.Bottom:F1}" : "none")} union={union}");
+                $"ownerRect={owner} union={union}");
+    }
 
-        // Every frame: a set's columns and tips have no size on the frame they are created, so a degenerate union skips a
-        // shift and the next frame re-checks. The clamp uses the drawn column panels (the set's visible child rects) and
-        // any sized tip child, so the union matches what is drawn.
-        if (band is { } limits && union is { } placedUnion && placedUnion.Size.X >= 2f && placedUnion.Size.Y >= 2f)
+    /// <summary>
+    /// A hand card's tips beside the card, as the landscape game draws them. The text column and any card column stack
+    /// vertically on one side of the drawn card (left or right, whichever has room), never over it, inside the canvas.
+    /// Neighbouring hand cards may be covered, which the stage-band clamp avoided at the cost of putting the tips over the
+    /// play area.
+    /// </summary>
+    private void FitHandColumns(Control set, Transform2D toCanvas, Rect2 canvas, Rect2 owner, Control? text, Control? cards,
+        float preferredScale)
+    {
+        bool textReady = ColumnReady(text);
+        bool cardReady = ColumnReady(cards);
+        if (!textReady && !cardReady) return;
+        float textWidth = textReady ? text!.Size.X : 0f;
+        float textHeight = textReady ? text!.Size.Y : 0f;
+        float cardWidth = cardReady ? cards!.Size.X : 0f;
+        float cardHeight = cardReady ? cards!.Size.Y : 0f;
+        float blockWidth = Mathf.Max(textWidth, cardWidth);
+        float blockHeight = textHeight + cardHeight + (textReady && cardReady ? Gap : 0f);
+        TouchCardMath.TipBlock block = TouchCardMath.PlaceTipBlockBeside(
+            owner.Position.X, owner.Position.Y, owner.Size.X, owner.Size.Y, canvas.Size.X, canvas.Size.Y,
+            blockWidth, blockHeight, preferredScale, Margin, Gap);
+        float y = block.Y;
+        if (textReady)
         {
-            float unionBottom = placedUnion.End.Y;
-            float excess = unionBottom - limits.Bottom;
-            if (excess > 0.5f)
-            {
-                ShiftColumnsUp(toCanvas, excess, text, cards);
-                if (_handTipShiftLogged.Add(set.GetInstanceId()))
-                    GD.Print($"Phone hover tips: hand tip union bottom {unionBottom:F1} over {limits.Bottom:F1} by {excess:F1}; " +
-                        $"after={(UnionRect(set) is { } moved ? moved.End.Y : unionBottom):F1}");
-            }
+            WriteColumn(text!, toCanvas, new Vector2(block.X, y), block.Scale);
+            y += textHeight * block.Scale + Gap;
         }
+        if (cardReady) WriteColumn(cards!, toCanvas, new Vector2(block.X, y), block.Scale);
+        if (_handTipLogged.Add(set.GetInstanceId()))
+            GD.Print($"Phone hover tips: hand tip beside owner={owner} block=({block.X:F1},{block.Y:F1}) " +
+                $"{block.Width:F1}x{block.Height:F1} scale={block.Scale:F3} side={(block.RightOfOwner ? "right" : "left")} " +
+                $"text={textReady} cards={cardReady}");
+    }
+
+    private static bool ColumnReady(Control? column) =>
+        column is { } col && GodotObject.IsInstanceValid(col) && col.Visible &&
+        col.Size.X >= 2f && col.Size.Y >= 2f && col.GetChildCount() > 0;
+
+    /// <summary>
+    /// The hand card as drawn: its hit box (the resting card shape at the hand's fan scale) merged with the NCard node's
+    /// 300 x 422 centred on the holder, which carries the pressed growth about the same centre. Null when the owner is
+    /// not under a hand card holder.
+    /// </summary>
+    private Rect2? HandCardRect(Control owner)
+    {
+        for (Node? node = owner; node != null; node = node.GetParent())
+        {
+            if (node.GetType().FullName != HandHolderTypeName || node is not Control holder) continue;
+            Rect2 rect = OwnerRect(holder);
+            if (_cardNodeProp?.GetValue(holder) is Control card && GodotObject.IsInstanceValid(card))
+                rect = rect.Merge(CardNodeRect(card));
+            return rect;
+        }
+        return null;
+    }
+
+    /// <summary>A card node's drawn rect: 300 x 422 centred on its origin, at its own and its holders' scale and rotation.</summary>
+    private static Rect2 CardNodeRect(Control card)
+    {
+        Transform2D xform = card.GetGlobalTransformWithCanvas();
+        Vector2[] corners =
+        [
+            xform * new Vector2(-150f, -211f), xform * new Vector2(150f, -211f),
+            xform * new Vector2(150f, 211f), xform * new Vector2(-150f, 211f),
+        ];
+        float minX = Math.Min(Math.Min(corners[0].X, corners[1].X), Math.Min(corners[2].X, corners[3].X));
+        float maxX = Math.Max(Math.Max(corners[0].X, corners[1].X), Math.Max(corners[2].X, corners[3].X));
+        float minY = Math.Min(Math.Min(corners[0].Y, corners[1].Y), Math.Min(corners[2].Y, corners[3].Y));
+        float maxY = Math.Max(Math.Max(corners[0].Y, corners[1].Y), Math.Max(corners[2].Y, corners[3].Y));
+        return new Rect2(minX, minY, maxX - minX, maxY - minY);
     }
 
     /// <summary>
@@ -375,18 +433,6 @@ internal sealed class PhoneHoverTips
         return false;
     }
 
-    private void ShiftColumnsUp(Transform2D toCanvas, float canvasUnits, params Control?[] columns)
-    {
-        Transform2D inverse = toCanvas.AffineInverse();
-        Vector2 shift = inverse * new Vector2(0f, -canvasUnits) - inverse * Vector2.Zero;
-        foreach (Control? column in columns)
-        {
-            if (column == null || !GodotObject.IsInstanceValid(column)) continue;
-            column.Position += shift;
-            if (_columns.TryGetValue(column.GetInstanceId(), out ColumnState? state)) state.Written += shift;
-        }
-    }
-
     /// <summary>
     /// Sizes the game's text tip column to one column holding every tip. The game sets its height from tips measured before their
     /// text wrapped, so the flow container moved the last tips into a second column, past the size this pass fits on the screen.
@@ -416,21 +462,10 @@ internal sealed class PhoneHoverTips
     }
 
     private Rect2? FitColumn(Control column, Transform2D toCanvas, Rect2 canvas, Rect2? owner, float scale, Rect2? avoid,
-        (float Top, float Bottom)? band = null, float safeTop = 0f)
+        float safeTop = 0f)
     {
-        if (!column.Visible || column.Size.X < 2f || column.Size.Y < 2f || column.GetChildCount() == 0) return null;
-        MakeInputTransparent(column);
-        ulong id = column.GetInstanceId();
-        if (!_columns.TryGetValue(id, out ColumnState? state))
-        {
-            state = new ColumnState { Original = column.Position, Written = column.Position };
-            _columns[id] = state;
-        }
-        else if ((column.Position - state.Written).LengthSquared() > 0.25f)
-        {
-            // The game placed this column again (a new alignment): that is the new starting point.
-            state.Original = column.Position;
-        }
+        if (!ColumnReady(column)) return null;
+        ColumnState state = TrackColumn(column);
 
         Vector2 origin = toCanvas * state.Original;
         var desktop = new Rect2(origin, column.Size);
@@ -457,25 +492,39 @@ internal sealed class PhoneHoverTips
         if (safeTop > 0f && placed.Position.Y < safeTop + Margin)
             placed = new Rect2(placed.Position.X, safeTop + Margin, placed.Size);
 
-        // A hand-card tip stays between the stage top and the rail: clamp the bottom (never over the hand) and, if it is
-        // taller than the band, shrink it to the band.
-        if (band is { } limits)
-        {
-            (float bandX, float bandY, float bandWidth, float bandHeight, float bandScale) =
-                TouchCardMath.FitTipColumnToBand(
-                    placed.Position.X, placed.Position.Y, placed.Size.X, placed.Size.Y, s, limits.Top, limits.Bottom);
-            placed = new Rect2(bandX, bandY, bandWidth, bandHeight);
-            s = bandScale;
-        }
+        WriteColumn(column, toCanvas, placed.Position, s);
+        return placed;
+    }
 
-        Vector2 local = toCanvas.AffineInverse() * placed.Position;
+    /// <summary>Remembers where the game placed a column before this pass moved it, so Portrait Mode off can put it back.</summary>
+    private ColumnState TrackColumn(Control column)
+    {
+        MakeInputTransparent(column);
+        ulong id = column.GetInstanceId();
+        if (!_columns.TryGetValue(id, out ColumnState? state))
+        {
+            state = new ColumnState { Original = column.Position, Written = column.Position };
+            _columns[id] = state;
+        }
+        else if ((column.Position - state.Written).LengthSquared() > 0.25f)
+        {
+            // The game placed this column again (a new alignment): that is the new starting point.
+            state.Original = column.Position;
+        }
+        return state;
+    }
+
+    /// <summary>Puts a column at a canvas position and phone scale, recording the local write for the release path.</summary>
+    private void WriteColumn(Control column, Transform2D toCanvas, Vector2 canvasPosition, float scale)
+    {
+        ColumnState state = TrackColumn(column);
+        Vector2 local = toCanvas.AffineInverse() * canvasPosition;
         // The set carries the phone scale; the column keeps only what is left so the drawn size is the fitted one.
         float totalScale = Mathf.Max(Mathf.Abs(toCanvas.Scale.X), 0.01f);
-        column.Scale = new Vector2(s / totalScale, s / totalScale);
+        column.Scale = new Vector2(scale / totalScale, scale / totalScale);
         column.Position = local;
         state.Written = local;
         state.WrittenScale = column.Scale;
-        return placed;
     }
 
     /// <summary>

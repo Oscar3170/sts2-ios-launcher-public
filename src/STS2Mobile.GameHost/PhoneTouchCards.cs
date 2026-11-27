@@ -87,6 +87,7 @@ internal sealed class PhoneTouchCards
     private Vector2 _downWindowPos;
     private float _maxMoveWindow;
     private Vector2? _downCanvasPos;
+    private Vector2? _grabOffsetCanvas;
     private Vector2 _fingerCanvas;
     private Control? _pendingHolder;
     private Control? _dragHolder;
@@ -283,6 +284,13 @@ internal sealed class PhoneTouchCards
         {
             _pendingHolder = HolderUnderPress(r, hand, point);
             PressedHolder = _pendingHolder;
+            // Readable Drag off keeps this offset: the point grabbed at the press stays under the finger. The hit box is
+            // the card shape centred on the holder, so its centre is the point the card's visual centre must keep.
+            _grabOffsetCanvas = _pendingHolder is { } grabHolder ? CardCentre(grabHolder) - point : null;
+        }
+        else
+        {
+            _grabOffsetCanvas = null;
         }
 
         Control? endTurn = EndTurnButton(r);
@@ -540,8 +548,19 @@ internal sealed class PhoneTouchCards
         else
         {
             _aimParked = false;
-            (float x, float y) = TouchCardMath.DraggedCardCenter(
-                finger.X, finger.Y, onCanvas, canvas.X, canvas.Y);
+            float x, y;
+            if (!ReadableDrag && _grabOffsetCanvas is { } grab)
+            {
+                // The native mouse drag: the card's centre keeps the offset it had at the press, so the grabbed point
+                // stays under the finger. The lifted placement is what Readable Drag turns off.
+                (x, y) = TouchCardMath.GrabbedCardCenter(
+                    finger.X, finger.Y, grab.X, grab.Y, onCanvas, canvas.X, canvas.Y);
+            }
+            else
+            {
+                (x, y) = TouchCardMath.DraggedCardCenter(
+                    finger.X, finger.Y, onCanvas, canvas.X, canvas.Y);
+            }
             canvasTarget = new Vector2(x, y);
             local = parentTransform.AffineInverse() * canvasTarget;
         }
@@ -561,6 +580,7 @@ internal sealed class PhoneTouchCards
             GD.Print($"Phone touch cards: drag finger=({finger.X:F1},{finger.Y:F1}) parentScale={parentTransform.Scale} " +
                 $"holderScale={holder.Scale} onCanvas={onCanvas:F3} handScale={_handScale:F3} count={count} " +
                 $"resting={restingScale:F3} held={heldScale:F3} aim={aimScale:F3} aiming={aiming} " +
+                $"readable={ReadableDrag} grab={_grabOffsetCanvas} " +
                 $"canvasTarget=({canvasTarget.X:F1},{canvasTarget.Y:F1}) localTarget={local} holderPos={holder.Position} " +
                 $"hitbox={rect} bottom={rect.End.Y:F1} lift={finger.Y - rect.End.Y:F1} expected={TouchCardMath.DragLift:F0}");
         }
@@ -686,6 +706,13 @@ internal sealed class PhoneTouchCards
         return new Rect2(Vector2.Zero, hitbox.Size).HasPoint(local);
     }
 
+    /// <summary>The card's visual centre on the canvas; the hit box is the card shape centred on the holder.</summary>
+    private static Vector2 CardCentre(Control holder)
+    {
+        Control? hitbox = holder.GetNodeOrNull<Control>("%Hitbox") ?? holder.GetNodeOrNull<Control>("Hitbox");
+        return hitbox?.GetGlobalRect().GetCenter() ?? holder.GetGlobalRect().GetCenter();
+    }
+
     private void ResetGesture()
     {
         RestoreInspectShield();
@@ -697,6 +724,7 @@ internal sealed class PhoneTouchCards
         _pendingHolder = null;
         PressedHolder = null;
         _downCanvasPos = null;
+        _grabOffsetCanvas = null;
         _releaseCanvasPos = null;
         _maxMoveWindow = 0f;
     }

@@ -5,10 +5,12 @@ namespace STS2Mobile.Platform;
 
 /// <summary>
 /// The touch decisions and placements for the portrait overlays. A press is not a pickup: the card stays in the hand until
-/// the finger has moved <see cref="PickupSlop"/>, so a tap does nothing and a still finger can open the card large. While an
-/// untargeted card is dragged its bottom edge stays <see cref="DragLift"/> above the finger; a targeted card parks at
-/// <see cref="AimingCardCenter"/> once aiming starts. A release reaches for a target a little outside the creature's hit
-/// box. Distances are canvas units on the 1080-wide portrait canvas, where one phone point is about 2.9 units.
+/// the finger has moved <see cref="PickupSlop"/>, so a tap does nothing and a still finger can open the card large. An
+/// untargeted card is dragged above the finger (its bottom <see cref="DragLift"/> clear of it) or, when the player turns
+/// Readable Drag off, keeps the point grabbed at the press under the finger (<see cref="GrabbedCardCenter"/>). A targeted
+/// card parks at <see cref="AimingCardCenter"/> once aiming starts. A release reaches for a target a little outside the
+/// creature's hit box; a hand card's tips go beside the card (<see cref="PlaceTipBlockBeside"/>). Distances are canvas units
+/// on the 1080-wide portrait canvas, where one phone point is about 2.9 units.
 /// </summary>
 public static class TouchCardMath
 {
@@ -65,12 +67,38 @@ public static class TouchCardMath
     public static bool IsStationaryHold(float movedCanvasUnits, double heldSeconds) =>
         movedCanvasUnits < PickupSlop && heldSeconds >= HoldSeconds;
 
+    /// <summary>Where a hand card's tip block lands on the canvas, and the scale it is drawn at.</summary>
+    public readonly record struct TipBlock(float X, float Y, float Width, float Height, float Scale, bool RightOfOwner);
+
     /// <summary>
-    /// The vertical band a hand card's hover tips may use: <see cref="StageTipMargin"/> below the stage top to the same
-    /// margin above the control rail. One rule for every pass that places something against the stage.
+    /// A hand card's tips beside the card, as the landscape game draws them: the whole block on one side of the card (left
+    /// or right, whichever has room for it), never over the card, inside the canvas. The block is
+    /// <paramref name="blockWidth"/> by <paramref name="blockHeight"/> at scale 1; it keeps <paramref name="margin"/> from
+    /// the canvas edges and <paramref name="gap"/> from the card. It is drawn at <paramref name="preferredScale"/> when that
+    /// side and the canvas height fit it, and shrunk only as far as they require.
     /// </summary>
-    public static (float Top, float Bottom) HandTipBand(float stageTop, float railTop) =>
-        (stageTop + StageTipMargin, railTop - StageTipMargin);
+    public static TipBlock PlaceTipBlockBeside(float ownerX, float ownerY, float ownerWidth, float ownerHeight,
+        float canvasWidth, float canvasHeight, float blockWidth, float blockHeight,
+        float preferredScale, float margin, float gap)
+    {
+        float width = MathF.Max(blockWidth, 0.01f);
+        float height = MathF.Max(blockHeight, 0.01f);
+        float leftRoom = MathF.Max(0f, ownerX - gap - margin);
+        float rightRoom = MathF.Max(0f, canvasWidth - margin - (ownerX + ownerWidth + gap));
+        float canvasRoom = MathF.Max(0.01f, canvasHeight - 2f * margin);
+        float cap = MathF.Min(preferredScale, canvasRoom / height);
+        // The native default is the right side; take it whenever the block fits there at the capped scale, else the left
+        // when it fits there, else the roomier side with the block shrunk to it.
+        bool right = rightRoom >= width * cap || (!(leftRoom >= width * cap) && rightRoom >= leftRoom);
+        float room = right ? rightRoom : leftRoom;
+        float scale = MathF.Max(0f, MathF.Min(cap, room / width));
+        float drawnWidth = width * scale;
+        float drawnHeight = height * scale;
+        float x = right ? ownerX + ownerWidth + gap : ownerX - gap - drawnWidth;
+        x = Math.Clamp(x, margin, MathF.Max(margin, canvasWidth - margin - drawnWidth));
+        float y = Math.Clamp(ownerY, margin, MathF.Max(margin, canvasHeight - margin - drawnHeight));
+        return new TipBlock(x, y, drawnWidth, drawnHeight, scale, right);
+    }
 
     /// <summary>
     /// The inspect screen's native "View Upgrades" box in portrait, on the canvas: the native 272 x 64 box at
@@ -132,21 +160,22 @@ public static class TouchCardMath
     }
 
     /// <summary>
-    /// Keeps a placed hover-tip column inside the hand band (see <see cref="HandTipBand"/>): a column taller than the band
-    /// is shrunk to it and pinned to its top; otherwise it is moved up so its bottom never passes the band's bottom. A band
-    /// with no height leaves the column untouched. The scale comes back for the caller's control.
+    /// Where a dragged card's centre goes when Readable Drag is off: the finger plus the offset from the finger to the
+    /// card's centre at the press, so the point the player grabbed stays under the finger as the native mouse drag does.
+    /// It is clamped inside the canvas exactly as <see cref="DraggedCardCenter"/> is.
     /// </summary>
-    public static (float X, float Y, float Width, float Height, float Scale) FitTipColumnToBand(
-        float x, float y, float width, float height, float scale, float bandTop, float bandBottom)
+    public static (float X, float Y) GrabbedCardCenter(
+        float fingerX, float fingerY, float grabOffsetX, float grabOffsetY,
+        float scale, float canvasWidth, float canvasHeight)
     {
-        if (bandBottom <= bandTop) return (x, y, width, height, scale);
-        float bandHeight = bandBottom - bandTop;
-        if (height > bandHeight)
-        {
-            float shrink = bandHeight / height;
-            return (x, bandTop, width * shrink, bandHeight, scale * shrink);
-        }
-        return (x, Math.Max(bandTop, Math.Min(y, bandBottom - height)), width, height, scale);
+        float s = Math.Max(scale, 0.01f);
+        float halfWidth = PortraitCombatMath.CardDefaultWidth * s * 0.5f;
+        float halfHeight = PortraitCombatMath.CardDefaultHeight * s * 0.5f;
+        float x = Math.Clamp(fingerX + grabOffsetX, halfWidth + EdgeMargin,
+            Math.Max(halfWidth + EdgeMargin, canvasWidth - halfWidth - EdgeMargin));
+        float y = Math.Clamp(fingerY + grabOffsetY, halfHeight + EdgeMargin,
+            Math.Max(halfHeight + EdgeMargin, canvasHeight - halfHeight - EdgeMargin));
+        return (x, y);
     }
 
     /// <summary>

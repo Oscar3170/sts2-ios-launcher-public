@@ -134,10 +134,80 @@ public class TouchCardMathTests
     }
 
     [Fact]
-    public void TheHandTipBandKeepsTheStageMarginAtBothEnds()
+    public void AHandTipBlockGoesBesideTheCardNeverOverIt()
     {
-        Assert.Equal(24f, TouchCardMath.StageTipMargin);
-        Assert.Equal((324f, 1576f), TouchCardMath.HandTipBand(300f, 1600f));
+        // A 1080-wide canvas, a card at 400..680 and a text column 360 wide: the right side has 382 units, so the block
+        // keeps 1.06x (the side's room), starts just right of the card and stays inside the canvas.
+        TouchCardMath.TipBlock block = TouchCardMath.PlaceTipBlockBeside(
+            ownerX: 400f, ownerY: 1400f, ownerWidth: 280f, ownerHeight: 300f,
+            canvasWidth: 1080f, canvasHeight: 1920f, blockWidth: 360f, blockHeight: 200f,
+            preferredScale: 1.4f, margin: 10f, gap: 8f);
+        Assert.True(block.RightOfOwner);
+        Assert.Equal(382f / 360f, block.Scale, 0.001f);
+        Assert.Equal(688f, block.X, 0.01f);
+        Assert.Equal(1400f, block.Y, 0.01f);
+        Assert.True(block.X >= 680f);
+        Assert.True(block.X + block.Width <= 1080f - 10f + 0.01f);
+        Assert.True(block.Y + block.Height <= 1920f);
+
+        // Near the right edge the left side has the room and the block keeps the preferred size.
+        block = TouchCardMath.PlaceTipBlockBeside(
+            ownerX: 700f, ownerY: 300f, ownerWidth: 280f, ownerHeight: 300f,
+            canvasWidth: 1080f, canvasHeight: 1920f, blockWidth: 360f, blockHeight: 200f,
+            preferredScale: 1.4f, margin: 10f, gap: 8f);
+        Assert.False(block.RightOfOwner);
+        Assert.Equal(1.4f, block.Scale, 0.001f);
+        Assert.Equal(700f - 8f - 504f, block.X, 0.01f);
+
+        // Near the left edge the right side has the room.
+        block = TouchCardMath.PlaceTipBlockBeside(
+            ownerX: 10f, ownerY: 300f, ownerWidth: 280f, ownerHeight: 300f,
+            canvasWidth: 1080f, canvasHeight: 1920f, blockWidth: 360f, blockHeight: 200f,
+            preferredScale: 1.4f, margin: 10f, gap: 8f);
+        Assert.True(block.RightOfOwner);
+        Assert.Equal(1.4f, block.Scale, 0.001f);
+        Assert.Equal(298f, block.X, 0.01f);
+    }
+
+    [Fact]
+    public void AHandTipBlockShrinksToTheRoomierSideAndTheCanvasHeight()
+    {
+        // Neither side fits the 360-wide block at 1.4x: the roomier (right, 482 versus 292) gives 482/360.
+        TouchCardMath.TipBlock block = TouchCardMath.PlaceTipBlockBeside(
+            ownerX: 310f, ownerY: 1000f, ownerWidth: 270f, ownerHeight: 300f,
+            canvasWidth: 1080f, canvasHeight: 1920f, blockWidth: 360f, blockHeight: 200f,
+            preferredScale: 1.4f, margin: 10f, gap: 8f);
+        Assert.True(block.RightOfOwner);
+        Assert.Equal(482f / 360f, block.Scale, 0.001f);
+        Assert.True(block.X >= 588f && block.X + block.Width <= 1080f - 10f + 0.01f);
+
+        // The block is taller than the canvas: the height fit wins and it is pinned inside the canvas.
+        block = TouchCardMath.PlaceTipBlockBeside(
+            ownerX: 400f, ownerY: 1800f, ownerWidth: 280f, ownerHeight: 300f,
+            canvasWidth: 1080f, canvasHeight: 1920f, blockWidth: 200f, blockHeight: 4000f,
+            preferredScale: 1.4f, margin: 10f, gap: 8f);
+        Assert.Equal((1920f - 20f) / 4000f, block.Scale, 0.0001f);
+        Assert.Equal(10f, block.Y, 0.01f);
+        Assert.True(block.Y + block.Height <= 1920f);
+    }
+
+    [Fact]
+    public void TheGrabbedCardKeepsThePressOffsetUnderTheFinger()
+    {
+        float scale = PortraitCombatMath.HandCardScaleFor(PortraitCombatMath.ComputeCombatBands(2341f, 0f), 5);
+        (float x, float y) = TouchCardMath.GrabbedCardCenter(540f, 1200f, 40f, -60f, scale, 1080f, 2341f);
+        Assert.Equal(580f, x, 0.01f);
+        Assert.Equal(1140f, y, 0.01f);
+
+        // At the canvas edges the card is kept inside, exactly as the lifted drag is.
+        float halfWidth = PortraitCombatMath.CardDefaultWidth * scale * 0.5f;
+        float halfHeight = PortraitCombatMath.CardDefaultHeight * scale * 0.5f;
+        (x, y) = TouchCardMath.GrabbedCardCenter(0f, 0f, -500f, -500f, scale, 1080f, 2341f);
+        Assert.True(x - halfWidth >= 0f);
+        Assert.True(y - halfHeight >= 0f);
+        (x, y) = TouchCardMath.GrabbedCardCenter(5000f, 5000f, 500f, 500f, scale, 1080f, 2341f);
+        Assert.True(x + halfWidth <= 1080f);
+        Assert.True(y + halfHeight <= 2341f);
     }
 
     [Fact]
@@ -164,22 +234,5 @@ public class TouchCardMathTests
             TouchCardMath.FitTipColumnScale(1.4f, 800f, 600f, 1080f, 2340f, 10f), 0.001f);
         // Taller than the canvas: the height fit stops at the readable floor.
         Assert.Equal(0.5f, TouchCardMath.FitTipColumnScale(1.4f, 300f, 9000f, 1080f, 2340f, 10f), 0.001f);
-    }
-
-    [Fact]
-    public void ATipColumnIsClampedIntoTheHandBandAndShrinksToIt()
-    {
-        // Shorter than the band: moved up so its bottom is inside.
-        (float x, float y, float width, float height, float scale) =
-            TouchCardMath.FitTipColumnToBand(40f, 1500f, 200f, 80f, 1f, 300f, 1500f);
-        Assert.Equal((40f, 1420f, 200f, 80f, 1f), (x, y, width, height, scale));
-
-        // Taller than the band: pinned to its top and shrunk to it.
-        (x, y, width, height, scale) = TouchCardMath.FitTipColumnToBand(40f, 500f, 200f, 1200f, 1f, 300f, 900f);
-        Assert.Equal((40f, 300f, 100f, 600f, 0.5f), (x, y, width, height, scale));
-
-        // No band: untouched.
-        (x, y, width, height, scale) = TouchCardMath.FitTipColumnToBand(40f, 10f, 200f, 80f, 1f, 300f, 300f);
-        Assert.Equal((40f, 10f, 200f, 80f, 1f), (x, y, width, height, scale));
     }
 }
