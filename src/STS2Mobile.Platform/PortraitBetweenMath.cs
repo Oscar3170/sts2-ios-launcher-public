@@ -233,9 +233,6 @@ public static class PortraitBetweenMath
     /// <summary>The action's right edge keeps this margin from the canvas's right edge (48 of the reference's 1680 units).</summary>
     public const float ActionRightMargin = 31f;
 
-    /// <summary>How far the action's bottom edge stands above the canvas's bottom edge when it hangs from the footer.</summary>
-    public const float ActionFooterMargin = 25.71f;
-
     /// <summary>The Blitz run's single action lane, as a fraction of the canvas height.</summary>
     public const float BlitzLaneFraction = 0.625f;
 
@@ -298,12 +295,6 @@ public static class PortraitBetweenMath
     /// <summary>Top edge the action must take so that its centre is the lane's.</summary>
     public static float ActionLaneTop(bool blitz, float canvasHeight, float actionHeight) =>
         ActionLaneCentreY(blitz, canvasHeight, actionHeight) - actionHeight * 0.5f;
-
-    /// <summary>The footer lane: the action hangs from the canvas's bottom edge, clear of the scene behind it (the treasure room's
-    /// chest and its relic holders fill the middle of the screen, and the game's own shown Y would lie across them).
-    /// </summary>
-    public static float ActionFooterCentreY(float canvasHeight, float actionHeight) =>
-        canvasHeight - ActionFooterMargin - actionHeight * 0.5f;
 
     /// <summary>The loot list's own top offset inside its mask (the game's container starts 35 below it).</summary>
     public const float LootContainerTop = 35f;

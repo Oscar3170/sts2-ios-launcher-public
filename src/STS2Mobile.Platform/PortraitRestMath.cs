@@ -188,18 +188,14 @@ public static class PortraitRestMath
     public const float DescriptionMinHeight = 150f;
 
     /// <summary>
-    /// How far the rest site's Proceed is raised above the shared footer lane: one 44 point touch target. The native action
-    /// hangs 25.71 units from the canvas's bottom edge, which on a big phone is under the thumb's comfortable reach; the
-    /// raised ribbon's bottom keeps 53 points from the edge (and clears the 31 point safe bottom reserve).
+    /// Where the rest site's Proceed stands: its top at 80 % of the canvas height, within the thumb's reach on a tall phone
+    /// (the game's footer lane hangs it 25.71 units from the bottom edge), and below the loot screen's lane so the options
+    /// above it keep their room.
     /// </summary>
-    public const float ProceedLift = TouchTarget;
+    public const float ProceedTopFraction = 0.8f;
 
-    /// <summary>
-    /// The top of the footer lane, where the game hangs an action from the canvas's bottom edge, raised by
-    /// <see cref="ProceedLift"/> for the rest site's Proceed: the copy must end above it.
-    /// </summary>
-    public static float FooterLaneTop(float canvasHeight) =>
-        canvasHeight - PortraitBetweenMath.ActionFooterMargin - TouchTarget - ProceedLift;
+    /// <summary>The top of the rest site's Proceed lane: the options and the copy must end above it.</summary>
+    public static float ProceedLaneTop(float canvasHeight) => canvasHeight * ProceedTopFraction;
 
     /// <summary>The drawn bottom of the lowest option: its box top plus the label ink below it.</summary>
     public static float OptionsDrawnBottom(float bottomRowTop, float scale) => bottomRowTop + RowInkBottom * scale;
@@ -212,7 +208,7 @@ public static class PortraitRestMath
         Math.Max(0f, Math.Max(DescriptionMinHeight, copyHeight) - CopyBand(optionsDrawnBottom, canvasHeight));
 
     private static float CopyBand(float optionsDrawnBottom, float canvasHeight) =>
-        FooterLaneTop(canvasHeight) - DescriptionGap - (optionsDrawnBottom + DescriptionGap);
+        ProceedLaneTop(canvasHeight) - DescriptionGap - (optionsDrawnBottom + DescriptionGap);
 
     /// <summary>
     /// Fills one box per row: rows are centred and the bottom row is centred under the top one; the bottom row's box top stays
@@ -268,7 +264,7 @@ public static class PortraitRestMath
     public static RestTextBlock Description(float canvasWidth, float canvasHeight, float optionsDrawnBottom, float measuredTextHeight)
     {
         float top = optionsDrawnBottom + DescriptionGap;
-        float room = Math.Max(0f, FooterLaneTop(canvasHeight) - DescriptionGap - top);
+        float room = Math.Max(0f, ProceedLaneTop(canvasHeight) - DescriptionGap - top);
         return new RestTextBlock(
             DescriptionInset, top, canvasWidth - DescriptionRightInset, Math.Min(Math.Max(measuredTextHeight, DescriptionMinHeight), room));
     }

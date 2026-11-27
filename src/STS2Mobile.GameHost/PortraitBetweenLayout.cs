@@ -56,7 +56,7 @@ internal sealed partial class PortraitBetweenLayout
     private sealed class ProceedLaneState
     {
         public bool Blitz;
-        public bool Footer;
+        public bool Rest;
         public Tween? Owned;
     }
 
@@ -252,8 +252,9 @@ internal sealed partial class PortraitBetweenLayout
     /// The ribbon keeps one centre per screen. It is 108 units tall natively and the game slides it by its position, so growing
     /// it for a finger extends it downwards: the game's shown Y stays its top edge and the centre of a grown ribbon is the
     /// same before and after every Skip/Proceed re-enable. A Blitz run instead gives both labels one lane at 0.625 of the
-    /// canvas height. Rest and treasure use the footer so the ribbon stays clear of room content. Their slide is taken
-    /// over so it ends in that lane without a correction once it settles.
+    /// canvas height. The treasure room shares the loot screen's lane; the rest site has its own, lower lane
+    /// (<see cref="PortraitRestMath.ProceedLaneTop"/>) under its options. Their slide is taken over so it ends in that lane
+    /// without a correction once it settles.
     /// </summary>
     private void UpdateProceedButtonPortrait(Control proceed, Vector2 canvas)
     {
@@ -266,7 +267,7 @@ internal sealed partial class PortraitBetweenLayout
             {
                 Blitz = parentType == PortraitShopLayout.BlitzMerchantRoomTypeName ||
                         (parentType == PortraitRewardsLayout.RewardsScreenTypeName && IsBlitzRun()),
-                Footer = parentType is PortraitTreasureLayout.TreasureRoomTypeName or PortraitRestSiteLayout.RestSiteRoomTypeName,
+                Rest = parentType == PortraitRestSiteLayout.RestSiteRoomTypeName,
             };
         }
 
@@ -281,8 +282,8 @@ internal sealed partial class PortraitBetweenLayout
 
         bool enabled = _proceedEnabled?.GetValue(proceed) is true;
         float height = proceed.Size.Y;
-        float centre = lane.Footer
-            ? PortraitBetweenMath.ActionFooterCentreY(canvas.Y, height)
+        float centre = lane.Rest
+            ? PortraitRestMath.ProceedLaneTop(canvas.Y) + height / 2f
             : PortraitBetweenMath.ActionLaneCentreY(lane.Blitz, canvas.Y, height);
         float width = proceed.Size.X * proceed.Scale.X;
         var target = new Vector2(canvas.X - width - PortraitBetweenMath.ActionRightMargin, centre - height / 2f);
@@ -292,9 +293,9 @@ internal sealed partial class PortraitBetweenLayout
         {
             if (!enabled)
             {
-                // The game hides the ribbon towards its desktop lane; the Blitz and treasure lanes are elsewhere, so the
-                // ribbon leaves from its own place instead of sliding back across the screen.
-                if (!lane.Blitz && !lane.Footer) return;
+                // The game hides the ribbon towards its desktop lane; the Blitz and rest lanes are elsewhere, so the ribbon
+                // leaves from its own place instead of sliding back across the screen.
+                if (!lane.Blitz && !lane.Rest) return;
                 native.Kill();
                 Tween leave = proceed.CreateTween();
                 leave.TweenProperty(proceed, "position", new Vector2(canvas.X + width, target.Y), 0.8)

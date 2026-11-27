@@ -291,14 +291,6 @@ public class PortraitBetweenMathTests
         Assert.Equal(1080f - PortraitBetweenMath.ActionRightMargin, 1049f, 3);
     }
 
-    [Fact]
-    public void TreasureActionHangsFromTheCanvasFooter()
-    {
-        Assert.Equal(2250.79f, PortraitBetweenMath.ActionFooterCentreY(2340f, ActionHeight), 2);
-        Assert.Equal(1830.79f, PortraitBetweenMath.ActionFooterCentreY(1920f, ActionHeight), 2);
-        Assert.Equal(25.71f, 1920f - (PortraitBetweenMath.ActionFooterCentreY(1920f, ActionHeight) + ActionHeight / 2f), 2);
-    }
-
     [Theory]
     [InlineData(394f, 286f, 543f)]
     [InlineData(292f, 286f, 441f)]

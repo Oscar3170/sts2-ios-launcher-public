@@ -132,8 +132,6 @@ internal sealed class PortraitRestSiteLayout
     private readonly Dictionary<ulong, int> _restStyledText = new();
     private static Type? _restRoomType;
     private static FieldInfo? _restDescriptionTweenField;
-    private static Type? _restProceedType;
-    private static PropertyInfo? _restProceedEnabled;
 
     // ---- entry points from PortraitBetweenLayout ---------------------------------------------------------------
 
@@ -199,7 +197,6 @@ internal sealed class PortraitRestSiteLayout
         }
         (float headerTop, float rowsBottom) = LayoutRestChoices(room, state, canvas);
         LayoutRestText(room, canvas, headerTop, rowsBottom);
-        RaiseRestProceed(room, canvas);
         if (!state.Framed || !state.Canvas.IsEqualApprox(canvas)) ApplyRestArt(room, state, canvas);
     }
 
@@ -482,26 +479,6 @@ internal sealed class PortraitRestSiteLayout
             _restDescriptionTweenField = type.GetField("_descriptionPositionTween", BindingFlags.Instance | BindingFlags.NonPublic);
         }
         return _restDescriptionTweenField?.GetValue(room) as Tween;
-    }
-
-    /// <summary>
-    /// The room's Proceed keeps the raised rest lane instead of the shared footer: the between-screen pass hangs every
-    /// Proceed from the canvas footer, so this pass lifts the enabled ribbon to its own lane after that one. The ribbon's
-    /// slide in still ends on the raised line, and the game's own enabled/disabled positions stay the game's.
-    /// </summary>
-    private static void RaiseRestProceed(Control room, Vector2 canvas)
-    {
-        if (room.GetNodeOrNull<Control>("ProceedButton") is not { } proceed) return;
-        Type type = proceed.GetType();
-        if (type != _restProceedType)
-        {
-            _restProceedType = type;
-            _restProceedEnabled = type.GetProperty("IsEnabled", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        }
-        if (_restProceedEnabled?.GetValue(proceed) is not true) return;
-        float top = PortraitRestMath.FooterLaneTop(canvas.Y);
-        if (!Mathf.IsEqualApprox(proceed.Position.Y, top))
-            proceed.Position = new Vector2(proceed.Position.X, top);
     }
 
     // ---- the act's rest-site art ---------------------------------------------------------------------------------
