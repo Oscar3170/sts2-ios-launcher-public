@@ -292,9 +292,10 @@ internal sealed class PortraitOverlayLayout
     }
 
     /// <summary>
-    /// The hand's select-mode eye used to sit at the rail's left end, on top of the fight's draw pile. It moves just above
-    /// the rail instead, still a 44-point picture in the stage's lower band, clear of the piles, End Turn, the energy orb
-    /// and the hand. The hand layout keeps its own capture/restore: this pass only moves it while it is visible.
+    /// The hand's select-mode eye used to sit at the rail's left end, on top of the fight's draw pile. It moves to the free
+    /// top-left of the run content: a 44-point picture inside the safe area, clear of the piles, End Turn, the energy orb,
+    /// the hand and the selection previews (which can fill the whole band above the rail). The hand layout keeps its own
+    /// capture/restore: this pass only moves it while it is visible.
     /// </summary>
     private void BindHandPeekFrame()
     {
@@ -326,10 +327,13 @@ internal sealed class PortraitOverlayLayout
     {
         if (!peek.Visible) return;
         Vector2 canvas = CanvasOf(peek);
-        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvas.Y, 0f);
         float size = Math.Max(PortraitBands.MinTarget, Math.Max(peek.Size.X, peek.Size.Y));
         float left = HandPeekSideMargin;
-        float top = bands.RailTopY - HandPeekTopGap - size;
+        // A hand selection can fill the band above the rail with previews (the whole-hand and Purity picks do), so the
+        // eye goes to the free top-left of the run content instead: still inside the safe area, far from every pile,
+        // preview and the hand, and a 44-point target of its own.
+        float contentTop = peek.GetTree() is { } tree ? PortraitLayout.ComputeCapHeight(tree.Root) + PortraitBands.RunContentTop : 0f;
+        float top = contentTop + HandPeekTopGap + 4f;
         Vector2 parentScale = peek.GetParent() is Control parent
             ? parent.GetGlobalTransformWithCanvas().Scale.Abs()
             : Vector2.One;
@@ -1537,7 +1541,9 @@ internal sealed class PortraitOverlayLayout
             return;
 
         Vector2 screenScale = screen.GetGlobalTransformWithCanvas().Scale.Abs();
-        float width = state.Width;
+        // The HBox grows to its content (the icon and label are wider than the scene's offset box); take that width so
+        // setting the size cannot grow the box off centre.
+        float width = Math.Max(state.Width, upgrade.GetCombinedMinimumSize().X);
         float localHeight = Math.Max(state.Height, PortraitBands.MinTarget / Math.Max(screenScale.Y, 0.01f));
         var localSize = new Vector2(width, localHeight);
         var local = new Vector2(
