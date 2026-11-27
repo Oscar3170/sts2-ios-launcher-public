@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using STS2Mobile.Platform;
 
 namespace STS2Mobile.GameHost;
 
@@ -11,8 +12,9 @@ namespace STS2Mobile.GameHost;
 /// the lines balanced (5 = 3 + 2, 4 = 2 + 2) and centred, with their interiors at the reference card's measured places. The
 /// cards are sized for a full line of three, so hiding a mode does not resize the rest. The row is laid out from each card's
 /// DRAWN bounds, not its control rectangle: the native background art is taller than the control, and spacing the controls
-/// made the art of one row cover the next. The row's sort callback, the cards' cross-row focus plan and the desktop values
-/// are per submenu and live here; the menu coordinator fits the screen and passes the safe band.
+/// made the art of one row cover the next. The line plan and offsets are shared with the compendium
+/// (<see cref="PortraitMenuCardsMath"/>); this owner keeps the mode card's own interior, its row sort callback, its cross-row
+/// focus and the desktop values. The menu coordinator fits the screen and passes the safe band.
 /// </summary>
 internal sealed class PortraitModeCardsLayout
 {
@@ -22,11 +24,6 @@ internal sealed class PortraitModeCardsLayout
 
     private const float ModeCardWidth = 362f;
     private const float ModeCardHeight = 545f;
-    private const float ModeGap = 18f;
-    private const int ModeLineMax = 3;
-    private const float ModeTop = 100f;
-    // Space kept under the cards for the mode screen's own title and the back button.
-    private const float ModeReserved = 430f;
 
     /// <summary>One mode submenu's resolved row, sort callback, focus plan and the safe band last passed in.</summary>
     private sealed class RowState
@@ -97,42 +94,10 @@ internal sealed class PortraitModeCardsLayout
         List<Control> cards = row.GetChildren().OfType<Control>().Where(card => card.Visible).ToList();
         if (state.FocusCount != cards.Count)
         {
-            int[] starts = LineStarts(cards.Count);
-            for (int i = 0; i < cards.Count; i++)
-            {
-                (int line, int col) = Cell(starts, i);
-                SaveFocus(cards[i]);
-                cards[i].FocusNeighborLeft = cards[starts[line]].GetPath();
-                cards[i].FocusNeighborRight = cards[starts[line + 1] - 1].GetPath();
-                cards[i].FocusNeighborTop = cards[line == 0 ? i : NearestInLine(starts, line - 1, col)].GetPath();
-                cards[i].FocusNeighborBottom =
-                    cards[line == starts.Length - 2 ? i : NearestInLine(starts, line + 1, col)].GetPath();
-            }
+            PortraitCardFocus.LinkLines(cards, PortraitMenuCardsMath.LineStarts(cards.Count), SaveFocus);
             state.FocusCount = cards.Count;
         }
     }
-
-    /// <summary>
-    /// Where each line starts, plus the count as the end: ceil(count / 3) lines, the earlier lines taking the extra card.
-    /// </summary>
-    private static int[] LineStarts(int count)
-    {
-        int lines = Math.Max(1, (count + ModeLineMax - 1) / ModeLineMax);
-        var starts = new int[lines + 1];
-        for (int line = 0; line < lines; line++)
-            starts[line + 1] = starts[line] + count / lines + (line < count % lines ? 1 : 0);
-        return starts;
-    }
-
-    private static (int Line, int Col) Cell(int[] starts, int index)
-    {
-        int line = 0;
-        while (index >= starts[line + 1]) line++;
-        return (line, index - starts[line]);
-    }
-
-    private static int NearestInLine(int[] starts, int line, int col) =>
-        Math.Min(starts[line] + col, starts[line + 1] - 1);
 
     /// <summary>
     /// Lays out the visible cards from their drawn bounds: interiors first, then the union of their texture/plate children,
@@ -169,7 +134,7 @@ internal sealed class PortraitModeCardsLayout
         float cellWidth = 1f, cellHeight = 1f;
         for (int i = 0; i < cards.Count; i++)
         {
-            drawn[i] = CardDrawnBounds(cards[i]);
+            drawn[i] = PortraitDrawnBounds.Of(cards[i]);
             cellWidth = Math.Max(cellWidth, drawn[i].Size.X);
             cellHeight = Math.Max(cellHeight, drawn[i].Size.Y);
             ulong id = cards[i].GetInstanceId();
@@ -181,54 +146,21 @@ internal sealed class PortraitModeCardsLayout
             }
         }
 
-        int[] starts = LineStarts(cards.Count);
-        int rows = starts.Length - 1;
-        float rowWidth = ModeLineMax * cellWidth + (ModeLineMax - 1) * ModeGap;
-        float height = rows * cellHeight + (rows - 1) * ModeGap;
         Rect2 safe = state.Safe;
-        float available = Math.Max(200f, safe.Size.Y - ModeReserved);
-        float scale = Math.Min((safe.Size.X - 80f) / rowWidth, available / height);
-        scale = Math.Max(0.3f, scale);
-        float top = safe.Position.Y + ModeTop + Math.Max(0f, available - height * scale) / 2f;
-
-        SetScale(row, new Vector2(scale, scale), Vector2.Zero);
-        Vector2 target = screen.GetGlobalTransformWithCanvas() * new Vector2(safe.GetCenter().X, top);
+        MenuCardLines plan = PortraitMenuCardsMath.Plan(
+            cards.Count, safe.Size.X, safe.Position.Y, safe.Size.Y, cellWidth, cellHeight);
+        SetScale(row, new Vector2(plan.Scale, plan.Scale), Vector2.Zero);
+        Vector2 target = screen.GetGlobalTransformWithCanvas() * new Vector2(safe.GetCenter().X, plan.Top);
         if (row.GlobalPosition.DistanceSquaredTo(target) > 0.25f) row.GlobalPosition = target;
 
         for (int i = 0; i < cards.Count; i++)
         {
-            (int line, int col) = Cell(starts, i);
-            int inLine = starts[line + 1] - starts[line];
-            float cellLeft = col * (cellWidth + ModeGap) - (inLine * (cellWidth + ModeGap) - ModeGap) * 0.5f;
-            var place = new Vector2(
-                cellLeft + (cellWidth - drawn[i].Size.X) * 0.5f - drawn[i].Position.X,
-                line * (cellHeight + ModeGap) + (cellHeight - drawn[i].Size.Y) * 0.5f - drawn[i].Position.Y);
+            (float x, float y) = PortraitMenuCardsMath.CellOffset(
+                plan.Starts, i, cellWidth, cellHeight, PortraitMenuCardsMath.Gap,
+                drawn[i].Size.X, drawn[i].Size.Y, drawn[i].Position.X, drawn[i].Position.Y);
+            var place = new Vector2(x, y);
             if (cards[i].Position.DistanceSquaredTo(place) > 0.25f) cards[i].Position = place;
         }
-    }
-
-    /// <summary>The union of a card's visible texture and nine-patch children, in the card's own units (its drawn box).</summary>
-    private static Rect2 CardDrawnBounds(Control card)
-    {
-        Transform2D inverse = card.GetGlobalTransformWithCanvas().AffineInverse();
-        Rect2? union = null;
-        void Walk(Node node)
-        {
-            foreach (Node child in node.GetChildren())
-            {
-                if (child is not Control control || !GodotObject.IsInstanceValid(control) || !control.IsVisibleInTree()) continue;
-                if (control is TextureRect or NinePatchRect)
-                {
-                    Rect2 rect = inverse * control.GetGlobalRect();
-                    union = union is { } current ? current.Merge(rect) : rect;
-                }
-                Walk(control);
-            }
-        }
-        Walk(card);
-        return union is { } bounds && bounds.Size.X >= 1f && bounds.Size.Y >= 1f
-            ? bounds
-            : new Rect2(Vector2.Zero, card.Size);
     }
 
     /// <summary>Puts a control at a rectangle of its parent with the top left anchor, changing only what differs.</summary>

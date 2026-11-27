@@ -42,6 +42,8 @@ Live combat events keep their native fight scene and description reveal. In port
 
 [`PortraitModeCardsLayout`](src/STS2Mobile.GameHost/PortraitModeCardsLayout.cs) owns the singleplayer and multiplayer-host mode cards, their row sort callback, drawn-bounds spacing and cross-row focus.
 
+[`PortraitSubmenuLayout.Compendium.cs`](src/STS2Mobile.GameHost/PortraitSubmenuLayout.Compendium.cs) owns the compendium submenu's card grid and Character Stats / Run History row in portrait, laid out on the menu's 1680 unit canvas. It shares the line plan, drawn-bounds offsets and focus rule with the mode cards ([`PortraitMenuCardsMath`](src/STS2Mobile.Platform/PortraitMenuCardsMath.cs), [`PortraitCardFocus`](src/STS2Mobile.GameHost/PortraitCardFocus.cs)); the other submenu compositions stay in their own `PortraitSubmenuLayout.*.cs` files.
+
 [`PortraitCharacterSelectLayout`](src/STS2Mobile.GameHost/PortraitCharacterSelectLayout.cs) owns character select, Blitz and Dread: the roster and its cross-row focus, the ascension and info panels, the confirm button, the Blitz/Dread header row and Dread's name, score, streak and rotation tickbox.
 
 [`PortraitCharacterArtLayout`](src/STS2Mobile.GameHost/PortraitCharacterArtLayout.cs) owns the character art behind those screens: the backdrop cover, the split single-Spine figure and its slot mask, the ambient emitters, and their desktop restore values. It frames once per art container, not per frame.

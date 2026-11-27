@@ -26,7 +26,8 @@ internal sealed class PortraitScreenFit
     public static readonly Dictionary<string, float> FittedScreens = new(StringComparer.Ordinal)
     {
         [Ns + "MainMenu.NMultiplayerSubmenu"] = 1080f,
-        [Ns + "MainMenu.NCompendiumSubmenu"] = 1540f,
+        // The compendium is laid out on the menu's 1680 unit canvas so its cards take the singleplayer mode cards' scale.
+        [PortraitSubmenuLayout.CompendiumTypeName] = PortraitSubmenuLayout.CompendiumDesignWidth,
         [Ns + "MainMenu.NJoinFriendScreen"] = 1080f,
         [Ns + "CharacterSelect.NMultiplayerLoadGameScreen"] = 1310f,
         // Custom runs (the load screen): 1380 rather than 1310 so the ascension arrows (shown once an ascension is unlocked,

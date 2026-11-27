@@ -7,13 +7,14 @@ using Godot;
 namespace STS2Mobile.GameHost;
 
 /// <summary>
-/// Main menu submenus laid out in one column for portrait, drawn about 1.5 times as large as the
-/// width fit alone draws them (<see cref="PortraitScreenFit"/>). The screen is fitted at a narrow design width
+/// Main menu submenus laid out in portrait. Most are drawn about 1.5 times as large as the width fit alone draws them
+/// (<see cref="PortraitScreenFit"/>). The screen is fitted at a narrow design width
 /// (<see cref="DesignWidths"/>), so its virtual canvas is narrow and tall; its parts, which stand side by side on a desktop,
 /// are then placed one under another on that canvas, using the height the desktop layout left empty. Each part keeps its
 /// own size and inner layout. Every edit is captured first (the fit's snapshots and <see cref="RestoreLandscape"/>), so
 /// landscape gets the game's layout back. Run history, the profiles, stats and the card library's sidebar have
-/// one file each (<c>PortraitSubmenuLayout.*.cs</c>); edits the snapshots do not hold go through <see cref="SetKept"/>
+/// one file each (<c>PortraitSubmenuLayout.*.cs</c>); the compendium has one too, on the menu's own 1680 unit canvas so its
+/// cards match the singleplayer mode cards. Edits the snapshots do not hold go through <see cref="SetKept"/>
 /// (any property, such as a grid's columns or a font size override) and <see cref="MoveKept"/> (a node moved to another
 /// parent), which put the desktop's value and parent back.
 /// </summary>
@@ -32,6 +33,7 @@ internal static partial class PortraitSubmenuLayout
     {
         [CustomRunTypeName] = 900f,
         [DailyRunTypeName] = 900f,
+        [CompendiumTypeName] = CompendiumDesignWidth,
         [RunHistoryTypeName] = RunHistoryDesignWidth,
         [ProfileTypeName] = ProfileDesignWidth,
         [StatsTypeName] = StatsDesignWidth,
@@ -57,7 +59,6 @@ internal static partial class PortraitSubmenuLayout
     // collection's icons, the potion lab's art and the timeline's map keep their own text, as does card artwork.
     private static readonly HashSet<string> TextScaledScreens = new(StringComparer.Ordinal)
     {
-        Ns + "MainMenu.NCompendiumSubmenu",
         Ns + "ModdingScreen.NModdingScreen",
         Ns + "MainMenu.NJoinFriendScreen",
         Ns + "MainMenu.NMultiplayerSubmenu",
@@ -76,6 +77,7 @@ internal static partial class PortraitSubmenuLayout
         {
             case CustomRunTypeName: LayoutCustomRun(screen, width, height, capture); break;
             case DailyRunTypeName: LayoutDailyRun(screen, width, height, capture); break;
+            case CompendiumTypeName: LayoutCompendium(screen, width, height, capture); break;
             case RunHistoryTypeName: LayoutRunHistory(screen, width, height, capture); break;
             case ProfileTypeName: LayoutProfile(screen, width, height, capture); break;
             case StatsTypeName: LayoutStats(screen, width, height, capture); break;
@@ -388,6 +390,7 @@ internal static partial class PortraitSubmenuLayout
 
     public static void RestoreLandscape()
     {
+        RestoreCompendiumPortrait();
         PortraitInPlaceScroll.Shared.Clear();
         PortraitTargetPads.ReleaseAll();
         PortraitMenuText.Release();
@@ -423,6 +426,7 @@ internal static partial class PortraitSubmenuLayout
     public static void PruneDead()
     {
         PortraitMenuText.PruneDead();
+        PruneCompendiumDead();
         foreach (var key in OriginalProperties.Keys.Where(k => !GodotObject.IsInstanceIdValid(k.Id)).ToList()) OriginalProperties.Remove(key);
         OriginalParents.RemoveAll(entry => !GodotObject.IsInstanceIdValid(entry.Child));
         foreach (ulong id in OriginalWrap.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) OriginalWrap.Remove(id);
