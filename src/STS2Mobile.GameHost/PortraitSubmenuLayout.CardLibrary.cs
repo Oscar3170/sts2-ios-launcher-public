@@ -29,7 +29,6 @@ internal static partial class PortraitSubmenuLayout
     private const float CardLibraryToggleWidth = 258f;
     private const float CardLibraryGridGap = 8f;
     private const float CardLibraryGridBottom = 100f;
-    private const int CardLibraryAdvancedRows = 4;
     private const int CardLibrarySearchFontSize = 40;
     private const string CardLibraryToggleName = "PortraitAdvancedToggle";
     private const string CardLibraryToggleScene = "res://scenes/screens/card_library/library_sort_button.tscn";
