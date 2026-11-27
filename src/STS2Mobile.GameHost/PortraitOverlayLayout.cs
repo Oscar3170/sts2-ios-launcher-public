@@ -183,9 +183,6 @@ internal sealed class PortraitOverlayLayout
     private const string CardSelectionNamespace = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection";
     private const float PeekSideMargin = 32f;
     private const float PeekBottomMargin = 150f;
-    // The hand's own peek (the eye in a selection) moves out of the rail entirely; the margin keeps its 128-unit (44
-    // point) picture inside the canvas while clear of every pile, preview and the hand.
-    private const float HandPeekSideMargin = 20f;
 
     /// <summary>Called for every node the tree adds: tutorial popups and card preview rows are followed from then on.</summary>
     public void Track(Node node)
@@ -327,14 +324,12 @@ internal sealed class PortraitOverlayLayout
         if (!peek.Visible) return;
         Vector2 canvas = CanvasOf(peek);
         float size = Math.Max(PortraitBands.MinTarget, Math.Max(peek.Size.X, peek.Size.Y));
-        // A hand selection fills the band above the rail with previews (the whole-hand and Purity picks do, and the
-        // single-card Armaments preview reaches up to the top-left), so the eye goes to the free top-right corner right
-        // under the stone header: inside the safe area, above every preview and pile, and a 44-point target of its own.
-        float headerBottom = peek.GetTree() is { } tree
-            ? PortraitLayout.ComputeCapHeight(tree.Root) + PortraitBands.TopBarHeight
-            : 0f;
-        float left = canvas.X - HandPeekSideMargin - size;
-        float top = headerBottom;
+        // A hand selection moves every active card into the preview band above the rail, and the previews themselves
+        // can fill that band from edge to edge; the space below the rail is free. The eye goes to the bottom-left corner
+        // there, exactly where the choice screens put theirs: inside the safe area, clear of every pile, preview and the
+        // hand, and a 44-point target of its own.
+        float left = PeekSideMargin;
+        float top = canvas.Y - PeekBottomMargin - size;
         Vector2 parentScale = peek.GetParent() is Control parent
             ? parent.GetGlobalTransformWithCanvas().Scale.Abs()
             : Vector2.One;
@@ -354,7 +349,7 @@ internal sealed class PortraitOverlayLayout
         if (peek.Size.DistanceSquaredTo(localSize) > 0.25f) peek.Size = localSize;
         if (peek.Position.DistanceSquaredTo(local) > 0.25f) peek.Position = local;
         if (_logged.Add(peek.GetInstanceId()))
-            GD.Print($"Portrait overlay: the hand's peek button moved above the rail at {left:F0},{top:F0}.");
+            GD.Print($"Portrait overlay: the hand's peek button moved to the bottom left at {left:F0},{top:F0}.");
     }
 
     private void KeepFtueOnScreen(Control ftue, Vector2 canvas)
