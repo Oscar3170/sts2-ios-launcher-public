@@ -36,7 +36,6 @@ internal sealed class PortraitCardGridLayout
     private const string DeckSelectScreenTypeName = CardSelectionNamespace + ".NDeckCardSelectScreen";
     private const string SimpleSelectTypeName = CardSelectionNamespace + ".NSimpleCardSelectScreen";
     private const string CombatPileSelectTypeName = CardSelectionNamespace + ".NCombatPileCardSelectScreen";
-    private const string GridHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NGridCardHolder";
     private const string RelicInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Relics.NRelicInventory";
     private const string ViewUpgradesBoxName = "ViewUpgrades";
     private const string SortRowName = "SortingOptions";
@@ -68,7 +67,6 @@ internal sealed class PortraitCardGridLayout
         public bool BorderFadeVisible;
         public ulong EdgeShade;
         public float EdgeShadeHeight;
-        public bool RebuiltBeforeDraw;
     }
 
     /// <summary>One text control's own wrapping and sizing, before portrait took it in hand.</summary>
@@ -94,9 +92,6 @@ internal sealed class PortraitCardGridLayout
     private static MethodInfo? _initGridMethod;
     private static FieldInfo? _needsReinitField;
     private static PropertyInfo? _yOffsetProperty;
-    private static Type? _gridHolderType;
-    private static FieldInfo? _hoverTweenField;
-    private static float _gridHolderNativeScale = 0.8f;
 
     private PortraitControlSnapshot Capture(Control control, bool captureVisible)
     {
@@ -174,36 +169,9 @@ internal sealed class PortraitCardGridLayout
         foreach ((ulong id, PortraitGridScreen screen) in _viewUpgrades)
             if (GodotObject.InstanceFromId(id) is Control box && GodotObject.IsInstanceValid(box) && box.IsVisibleInTree())
                 UpdateViewUpgradesBox(box, screen, canvas);
-        if (!_scalePassSubscribed && _gridStates.Count > 0)
-        {
-            RenderingServer.FramePreDraw += ScaleHoldersBeforeDraw;
-            _scalePassSubscribed = true;
-        }
     }
 
-    private bool _scalePassSubscribed;
-
-    /// <summary>
-    /// The holder-scale pass also runs from <see cref="RenderingServer.FramePreDraw"/>, after every node's _Process and
-    /// input: a card the finger moves onto snaps to the game's hover scale there (its unhover tween pulls it to 0.8), after
-    /// the process-frame pass, and that frame was drawn with it. A scale is only a transform, so setting it this late is
-    /// drawn at once. The row window is never kept from here: a holder rebound after the last deferred-call flush draws the
-    /// previous card's face for a frame (see <see cref="PortraitGridWindow"/>).
-    /// </summary>
-    private void ScaleHoldersBeforeDraw()
-    {
-        foreach ((ulong id, GridState state) in _gridStates)
-        {
-            if (GodotObject.InstanceFromId(id) is not Control grid || !GodotObject.IsInstanceValid(grid) || !grid.IsVisibleInTree())
-                continue;
-            // A holder still at the game's own scale means the grid has just built its rows again; the next process-frame
-            // pass lays the grid out again for that (the deck view's own pass puts its card offset back).
-            if (state.AppliedCardWidth > 0.5f && ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(state.AppliedCardWidth)))
-                state.RebuiltBeforeDraw = true;
-        }
-    }
-
-    /// <summary>Each frame: the grid's own rect, the holder scales and the deck's footer are kept where portrait put them.</summary>
+    /// <summary>Each frame: the grid's own rect, its card size and the deck's footer are kept where portrait put them.</summary>
     private void KeepGridPortrait(Control grid, float capHeight, Vector2 canvas)
     {
         if (!_gridStates.TryGetValue(grid.GetInstanceId(), out GridState? state)) return;
@@ -226,11 +194,9 @@ internal sealed class PortraitCardGridLayout
             ApplyGridPortrait(grid, state, canvas, capHeight);
             return;
         }
-        // A holder back at the game's own scale means the grid has just built its rows again (a sort, a preview closing, a
-        // resize): the deck view's own pass also puts its 100-unit card offset back, so lay the grid out again once.
-        bool rebuilt = ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(cardWidth)) || state.RebuiltBeforeDraw;
-        state.RebuiltBeforeDraw = false;
-        if (rebuilt && YOffsetOf(grid) != 0) ApplyGridPortrait(grid, state, canvas, capHeight);
+        // Holders entering the grid mean it has just built its rows again (a sort, a preview closing, a resize): the deck
+        // view's own pass also puts its 100-unit card offset back, so lay the grid out again once.
+        if (PortraitGridHolderScale.TakeRebuilt(scroll) && YOffsetOf(grid) != 0) ApplyGridPortrait(grid, state, canvas, capHeight);
         // While the content moves the game's recycler hands the window to PortraitGridWindow; this catches a scroll offset
         // set directly (which the recycler does not see), before the grid draws.
         PortraitGridWindow.Reconcile(grid);
@@ -328,11 +294,6 @@ internal sealed class PortraitCardGridLayout
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
     public void RestoreGridsLandscape()
     {
-        if (_scalePassSubscribed)
-        {
-            RenderingServer.FramePreDraw -= ScaleHoldersBeforeDraw;
-            _scalePassSubscribed = false;
-        }
         foreach ((ulong id, GridState state) in _gridStates)
         {
             if (state.Header != 0 && GodotObject.InstanceFromId(state.Header) is Control header && GodotObject.IsInstanceValid(header) &&
@@ -347,7 +308,7 @@ internal sealed class PortraitCardGridLayout
             RemoveEdgeShade(state);
             if (state.YOffsetSaved && _yOffsetProperty != null) _yOffsetProperty.SetValue(grid, state.NativeYOffset);
             if (_cardSizeField != null && state.NativeCardSize.X > 0.5f) _cardSizeField.SetValue(grid, state.NativeCardSize);
-            RestoreGridHolderScales(grid, state);
+            if (GridScroll(grid, state) is { } scroll) PortraitGridHolderScale.Untrack(scroll);
             if (_needsReinitField != null) _needsReinitField.SetValue(grid, true);
         }
         _gridStates.Clear();
@@ -472,6 +433,9 @@ internal sealed class PortraitCardGridLayout
             _yOffsetProperty.SetValue(grid, 0);
             relayout = true;
         }
+        // The game sizes its cards through the patched holder scale, so its own rows, hover and unhover keep the column size;
+        // tracked before InitGrid, its new holders enter at that size.
+        if (GridScroll(grid, state) is { } cards) PortraitGridHolderScale.Track(cards, PortraitGridMath.HolderScale(cardWidth));
         if (relayout) RelayoutGrid(grid);
         // A sort re-lays the grid out at its top; the game's own lerp can leave a fraction of a unit behind, so put the
         // scroll exactly on the top limit (the same call InitGrid makes, with nothing between here and the frame drawn).
@@ -489,7 +453,6 @@ internal sealed class PortraitCardGridLayout
             owning.GetNodeOrNull<Control>(ViewUpgradesBoxName) is { } footer && footer.Size.Y >= 1f &&
             _viewUpgrades.TryAdd(footer.GetInstanceId(), state.Screen))
             UpdateViewUpgradesBox(footer, state.Screen, canvas);
-        ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(cardWidth));
         LayoutDeckInfoText(state, canvas);
         if (!state.Logged)
         {
@@ -576,44 +539,6 @@ internal sealed class PortraitCardGridLayout
             GD.PrintErr("Portrait between layout: the card grid's layout method was not found; cards keep the game's size.");
         else
             _needsReinitField.SetValue(grid, true);
-    }
-
-    /// <summary>
-    /// Gives every grid card holder the column's scale and keeps it there: the game's own unhover tween pulls a card back to
-    /// 0.8, which would shrink it under the three-column pitch. Returns whether a holder was still at the game's own scale,
-    /// which means the grid has just built its rows again.
-    /// </summary>
-    private static bool ScaleGridHolders(Control grid, GridState state, float scale)
-    {
-        if (GridScroll(grid, state) is not { } scroll) return false;
-        ResolveGridReflection();
-        if (_gridHolderType == null) return false;
-        float native = _gridHolderNativeScale;
-        bool rebuilt = false;
-        int count = scroll.GetChildCount();
-        for (int i = 0; i < count; i++)
-        {
-            if (scroll.GetChild(i) is not Control holder || holder.GetType() != _gridHolderType) continue;
-            Vector2 current = holder.Scale;
-            if (Math.Abs(current.X - native) < 0.002f && Math.Abs(current.Y - native) < 0.002f) rebuilt = true;
-            if (Math.Abs(current.X - scale) < 0.002f && Math.Abs(current.Y - scale) < 0.002f) continue;
-            if (_hoverTweenField?.GetValue(holder) is Tween tween && GodotObject.IsInstanceValid(tween) && tween.IsValid() && tween.IsRunning())
-                tween.Kill();
-            holder.Scale = new Vector2(scale, scale);
-        }
-        return rebuilt;
-    }
-
-    private static void RestoreGridHolderScales(Control grid, GridState state)
-    {
-        if (GridScroll(grid, state) is not { } scroll) return;
-        ResolveGridReflection();
-        if (_gridHolderType == null) return;
-        var native = new Vector2(_gridHolderNativeScale, _gridHolderNativeScale);
-        int count = scroll.GetChildCount();
-        for (int i = 0; i < count; i++)
-            if (scroll.GetChild(i) is Control holder && holder.GetType() == _gridHolderType && holder.Scale != native)
-                holder.Scale = native;
     }
 
     // ---- the deck view's sort row ------------------------------------------------------------------------------
@@ -835,7 +760,7 @@ internal sealed class PortraitCardGridLayout
     /// </summary>
     private static void ResolveGridReflection()
     {
-        if (_cardSizeField != null && _initGridMethod != null && _gridHolderType != null) return;
+        if (_cardSizeField != null && _initGridMethod != null) return;
         Assembly game = typeof(NGame).Assembly;
         Type? type = _cardGridType ??= game.GetType(CardGridTypeName);
         if (type != null)
@@ -856,25 +781,5 @@ internal sealed class PortraitCardGridLayout
                 }
             }
         }
-        _gridHolderType ??= game.GetType(GridHolderTypeName);
-        if (_gridHolderType == null) return;
-        _hoverTweenField ??= FindField(_gridHolderType, "_hoverTween");
-        // NCardHolder.smallScale: the scale the game gives a grid card (0.8 at every size it ships).
-        for (Type? level = _gridHolderType; level != null && level != typeof(object); level = level.BaseType)
-        {
-            if (level.GetField("smallScale", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly) is not { } field) continue;
-            if (field.GetValue(null) is Vector2 scale && scale.X > 0.01f) _gridHolderNativeScale = scale.X;
-            break;
-        }
-    }
-
-    private static FieldInfo? FindField(Type type, string name)
-    {
-        for (Type? level = type; level != null; level = level.BaseType)
-        {
-            FieldInfo? field = level.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly);
-            if (field != null) return field;
-        }
-        return null;
     }
 }

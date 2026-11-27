@@ -25,6 +25,8 @@ internal static class PhonePatches
         new("Osty grows without leaving his portrait slot", false, OstyPositionPatch.SuppressNativePosition, CanSkipOnTestedBuild: true),
         new("Card grids keep their rows while scrolled in portrait", false, CardGridWindowPatch.LetThePhoneKeepTheRowWindow,
             CanSkipOnTestedBuild: true),
+        new("Grid cards keep their column size in portrait", false, CardHolderScalePatch.LetThePortraitGridSizeItsCards,
+            CanSkipOnTestedBuild: true),
     ];
 
     // The game looks for release_info.json beside its executable. On the phone that is the app, which holds no game file and

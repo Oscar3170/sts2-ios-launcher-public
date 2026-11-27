@@ -32,7 +32,6 @@ internal static partial class PortraitSubmenuLayout
     private const int CardLibrarySearchFontSize = 40;
     private const string CardLibraryToggleName = "PortraitAdvancedToggle";
     private const string CardLibraryToggleScene = "res://scenes/screens/card_library/library_sort_button.tscn";
-    private const string CardLibraryHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NGridCardHolder";
 
     private static readonly string[] CardLibraryPoolNames =
     [
@@ -59,7 +58,6 @@ internal static partial class PortraitSubmenuLayout
         public Vector2 NativeCardSize;
         public bool CardSizeSaved;
         public float CardWidth;
-        public readonly Dictionary<ulong, Vector2> HolderScales = new();
         public readonly Dictionary<string, ulong> Controls = new();
     }
 
@@ -69,8 +67,6 @@ internal static partial class PortraitSubmenuLayout
     // The grid's native layout members (its row window is kept by PortraitGridWindow).
     private static Type? _cardLibraryGridType;
     private static FieldInfo? _cardLibraryCardSizeField, _cardLibraryNeedsReinitField;
-    private static Type? _cardLibraryHolderType;
-    private static FieldInfo? _cardLibraryHoverTweenField;
 
     /// <summary>
     /// The card library: a header bar with the native search field, the pool tabs and the four sort buttons, an advanced
@@ -237,27 +233,11 @@ internal static partial class PortraitSubmenuLayout
                 SetCardLibraryNeedsReinit(grid);
             }
         }
-        ScaleCardLibraryHolders(grid, state, PortraitGridMath.HolderScale(cardWidth));
+        // The game sizes its cards through the patched holder scale, so its own rows, hover and unhover keep the column size.
+        if (grid.GetNodeOrNull<Control>("%ScrollContainer") is { } cards)
+            PortraitGridHolderScale.Track(cards, PortraitGridMath.HolderScale(cardWidth));
         // While the content moves the game's recycler hands the window to PortraitGridWindow; this catches an offset set directly.
         PortraitGridWindow.Reconcile(grid);
-    }
-
-    /// <summary>Gives every holder the column's scale and keeps it there past the game's own unhover tween.</summary>
-    private static void ScaleCardLibraryHolders(Control grid, CardLibraryState state, float scale)
-    {
-        if (grid.GetNodeOrNull<Control>("%ScrollContainer") is not { } scroll) return;
-        if (_cardLibraryHolderType is null) return;
-        for (int i = 0; i < scroll.GetChildCount(); i++)
-        {
-            if (scroll.GetChild(i) is not Control holder || holder.GetType() != _cardLibraryHolderType) continue;
-            Vector2 current = holder.Scale;
-            if (MathF.Abs(current.X - scale) < 0.002f && MathF.Abs(current.Y - scale) < 0.002f) continue;
-            ulong id = holder.GetInstanceId();
-            if (!state.HolderScales.ContainsKey(id)) state.HolderScales[id] = current;
-            if (_cardLibraryHoverTweenField?.GetValue(holder) is Tween tween && GodotObject.IsInstanceValid(tween) &&
-                tween.IsValid() && tween.IsRunning()) tween.Kill();
-            holder.Scale = new Vector2(scale, scale);
-        }
     }
 
     private static void SetCardLibraryNeedsReinit(Control grid)
@@ -277,9 +257,6 @@ internal static partial class PortraitSubmenuLayout
             _cardLibraryCardSizeField ??= type.GetField("_cardSize", hidden);
             _cardLibraryNeedsReinitField ??= type.GetField("_needsReinit", hidden);
         }
-        _cardLibraryHolderType ??= game.GetType(CardLibraryHolderTypeName);
-        if (_cardLibraryHolderType is not null)
-            _cardLibraryHoverTweenField ??= FindField(_cardLibraryHolderType, "_hoverTween");
     }
 
     /// <summary>
@@ -374,27 +351,8 @@ internal static partial class PortraitSubmenuLayout
         if (tree is null || tree == _cardLibraryTree) return;
         if (_cardLibraryTree != null && GodotObject.IsInstanceValid(_cardLibraryTree))
             _cardLibraryTree.ProcessFrame -= OnCardLibraryProcessFrame;
-        else
-            RenderingServer.FramePreDraw += OnCardLibraryPreDraw;
         _cardLibraryTree = tree;
         tree.ProcessFrame += OnCardLibraryProcessFrame;
-    }
-
-    /// <summary>
-    /// The holder-scale pass, from <see cref="RenderingServer.FramePreDraw"/>: a card the finger moves onto snaps to the
-    /// game's hover scale in its own input/_Process, after the layout pass (process_frame). A scale is only a transform, so
-    /// it is drawn at once; the row window is never kept from here (see <see cref="PortraitGridWindow"/>).
-    /// </summary>
-    private static void OnCardLibraryPreDraw()
-    {
-        if (!SafeAreaCanvas.IsPortrait || CardLibraryStates.Count == 0) return;
-        foreach (CardLibraryState state in CardLibraryStates.Values)
-        {
-            if (GodotObject.InstanceFromId(state.Screen) is not Control screen || !GodotObject.IsInstanceValid(screen) ||
-                !screen.IsVisibleInTree() || screen.GetNodeOrNull<Control>("%CardGrid") is not { } grid)
-                continue;
-            if (state.CardWidth > 0.5f) ScaleCardLibraryHolders(grid, state, PortraitGridMath.HolderScale(state.CardWidth));
-        }
     }
 
     /// <summary>
@@ -425,9 +383,7 @@ internal static partial class PortraitSubmenuLayout
                     SetCardLibraryNeedsReinit(grid);
                 }
                 if (grid.GetNodeOrNull<Control>("%ScrollContainer") is { } scroll)
-                    foreach ((ulong id, Vector2 scale) in state.HolderScales)
-                        if (GodotObject.InstanceFromId(id) is Control holder && GodotObject.IsInstanceValid(holder))
-                            holder.Scale = scale;
+                    PortraitGridHolderScale.Untrack(scroll);
             }
             if (state.Toggle != 0 && GodotObject.InstanceFromId(state.Toggle) is Control toggle &&
                 GodotObject.IsInstanceValid(toggle))

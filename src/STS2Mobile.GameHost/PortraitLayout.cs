@@ -51,6 +51,7 @@ internal sealed class PortraitLayout
         _settings.Attach(tree);
         PortraitHandLayout.SetFlatHandListener(ApplyImmediate);
         PortraitGridWindow.Attach();
+        PortraitGridHolderScale.Attach();
         QueueApply();
     }
 
@@ -59,6 +60,7 @@ internal sealed class PortraitLayout
         if (_tree == null) return;
         PortraitHandLayout.SetFlatHandListener(null);
         PortraitGridWindow.Detach();
+        PortraitGridHolderScale.Detach();
         _combat.Detach();
         _header.Detach();
         _navPads.Detach();
@@ -294,6 +296,7 @@ internal sealed class PortraitLayout
         _combat.PruneDead();
         _previews.PruneDead();
         _between.PruneDead();
+        PortraitGridHolderScale.PruneDead();
         _fit.PruneDead();
         _menus.PruneDead();
         _mainMenu.PruneDead();

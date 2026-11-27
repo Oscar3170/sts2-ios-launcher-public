@@ -123,7 +123,7 @@ public sealed class UntestedBuildTests : IDisposable
             "No mouse cursor", "A card let go below the play zone goes back", "A hand card is picked up when the finger moves", "The game fills the screen",
             "The game keeps clear of the notch and the island", "The game's version read from its folder",
             "The phone lays out the hand's cards itself", "Osty grows without leaving his portrait slot",
-            "Card grids keep their rows while scrolled in portrait",
+            "Card grids keep their rows while scrolled in portrait", "Grid cards keep their column size in portrait",
         ], steps.Where(step => !step.Required).Select(step => step.Name));
     }
 }
