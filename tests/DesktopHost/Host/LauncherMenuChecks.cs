@@ -280,7 +280,12 @@ internal sealed partial class TestDriver
     {
         string modPath = "MainMenuTextButtons/ModConfigButton/Label";
         if (!SafeAreaCanvas.IsPortrait) return;
-        if (menu.GetNodeOrNull<Label>(modPath) is not { } mods) return;
+        // The Mod Config button belongs to a mod (BaseLib); without one installed there is nothing to compare.
+        if (menu.GetNodeOrNull<Label>(modPath) is not { } mods)
+        {
+            _report.Skip("mod_config_matches_settings", "no Mod Config button: no mod that adds one is installed");
+            return;
+        }
         Label settings = menu.GetNode<Label>("MainMenuTextButtons/SettingsButton/Label");
         int FontSize(Label label) => label.LabelSettings?.FontSize ?? label.GetThemeFontSize("font_size");
         _report.Check("mod_config_matches_settings_font_size", FontSize(mods) == FontSize(settings),
