@@ -61,6 +61,7 @@ public static class LauncherHostEntry
             {
                 PhonePatchShims.SuppressSettingsWrites = true;
                 PointerFollowsInjectedInput.Install();
+                TouchHoverOwnership.Install();
                 if (OS.GetEnvironment("STS2_PORTRAIT_PROOF").Length > 0) captureError = ProofCapture.Install();
                 if (args.Contains("--sts2mobile-test-sync-assets"))
                 {
