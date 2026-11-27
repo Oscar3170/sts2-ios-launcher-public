@@ -69,8 +69,12 @@ To add a check for a bug, write it first and run it against the unfixed code; ke
 
 - **A covered window fails touch scenarios.** The pointer is real: if another window sits over the game, presses land elsewhere. The host detects this (`<scenario>_window_unobscured`) and skips the touch steps. Keep the game window in front and the mouse still during a run; before blaming code for a touch failure, look for large `[test pointer]` deltas in `process.log`.
 - **Device-only behaviour.** The engine never focuses a card under a released touch here, so the device's cancel-release hover snap cannot be reproduced, and the device's frame timing (a one-frame flicker between touch input and layout) usually is not either. Ask for a phone check after changes to touch release, hover or per-frame layout.
-- **Engine crashes.** About one run in a hundred dies in the game's atlas loader (`gchandle.get_intptr()` FATAL, or silently after `Missing sprite` warnings) or with a native `double free`. Rerun once before investigating; it is a finding only when it repeats on the same scenario.
+- **Engine crashes.** About one run in a hundred dies in the game's atlas loader (`gchandle.get_intptr()` FATAL, or silently after `Missing sprite` warnings) or with a native `double free`; `menu-audit` at 540x1170 has also died with a native SEGV on a .NET worker thread right after the unlock-character screen closes. Rerun once before investigating; it is a finding only when it repeats on the same scenario.
 - **`menu-audit` unlock timeline.** With no epochs to show, the game closes the unlock screen by itself right after `Created 0 Epoch slots`; when the check looks a moment later it reports `unlock-timeline: screen not found`. Rerun before investigating.
+- **Known failing steps** (they fail the same way on the harness this moved from; a change is judged by new failures, not by these):
+  - at 540x1170: `header_indicators_ascension_potion_row_clear` and `header_indicators_dread_potion_row_clear`, and `touch-combat_slow_drag_return_neighbours_no_wobble`;
+  - at 540x1170, intermittently: `touch-combat_back_row_fight_formation` reports all three Corpse Slugs on one row (`feet=[1243.5,1243.5,1243.5]`) instead of the staggered back row;
+  - at 1280x720: the `hand-rows` row steps (`hand_3_card_1_row`, `hand_4_upper_row_stable`, …).
 - **No `PhoneGraphics`.** Proof steps that turn Portrait Mode on or off through its settings rows fail with `Missing paginator in PhonePortraitMode`.
 - **Rotation.** `portrait-leave` simulates the landscape request; a real portrait → landscape → portrait transition is device-only.
 
