@@ -75,42 +75,45 @@ internal static class TestWindowScope
         int corrections = 0;
         void Correct()
         {
-            if (root.Size == requested) return;
-            // Second half of a nudge: the one-pixel-taller window arrived, so the requested size is now a real change.
-            if (root.Size == requested + new Vector2I(0, 1))
-            {
-                DisplayServer.WindowSetSize(requested);
-                return;
-            }
-            if (corrections >= 4) return;
+            if (root.Size == requested || corrections >= 4) return;
             corrections++;
             Log.Info($"[TEST] borderless window grew to {root.Size}; restoring the requested {requested}");
-            // The display server may already cache the requested size while the window manager kept the grown one, which
-            // makes a direct request a no-op; ask for one pixel more first and finish on the resulting size change.
-            DisplayServer.WindowSetSize(requested + new Vector2I(0, 1));
+            Restore(root, requested);
         }
         root.SizeChanged += Correct;
         Correct();
     }
 
     /// <summary>
-    /// Waits, before the scenario starts, for the window manager's startup growth to be undone. Without slow-starting mods
-    /// the main menu can be ready before the late title-bar growth arrives; the window then stays at the grown size while
-    /// the display server's cached size already equals the request, so a plain re-request is a no-op. Each attempt first
-    /// asks for one pixel more, then the requested size. Bounded; returns the final root size.
+    /// Puts the window back to <paramref name="requested"/>. The X11 display server caches the size it last requested and
+    /// treats an equal request as a no-op and an equal configure event as no change, so after the window manager's growth
+    /// the window, the cache and the root viewport can disagree. Requesting one pixel more first makes the final request a
+    /// real resize, and assigning the root size keeps the viewport in step without waiting for an event that never comes.
+    /// </summary>
+    private static void Restore(Window root, Vector2I requested)
+    {
+        DisplayServer.WindowSetSize(requested + new Vector2I(0, 1));
+        DisplayServer.WindowSetSize(requested);
+        root.Size = requested;
+    }
+
+    /// <summary>
+    /// Before the scenario starts, waits for the window manager's startup growth to be undone. Without slow-starting mods the
+    /// main menu can be ready before the late title-bar growth arrives. Bounded; returns the final root size.
     /// </summary>
     public static async System.Threading.Tasks.Task<Vector2I> SettleAsync(SceneTree tree)
     {
         Window root = tree.Root;
         if (!_borderless || _requested is not { } requested) return root.Size;
-        for (int frame = 0; frame < 180 && root.Size != requested; frame++)
+        for (int frame = 0; frame < 180; frame++)
         {
-            if (frame % 30 == 0)
+            if (root.Size != requested && frame % 30 == 0)
             {
                 Log.Info($"[TEST] window settle: root={root.Size} display={DisplayServer.WindowGetSize()}; requesting {requested}");
-                DisplayServer.WindowSetSize(requested + new Vector2I(0, 1));
+                Restore(root, requested);
             }
-            else if (frame % 30 == 2) DisplayServer.WindowSetSize(requested);
+            // Settled once the size has held for half a second.
+            if (frame >= 30 && root.Size == requested) break;
             await tree.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
         }
         return root.Size;
