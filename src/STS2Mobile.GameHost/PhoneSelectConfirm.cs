@@ -956,8 +956,15 @@ internal sealed class PhoneSelectConfirm
             PhoneSelectConfirm.AttachReticle(item, new Rect2(Vector2.Zero, item.Size));
 
         // An option's focus is its hovered look and what makes the room show its description
-        // (`NRestSiteButton.RefreshTextState`); losing it fades both out again. Both are the game's own paths.
-        internal override void ShowTip(Control screen, Control item) => item.GrabFocus();
+        // (`NRestSiteButton.RefreshTextState`); losing it fades both out again. Both are the game's own paths. The finger's
+        // emulated mouse usually focused the option before its press, and the press's own shrink-and-dim tween then runs
+        // after that focus: the selection puts the focus look back through the game's own OnFocus (it kills that tween).
+        internal override void ShowTip(Control screen, Control item)
+        {
+            if (Owner.Prop(item, "IsFocused") is true) item.Call("OnFocus");
+            item.GrabFocus();
+        }
+
         internal override void HideTip(Control screen, Control item) => item.ReleaseFocus();
         internal override void Inspect(Control screen, Control item) => item.GrabFocus();
 
