@@ -244,11 +244,11 @@ public static class PortraitBetweenMath
         Math.Max(0.2f, (canvasWidth - LootWidthInset) / LootFitWidth);
 
     /// <summary>
-    /// The loot window in portrait: the window is sized to its rows (one touch-sized row's worth of padding, never shorter
-    /// than <see cref="LootWindowMinHeight"/>, never taller than the game's own panel) and moved so the rows' block is
-    /// centred on the canvas's middle; the banner overhang keeps it under the stone header and the window's bottom stays
-    /// <see cref="LootLaneGap"/> above <paramref name="laneTop"/>. When the rows are too many for one panel the window takes
-    /// the room it has (the list scrolls) and the block sits as close to the middle as that room allows.
+    /// The loot window in portrait: its top is placed so the rows' block is centred on the canvas's middle (the banner
+    /// overhang keeps it under the stone header), and the window then reaches down to <see cref="LootLaneGap"/> above
+    /// <paramref name="laneTop"/>, as the game's panel reaches its Skip/Proceed, never taller than the game's own panel.
+    /// When the panel cannot reach that far from the centred top, the window keeps the lane and moves down; when the rows
+    /// are too many for one panel the window takes the room it has (the list scrolls).
     /// </summary>
     public static LootWindowFit LootWindow(
         float canvasWidth, float canvasHeight, float headerBottom, float laneTop, float nativeWidth, float nativeHeight,
@@ -259,15 +259,16 @@ public static class PortraitBetweenMath
         float maxBottom = Math.Max(laneTop - LootLaneGap, minTop + 1f);
         float available = Math.Max(1f, (maxBottom - minTop) / scale);
         float needed = contentHeight + LootMaskTop + LootMaskBottom + LootContentPadding;
-        float height = Math.Min(nativeHeight, Math.Max(needed, LootWindowMinHeight));
-        height = Math.Clamp(Math.Min(height, available), Math.Min(120f, nativeHeight), nativeHeight);
+        float floor = Math.Clamp(Math.Min(Math.Max(needed, LootWindowMinHeight), available), Math.Min(120f, nativeHeight), nativeHeight);
         // The rows start at the mask's top plus the list's own offset and keep the window's scale; their middle is the
         // point that takes the canvas's middle.
         float rowsOffset = (LootMaskTop + LootContainerTop) * scale + contentHeight * scale * 0.5f;
         float y = Math.Clamp(
             canvasHeight * 0.5f - rowsOffset,
             minTop,
-            Math.Max(minTop, maxBottom - height * scale));
+            Math.Max(minTop, maxBottom - floor * scale));
+        float height = Math.Clamp((maxBottom - y) / scale, floor, nativeHeight);
+        y = Math.Max(minTop, maxBottom - height * scale);
         return new LootWindowFit(
             scale,
             (canvasWidth - nativeWidth * scale) * 0.5f,

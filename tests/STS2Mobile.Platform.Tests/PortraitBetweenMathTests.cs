@@ -218,13 +218,12 @@ public class PortraitBetweenMathTests
         float laneTop = PortraitBetweenMath.ActionLaneTop(false, 2340f, ActionHeight);
         Assert.Equal(PortraitBetweenMath.ProceedShowY(2340f), laneTop, 3);
         LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 2340f, HeaderBottom, laneTop, 526f, 640f, ThreeRowLoot);
-        // Three rows fit the mask at a window cut to them; their middle is the canvas's middle.
-        Assert.Equal(ThreeRowLoot + PortraitBetweenMath.LootMaskTop + PortraitBetweenMath.LootMaskBottom +
-                     PortraitBetweenMath.LootContentPadding, fit.WindowHeight, 2);
+        // The rows' middle is the canvas's middle, and the panel reaches down to the lane, as the game's reaches its Skip.
         Assert.Equal(1170f, LootRowsMiddle(fit, ThreeRowLoot), 1);
-        // Banner top (the window's top less the overhang) below the header and the panel's bottom above the lane.
+        Assert.Equal(laneTop - PortraitBetweenMath.LootLaneGap, fit.Y + fit.Height, 1);
+        Assert.True(fit.WindowHeight <= 640f);
+        // Banner top (the window's top less the overhang) below the header.
         Assert.True(fit.Y - PortraitBetweenMath.LootBannerOverhang * fit.Scale >= HeaderBottom);
-        Assert.True(fit.Y + fit.Height <= laneTop - PortraitBetweenMath.LootLaneGap + 3f);
     }
 
     [Fact]
@@ -235,8 +234,8 @@ public class PortraitBetweenMathTests
             1080f, 1920f, CompactHeaderBottom, laneTop, 526f, 640f, ThreeRowLoot);
         Assert.True(fit.WindowHeight < 640f);
         Assert.Equal(960f, LootRowsMiddle(fit, ThreeRowLoot), 1);
-        // Harness floor: the panel's bottom is clear of the lane and its top is under the header.
-        Assert.True(fit.Y + fit.Height <= laneTop - 8f);
+        // The panel ends at the lane's gap; its top is under the header.
+        Assert.Equal(laneTop - PortraitBetweenMath.LootLaneGap, fit.Y + fit.Height, 1);
         Assert.True(fit.Y >= CompactHeaderBottom);
         Assert.True(fit.Y + fit.Height <= 1920f);
         // The mask holds the three rows and the padding under them.
@@ -249,9 +248,9 @@ public class PortraitBetweenMathTests
     {
         const float oneRow = PortraitBetweenMath.LootRowMinHeight;
         LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 1920f, CompactHeaderBottom, 1358.22f, 526f, 640f, oneRow);
-        Assert.Equal(PortraitBetweenMath.LootWindowMinHeight, fit.WindowHeight, 2);
+        Assert.True(fit.WindowHeight >= PortraitBetweenMath.LootWindowMinHeight);
         Assert.Equal(960f, LootRowsMiddle(fit, oneRow), 1);
-        Assert.True(fit.Y + fit.Height <= 1358.22f - PortraitBetweenMath.LootLaneGap + 3f);
+        Assert.Equal(1358.22f - PortraitBetweenMath.LootLaneGap, fit.Y + fit.Height, 1);
     }
 
     [Fact]
