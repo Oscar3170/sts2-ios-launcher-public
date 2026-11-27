@@ -212,6 +212,24 @@ public static class PortraitBetweenMath
     /// <summary>Unit a loot row keeps between it and the mask's edges (inside the window).</summary>
     public const float LootRowMinHeight = 88f;
 
+    /// <summary>Gap between two loot rows (was the game's 10; the rows' labels need the extra room).</summary>
+    public const float LootRowSeparation = 14f;
+
+    /// <summary>The loot mask's insets inside the window, in the window's own units (the game's 526 x 640 panel).</summary>
+    public const float LootMaskLeft = 26f;
+    public const float LootMaskRight = 26f;
+    public const float LootMaskTop = 103f;
+    public const float LootMaskBottom = 36f;
+
+    /// <summary>Room the mask keeps below the last row before its lower edge, in the window's own units.</summary>
+    public const float LootContentPadding = 16f;
+
+    /// <summary>
+    /// The shortest window portrait draws, in the window's own units: a single reward still sits in a panel rather than a
+    /// sliver under the banner.
+    /// </summary>
+    public const float LootWindowMinHeight = 360f;
+
     /// <summary>The action's right edge keeps this margin from the canvas's right edge (48 of the reference's 1680 units).</summary>
     public const float ActionRightMargin = 31f;
 
@@ -226,24 +244,34 @@ public static class PortraitBetweenMath
         Math.Max(0.2f, (canvasWidth - LootWidthInset) / LootFitWidth);
 
     /// <summary>
-    /// The loot window in portrait: its banner starts at <paramref name="headerBottom"/> + <see cref="LootTopGap"/>, its
-    /// bottom stays <see cref="LootLaneGap"/> above <paramref name="laneTop"/>, and the window shrinks in height (and the
-    /// mask with it) rather than growing over the action. The window is centred between the two, less the banner overhang.
+    /// The loot window in portrait: the window is sized to its rows (one touch-sized row's worth of padding, never shorter
+    /// than <see cref="LootWindowMinHeight"/>, never taller than the game's own panel) and moved so the rows' block is
+    /// centred on the canvas's middle; the banner overhang keeps it under the stone header and the window's bottom stays
+    /// <see cref="LootLaneGap"/> above <paramref name="laneTop"/>. When the rows are too many for one panel the window takes
+    /// the room it has (the list scrolls) and the block sits as close to the middle as that room allows.
     /// </summary>
     public static LootWindowFit LootWindow(
-        float canvasWidth, float headerBottom, float laneTop, float nativeWidth, float nativeHeight)
+        float canvasWidth, float canvasHeight, float headerBottom, float laneTop, float nativeWidth, float nativeHeight,
+        float contentHeight)
     {
         float scale = LootScale(canvasWidth);
-        float top = headerBottom + LootTopGap;
-        float bottom = Math.Max(laneTop - LootLaneGap, top + 1f);
-        float room = (bottom - top) / scale;
-        float height = Math.Min(nativeHeight, room - LootBannerOverhang);
-        height = Math.Max(height, 120f);
-        float centreY = (top + bottom + LootBannerOverhang * scale) * 0.5f;
+        float minTop = headerBottom + LootTopGap + LootBannerOverhang * scale;
+        float maxBottom = Math.Max(laneTop - LootLaneGap, minTop + 1f);
+        float available = Math.Max(1f, (maxBottom - minTop) / scale);
+        float needed = contentHeight + LootMaskTop + LootMaskBottom + LootContentPadding;
+        float height = Math.Min(nativeHeight, Math.Max(needed, LootWindowMinHeight));
+        height = Math.Clamp(Math.Min(height, available), Math.Min(120f, nativeHeight), nativeHeight);
+        // The rows start at the mask's top plus the list's own offset and keep the window's scale; their middle is the
+        // point that takes the canvas's middle.
+        float rowsOffset = (LootMaskTop + LootContainerTop) * scale + contentHeight * scale * 0.5f;
+        float y = Math.Clamp(
+            canvasHeight * 0.5f - rowsOffset,
+            minTop,
+            Math.Max(minTop, maxBottom - height * scale));
         return new LootWindowFit(
             scale,
             (canvasWidth - nativeWidth * scale) * 0.5f,
-            centreY - height * scale * 0.5f,
+            y,
             nativeWidth * scale,
             height * scale,
             height);

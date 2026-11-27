@@ -193,46 +193,80 @@ public class PortraitBetweenMathTests
     }
 
     // Canvas 1080 wide, on the tall shape (cap 162, stone header bottom 390); the game's shown Y is 764/1080 of the
-    // height; the grown action is 127 units tall.
+    // height; the grown action is 127 units tall. The compact shape has no top cap, so its header bottom is 228.
     private const float HeaderBottom = 390f;
+    private const float CompactHeaderBottom = 228f;
     private const float ActionHeight = 127f;
+    private const float ThreeRowLoot = 3f * PortraitBetweenMath.LootRowMinHeight + 2f * PortraitBetweenMath.LootRowSeparation;
+
+    private static float LootRowsMiddle(LootWindowFit fit, float contentHeight) =>
+        fit.Y + (PortraitBetweenMath.LootMaskTop + PortraitBetweenMath.LootContainerTop + contentHeight * 0.5f) * fit.Scale;
 
     [Fact]
     public void LootWindowIsThreeQuartersOfTheCanvasAcross()
     {
         float scale = PortraitBetweenMath.LootScale(1080f);
         Assert.Equal(1008f / 654f, scale, 4);
-        Assert.Equal(526f * scale, PortraitBetweenMath.LootWindow(1080f, HeaderBottom, 1000f, 526f, 640f).Width, 3);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 2340f, HeaderBottom, 1655.33f, 526f, 640f, ThreeRowLoot);
+        Assert.Equal(526f * scale, fit.Width, 3);
         Assert.True(526f * scale >= 1080f * 0.74f);
     }
 
     [Fact]
-    public void LootWindowKeepsItsNativeHeightAtTheTallShape()
+    public void LootWindowCentresTheRowsOnTheTallShape()
     {
         float laneTop = PortraitBetweenMath.ActionLaneTop(false, 2340f, ActionHeight);
         Assert.Equal(PortraitBetweenMath.ProceedShowY(2340f), laneTop, 3);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, HeaderBottom, laneTop, 526f, 640f);
-        Assert.Equal(640f, fit.WindowHeight, 3);
-        Assert.Equal(640f * fit.Scale, fit.Height, 3);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 2340f, HeaderBottom, laneTop, 526f, 640f, ThreeRowLoot);
+        // Three rows fit the mask at a window cut to them; their middle is the canvas's middle.
+        Assert.Equal(ThreeRowLoot + PortraitBetweenMath.LootMaskTop + PortraitBetweenMath.LootMaskBottom +
+                     PortraitBetweenMath.LootContentPadding, fit.WindowHeight, 2);
+        Assert.Equal(1170f, LootRowsMiddle(fit, ThreeRowLoot), 1);
         // Banner top (the window's top less the overhang) below the header and the panel's bottom above the lane.
         Assert.True(fit.Y - PortraitBetweenMath.LootBannerOverhang * fit.Scale >= HeaderBottom);
         Assert.True(fit.Y + fit.Height <= laneTop - PortraitBetweenMath.LootLaneGap + 3f);
     }
 
     [Fact]
-    public void LootWindowShrinksAtTheSixteenByNineShapeAndClearsTheLane()
+    public void LootWindowCentresTheRowsAtTheSixteenByNineShape()
     {
         float laneTop = PortraitBetweenMath.ActionLaneTop(false, 1920f, ActionHeight);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, HeaderBottom, laneTop, 526f, 640f);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(
+            1080f, 1920f, CompactHeaderBottom, laneTop, 526f, 640f, ThreeRowLoot);
         Assert.True(fit.WindowHeight < 640f);
-        Assert.Equal(569.05f, fit.WindowHeight, 1);
-        Assert.Equal(457.16f, fit.Y, 2);
+        Assert.Equal(960f, LootRowsMiddle(fit, ThreeRowLoot), 1);
         // Harness floor: the panel's bottom is clear of the lane and its top is under the header.
         Assert.True(fit.Y + fit.Height <= laneTop - 8f);
-        Assert.True(fit.Y >= HeaderBottom);
+        Assert.True(fit.Y >= CompactHeaderBottom);
         Assert.True(fit.Y + fit.Height <= 1920f);
-        // The mask keeps its row: two and a half rows still show.
-        Assert.True((fit.WindowHeight - 139f) * fit.Scale >= 2.8f * PortraitBetweenMath.LootRowMinHeight * fit.Scale);
+        // The mask holds the three rows and the padding under them.
+        Assert.True((fit.WindowHeight - PortraitBetweenMath.LootMaskTop - PortraitBetweenMath.LootMaskBottom) * fit.Scale >=
+                    ThreeRowLoot * fit.Scale + PortraitBetweenMath.LootContentPadding * fit.Scale - 1f);
+    }
+
+    [Fact]
+    public void LootWindowKeepsAPanelForASingleReward()
+    {
+        const float oneRow = PortraitBetweenMath.LootRowMinHeight;
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, 1920f, CompactHeaderBottom, 1358.22f, 526f, 640f, oneRow);
+        Assert.Equal(PortraitBetweenMath.LootWindowMinHeight, fit.WindowHeight, 2);
+        Assert.Equal(960f, LootRowsMiddle(fit, oneRow), 1);
+        Assert.True(fit.Y + fit.Height <= 1358.22f - PortraitBetweenMath.LootLaneGap + 3f);
+    }
+
+    [Fact]
+    public void LootWindowGivesALongListTheRoomItHas()
+    {
+        const float sevenRows = 7f * PortraitBetweenMath.LootRowMinHeight + 6f * PortraitBetweenMath.LootRowSeparation;
+        float laneTop = PortraitBetweenMath.ActionLaneTop(false, 1920f, ActionHeight);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(
+            1080f, 1920f, CompactHeaderBottom, laneTop, 526f, 640f, sevenRows);
+        // The game's own panel is the cap; the list scrolls under the mask when its rows are taller.
+        Assert.Equal(640f, fit.WindowHeight, 2);
+        Assert.True(fit.Y + fit.Height <= laneTop - 8f);
+        float mask = (fit.WindowHeight - PortraitBetweenMath.LootMaskTop - PortraitBetweenMath.LootMaskBottom) * fit.Scale;
+        Assert.True(sevenRows * fit.Scale > mask);
+        Assert.True(PortraitBetweenMath.LootScrollMinimumHeight(sevenRows, fit.WindowHeight - 139f) > 0f);
     }
 
     [Fact]
@@ -242,10 +276,12 @@ public class PortraitBetweenMathTests
         Assert.Equal(1462.5f, PortraitBetweenMath.BlitzLaneCentreY(2340f), 3);
         float top = PortraitBetweenMath.ActionLaneTop(true, 1920f, ActionHeight);
         Assert.Equal(1136.5f, top, 3);
-        LootWindowFit fit = PortraitBetweenMath.LootWindow(1080f, HeaderBottom, top, 526f, 640f);
-        Assert.Equal(425.16f, fit.WindowHeight, 1);
+        LootWindowFit fit = PortraitBetweenMath.LootWindow(
+            1080f, 1920f, CompactHeaderBottom, top, 526f, 640f, ThreeRowLoot);
         Assert.True(fit.Y + fit.Height <= top - 8f);
-        Assert.True((fit.WindowHeight - 139f) * fit.Scale >= 2.8f * PortraitBetweenMath.LootRowMinHeight * fit.Scale);
+        // The action lane gives the window less room, so the rows sit as close to the middle as they can.
+        Assert.InRange(LootRowsMiddle(fit, ThreeRowLoot) / 1920f, 0.40f, 0.60f);
+        Assert.True((fit.WindowHeight - 139f) * fit.Scale >= ThreeRowLoot * fit.Scale);
     }
 
     [Fact]

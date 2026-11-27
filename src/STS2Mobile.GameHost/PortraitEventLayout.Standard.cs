@@ -48,6 +48,8 @@ internal sealed partial class PortraitEventLayout
 
     private static PropertyInfo? _eventRoomLayout;
     private static Type? _eventRoomLayoutOwner;
+    private static Type? _eventRevealOwner;
+    private static FieldInfo? _eventDescriptionTween;
 
     /// <summary>One composed event: the nodes the composition added, the game's nodes it moved, and what it measured.</summary>
     private sealed class EventState
@@ -73,6 +75,8 @@ internal sealed partial class PortraitEventLayout
         public bool ArtHidden;
         public int PendingFrames;
         public bool GivenUp;
+        /// <summary>A new page's copy is being shown: its scrollbar stays hidden until the game's reveal has finished.</summary>
+        public bool TextRevealPending;
     }
 
     private readonly struct EventRow
@@ -264,6 +268,7 @@ internal sealed partial class PortraitEventLayout
             PlaceEventFrames(state, layout);
             RefreshEventPage(state);
             FrameEventArt(state);
+            RefreshEventTextScrollbar(state);
             return;
         }
         if (!state.Canvas.IsEqualApprox(canvas) || !Mathf.IsEqualApprox(state.Cap, capHeight) || state.Compact != compact)
@@ -278,6 +283,7 @@ internal sealed partial class PortraitEventLayout
         RefreshEventPage(state);
         KeepEventRows(state);
         RefreshEventCopyInk(state);
+        RefreshEventTextScrollbar(state);
     }
 
     /// <summary>
@@ -601,6 +607,8 @@ internal sealed partial class PortraitEventLayout
         bool pageChanged = signature != state.Signature;
         state.Signature = signature;
         state.PageDirty = false;
+        // A new page's copy is revealed by the game's own tween; its scrollbar must not show before that reveal ends.
+        if (pageChanged) state.TextRevealPending = true;
         ApplyEventPage(state, pageChanged);
     }
 
@@ -988,6 +996,44 @@ internal sealed partial class PortraitEventLayout
         scroll.Position = new Vector2(PortraitEventMath.PanelInsetX, PortraitEventMath.PanelInsetY);
         scroll.Size = new Vector2(copyWidth, fitted.Height);
         state.CopyInk = description.GetContentHeight();
+        // A page whose copy is still being revealed shows no scrollbar yet; the per-frame pass lifts this once the game's
+        // own visible_ratio tween has finished.
+        if (state.TextRevealPending) SetEventScrollbarAlpha(scroll, 0f);
+    }
+
+    /// <summary>
+    /// The copy's scrollbar is hidden until the game's reveal has finished: while the native <c>visible_ratio</c> tween runs
+    /// (or before a new page's reveal has been seen to finish), the bar keeps alpha zero; once the text is fully shown it is
+    /// visible again, and the ScrollContainer's own visibility still keeps it away while the copy fits.
+    /// </summary>
+    private void RefreshEventTextScrollbar(EventState state)
+    {
+        if (ResolveEventNode(state.TextNode) is not ScrollContainer scroll) return;
+        Control? layout = ResolveEventNode(state.LayoutNode);
+        RichTextLabel? description = ResolveEventNode(state.DescriptionNode) as RichTextLabel;
+        bool revealing = layout != null && description != null && EventTextRevealing(layout, description);
+        if (!revealing) state.TextRevealPending = false;
+        SetEventScrollbarAlpha(scroll, revealing || state.TextRevealPending ? 0f : 1f);
+    }
+
+    /// <summary>Whether the game is still revealing the description (its ratio tween has not finished).</summary>
+    private static bool EventTextRevealing(Control layout, RichTextLabel description)
+    {
+        if (description.VisibleRatio < 0.999f) return true;
+        Type type = layout.GetType();
+        if (type != _eventRevealOwner)
+        {
+            _eventRevealOwner = type;
+            _eventDescriptionTween = type.GetField("_descriptionTween", BindingFlags.Instance | BindingFlags.NonPublic);
+        }
+        return _eventDescriptionTween?.GetValue(layout) is Tween { } tween && tween.IsValid() && tween.IsRunning();
+    }
+
+    private static void SetEventScrollbarAlpha(ScrollContainer scroll, float alpha)
+    {
+        VScrollBar bar = scroll.GetVScrollBar();
+        if (!Mathf.IsEqualApprox(bar.Modulate.A, alpha))
+            bar.Modulate = new Color(1f, 1f, 1f, alpha);
     }
 
     /// <summary>Place the copy's labels one under the other and return the stack's height.</summary>

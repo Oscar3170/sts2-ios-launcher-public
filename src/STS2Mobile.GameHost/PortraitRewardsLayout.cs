@@ -8,11 +8,11 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.GameHost;
 
 /// <summary>
-/// The spoils screen and the card reward in portrait: the loot window scaled so its banner fits the phone and its rows re-cut
-/// and kept at finger size, the loot Skip hidden while a card reward is open over it, and the reward cards in a two-column grid
-/// under the shared banner with the alternatives in one row above the footer. The game's own values are captured before the
-/// first move and put back when Portrait Mode is turned off. The action lane and the shared banner helpers stay with the
-/// between-screen coordinator.
+/// The spoils screen and the card reward in portrait: the loot window scaled so its banner fits the phone, cut to its rows
+/// and centred so the reward buttons sit around the middle of the screen, the loot Skip hidden while a card reward is open
+/// over it, and the reward cards in a two-column grid under the shared banner with the alternatives in one row above the
+/// footer. The game's own values are captured before the first move and put back when Portrait Mode is turned off. The
+/// action lane and the shared banner helpers stay with the between-screen coordinator.
 /// </summary>
 internal sealed class PortraitRewardsLayout
 {
@@ -37,13 +37,8 @@ internal sealed class PortraitRewardsLayout
     private const float RewardBottomMargin = 24f;
     private const float RewardCardFloorScale = 289f / 300f;
     private const int RewardRowFontSize = 28;
-    private const float LootRowSeparation = 14f;
     private const float NativeLootWidth = 526f;
     private const float NativeLootHeight = 640f;
-    private const float LootMaskLeft = 26f;
-    private const float LootMaskRight = 26f;
-    private const float LootMaskTop = 103f;
-    private const float LootMaskBottom = 36f;
 
     /// <summary>One loot screen's window, the list's mask and the list, with the lane its action hangs from.</summary>
     private sealed class LootScreenState(Control screen, Control window, Control mask, Control list, Control? action, bool blitz)
@@ -194,16 +189,23 @@ internal sealed class PortraitRewardsLayout
         Capture(mask, captureVisible: false);
         Capture(list, captureVisible: false);
         // Rows are two units taller and 14 apart (was 86 and 10), so a loot row is at least 44 points deep.
-        if (!list.HasThemeConstantOverride("separation") || list.GetThemeConstant("separation") != (int)LootRowSeparation)
-            list.AddThemeConstantOverride("separation", (int)LootRowSeparation);
+        if (!list.HasThemeConstantOverride("separation") ||
+            list.GetThemeConstant("separation") != (int)PortraitBetweenMath.LootRowSeparation)
+            list.AddThemeConstantOverride("separation", (int)PortraitBetweenMath.LootRowSeparation);
         UpdateLootPortrait(state, canvas, capHeight);
     }
 
     private void UpdateLootPortrait(LootScreenState state, Vector2 canvas, float capHeight)
     {
+        // The rows are laid out first: the window's height and place come from how tall their block is (the list keeps one
+        // row size; its labels read at 15 points; it is walked only when its rows change).
+        int rowCount = state.List.GetChildCount();
+        if (rowCount != state.RowCount) ApplyLootRows(state, rowCount);
+
         float laneTop = PortraitBetweenMath.ActionLaneTop(state.Blitz, canvas.Y, PortraitBands.MinTarget);
         LootWindowFit fit = PortraitBetweenMath.LootWindow(
-            canvas.X, PortraitBands.HeaderBottom(capHeight), laneTop, NativeLootWidth, NativeLootHeight);
+            canvas.X, canvas.Y, PortraitBands.HeaderBottom(capHeight), laneTop, NativeLootWidth, NativeLootHeight,
+            state.ContentHeight);
         Control window = state.Window;
 
         if (Math.Abs(window.Scale.X - fit.Scale) > 0.0005f)
@@ -216,14 +218,16 @@ internal sealed class PortraitRewardsLayout
         // The mask is re-cut from the window's edges, as the game's own 640-tall window no longer bounds the list.
         Control mask = state.Mask;
         if (mask.AnchorLeft != 0f || mask.AnchorTop != 0f || mask.AnchorRight != 1f || mask.AnchorBottom != 1f ||
-            Math.Abs(mask.OffsetLeft - LootMaskLeft) > 0.01f || Math.Abs(mask.OffsetRight + LootMaskRight) > 0.01f ||
-            Math.Abs(mask.OffsetTop - LootMaskTop) > 0.01f || Math.Abs(mask.OffsetBottom + LootMaskBottom) > 0.01f)
+            Math.Abs(mask.OffsetLeft - PortraitBetweenMath.LootMaskLeft) > 0.01f ||
+            Math.Abs(mask.OffsetRight + PortraitBetweenMath.LootMaskRight) > 0.01f ||
+            Math.Abs(mask.OffsetTop - PortraitBetweenMath.LootMaskTop) > 0.01f ||
+            Math.Abs(mask.OffsetBottom + PortraitBetweenMath.LootMaskBottom) > 0.01f)
         {
             mask.SetAnchorsAndOffsetsPreset(Control.LayoutPreset.FullRect);
-            mask.OffsetLeft = LootMaskLeft;
-            mask.OffsetRight = -LootMaskRight;
-            mask.OffsetTop = LootMaskTop;
-            mask.OffsetBottom = -LootMaskBottom;
+            mask.OffsetLeft = PortraitBetweenMath.LootMaskLeft;
+            mask.OffsetRight = -PortraitBetweenMath.LootMaskRight;
+            mask.OffsetTop = PortraitBetweenMath.LootMaskTop;
+            mask.OffsetBottom = -PortraitBetweenMath.LootMaskBottom;
         }
 
         var target = new Vector2(fit.X, fit.Y);
@@ -256,10 +260,6 @@ internal sealed class PortraitRewardsLayout
             // its slide.
             if (state.Fade != null) state.Placed = true;
         }
-
-        // The rows keep one size; their labels read at 15 points. The list is walked only when its rows change.
-        int rowCount = state.List.GetChildCount();
-        if (rowCount != state.RowCount) ApplyLootRows(state, rowCount);
 
         // The game's scroll engages when the list is 400 units tall; a list that overflows this shorter mask is made tall
         // enough for the drag to reach its last row (see LootScrollMinimumHeight).

@@ -188,11 +188,18 @@ public static class PortraitRestMath
     public const float DescriptionMinHeight = 150f;
 
     /// <summary>
-    /// The top of the footer lane, where the game hangs an action from the canvas's bottom edge (<c>ActionFooterCentreY</c>
-    /// less one touch target): the copy must end above it.
+    /// How far the rest site's Proceed is raised above the shared footer lane: one 44 point touch target. The native action
+    /// hangs 25.71 units from the canvas's bottom edge, which on a big phone is under the thumb's comfortable reach; the
+    /// raised ribbon's bottom keeps 53 points from the edge (and clears the 31 point safe bottom reserve).
+    /// </summary>
+    public const float ProceedLift = TouchTarget;
+
+    /// <summary>
+    /// The top of the footer lane, where the game hangs an action from the canvas's bottom edge, raised by
+    /// <see cref="ProceedLift"/> for the rest site's Proceed: the copy must end above it.
     /// </summary>
     public static float FooterLaneTop(float canvasHeight) =>
-        canvasHeight - PortraitBetweenMath.ActionFooterMargin - TouchTarget;
+        canvasHeight - PortraitBetweenMath.ActionFooterMargin - TouchTarget - ProceedLift;
 
     /// <summary>The drawn bottom of the lowest option: its box top plus the label ink below it.</summary>
     public static float OptionsDrawnBottom(float bottomRowTop, float scale) => bottomRowTop + RowInkBottom * scale;

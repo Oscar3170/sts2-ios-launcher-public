@@ -177,18 +177,25 @@ public class PortraitRestMathTests
     [Fact]
     public void QuestionSitsAboveTheRowAndTheCopyNearTheBottom()
     {
-        RestOptionsRow row = PortraitRestMath.OptionsRow(2, TwoButtons, 1080f, 2340f);
+        // Two options sit at the row's full scale; the raised Proceed lane leaves the copy less than its minimum band, so the
+        // options rise by the documented lift and the copy keeps its 150 unit floor.
+        const float canvasHeight = 2340f;
+        float scale = PortraitRestMath.OptionsScale(PortraitRestMath.OptionsWidth(2, TwoButtons), 1080f);
+        float baseDrawn = PortraitRestMath.OptionsDrawnBottom(canvasHeight - PortraitRestMath.OptionsBottomInset, scale);
+        float lift = PortraitRestMath.DescriptionLift(baseDrawn, canvasHeight, PortraitRestMath.DescriptionHeight);
+        Assert.Equal(117.653f, lift, 1);
+        RestOptionsRow row = PortraitRestMath.OptionsRow(2, TwoButtons, 1080f, canvasHeight, lift);
         RestTextBlock header = PortraitRestMath.Header(row.Y, 1080f);
         Assert.Equal(41.143f, header.X, 3);
-        Assert.Equal(1542.857f, header.Y, 3);
+        Assert.Equal(1425.204f, header.Y, 1);
         Assert.Equal(997.714f, header.Width, 3);
         Assert.Equal(96.429f, header.Height, 3);
         Assert.Equal(51, PortraitRestMath.HeaderFontSize);
 
         float drawnBottom = PortraitRestMath.OptionsDrawnBottom(row.Y, row.Scale);
-        RestTextBlock copy = PortraitRestMath.Description(1080f, 2340f, drawnBottom, measuredTextHeight: 0f);
+        RestTextBlock copy = PortraitRestMath.Description(1080f, canvasHeight, drawnBottom, measuredTextHeight: 0f);
         Assert.Equal(61.714f, copy.X, 3);
-        Assert.Equal(1918.514f, copy.Y, 3);   // the labels' drawn bottom plus the 28 unit gap
+        Assert.Equal(1800.862f, copy.Y, 1);   // the labels' drawn bottom plus the 28 unit gap
         Assert.Equal(956.571f, copy.Width, 3);
         Assert.Equal(PortraitRestMath.DescriptionMinHeight, copy.Height, 3);
         Assert.Equal(41, PortraitRestMath.DescriptionFontSize);
@@ -197,13 +204,11 @@ public class PortraitRestMathTests
         float labelBottom = row.Y + PortraitRestMath.RowInkBottom * row.Scale;
         Assert.Equal(drawnBottom, labelBottom, 3);
         Assert.True(copy.Y > labelBottom, $"copy {copy.Y:F0} under labels {labelBottom:F0}");
-        // A full four-line text still ends above the footer lane, and the options never need lifting for it.
-        RestTextBlock tall = PortraitRestMath.Description(1080f, 2340f, drawnBottom, 231.429f);
-        Assert.Equal(231.429f, tall.Height, 3);   // the band has 240.8 units of room between the labels and the footer lane
-        Assert.True(tall.Y + tall.Height < PortraitRestMath.FooterLaneTop(2340f) - PortraitRestMath.DescriptionGap);
-        Assert.Equal(0f, PortraitRestMath.DescriptionLift(drawnBottom, 2340f, PortraitRestMath.DescriptionHeight));
-        float compactBottom = PortraitRestMath.OptionsDrawnBottom(1920f - PortraitRestMath.OptionsBottomInset, row.Scale);
-        Assert.Equal(0f, PortraitRestMath.DescriptionLift(compactBottom, 1920f, PortraitRestMath.DescriptionHeight));
+        // A full four-line text still ends above the raised Proceed lane, and the copy never reaches the ribbon.
+        RestTextBlock tall = PortraitRestMath.Description(1080f, canvasHeight, drawnBottom, 231.429f);
+        Assert.Equal(231.429f, tall.Height, 1);
+        Assert.True(tall.Y + tall.Height <= PortraitRestMath.FooterLaneTop(canvasHeight) - PortraitRestMath.DescriptionGap + 0.01f);
+        Assert.InRange(PortraitRestMath.DescriptionLift(drawnBottom, canvasHeight, PortraitRestMath.DescriptionHeight), 0f, 0.05f);
     }
 
     [Fact]
@@ -222,7 +227,7 @@ public class PortraitRestMathTests
     }
 
     [Fact]
-    public void TheCopyBandStaysBetweenTheLabelsAndTheFooterLaneAtEveryCountAndShape()
+    public void TheCopyBandStaysBetweenTheLabelsAndTheRaisedLaneAtEveryCountAndShape()
     {
         Span<RestOptionsRow> rows = stackalloc RestOptionsRow[2];
         foreach (int count in new[] { 2, 4, 6, 10 })
@@ -232,16 +237,25 @@ public class PortraitRestMathTests
                 float scale = PortraitRestMath.OptionsRowCount(count) <= 1
                     ? PortraitRestMath.OptionsScale(PortraitRestMath.OptionsWidth(count, 0f), 1080f)
                     : PortraitRestMath.OptionsGridScale(count, 1080f);
-                float drawnBottom = PortraitRestMath.OptionsDrawnBottom(
+                float baseDrawn = PortraitRestMath.OptionsDrawnBottom(
                     canvasHeight - PortraitRestMath.OptionsBottomInset, scale);
-                // No lift is needed: the copy's reserved block fits above the footer lane.
-                Assert.Equal(0f, PortraitRestMath.DescriptionLift(drawnBottom, canvasHeight, PortraitRestMath.DescriptionHeight));
+                // The options rise until the copy's reserved block fits above the rest site's raised Proceed lane.
+                float lift = PortraitRestMath.DescriptionLift(
+                    baseDrawn, canvasHeight, PortraitRestMath.DescriptionHeight);
+                float drawnBottom = PortraitRestMath.OptionsDrawnBottom(
+                    canvasHeight - PortraitRestMath.OptionsBottomInset - lift, scale);
+                Assert.InRange(PortraitRestMath.DescriptionLift(drawnBottom, canvasHeight, PortraitRestMath.DescriptionHeight), 0f, 0.05f);
                 RestTextBlock copy = PortraitRestMath.Description(1080f, canvasHeight, drawnBottom, measuredTextHeight: 0f);
                 Assert.Equal(drawnBottom + PortraitRestMath.DescriptionGap, copy.Y, 3);
                 Assert.True(copy.Y + copy.Height <= PortraitRestMath.FooterLaneTop(canvasHeight) - PortraitRestMath.DescriptionGap + 0.01f,
-                    $"{count} at {canvasHeight}: copy ends above the footer lane");
+                    $"{count} at {canvasHeight}: copy ends above the rest site's Proceed lane");
                 Assert.True(copy.Y + copy.Height <= canvasHeight, "copy inside the canvas");
                 Assert.True(copy.Y > drawnBottom, "copy under the labels");
+                // A short count with the full-size row has more room under it than the raised lane leaves; the lift covers it.
+                if (count <= 6) Assert.True(lift > 0f, $"{count} at {canvasHeight}: lift={lift:F1}");
+                // The grid starts from the lifted top row.
+                int filled = PortraitRestMath.OptionsGrid(count, 1080f, canvasHeight, rows, lift);
+                Assert.True(filled > 0 && rows[0].Y <= canvasHeight - PortraitRestMath.OptionsBottomInset - lift + 0.01f);
             }
         }
     }
