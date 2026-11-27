@@ -80,6 +80,8 @@ DEFAULT_TIMEOUT=240
 # Every rest option, the synthetic eleven-option row and their describe/confirm taps: about 205 s at 9:16 and over 240 s
 # at 540x1170.
 [[ $SCENARIO == rest-options ]] && DEFAULT_TIMEOUT=420
+# Every encounter of every act staged and measured: about 430 s at 540x1170.
+[[ $SCENARIO == stage-encounters ]] && DEFAULT_TIMEOUT=720
 TEST_TIMEOUT="${STS2MOBILE_TEST_TIMEOUT:-$DEFAULT_TIMEOUT}"
 # The host finishes a little before this (it reads the same variable).
 export STS2MOBILE_TEST_TIMEOUT="$TEST_TIMEOUT"
