@@ -5,6 +5,7 @@ public class PortraitCombatMathTests
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(1, 1, 0)]
+    [InlineData(2, 2, 0)]
     [InlineData(3, 3, 0)]
     [InlineData(4, 3, 1)]
     [InlineData(5, 3, 2)]
@@ -13,14 +14,110 @@ public class PortraitCombatMathTests
     [InlineData(8, 4, 4)]
     [InlineData(9, 5, 4)]
     [InlineData(10, 5, 5)]
+    [InlineData(11, 6, 5)]
     [InlineData(12, 6, 6)]
-    public void UpperRowFillsFirstAndTakesAtLeastThree(int count, int expectedUpper, int expectedLower)
+    public void AlternatingUpperRowFillsFirstAndTakesAtLeastThree(int count, int expectedUpper, int expectedLower)
     {
-        HandRowSplit split = PortraitCombatMath.SplitHandRows(count);
+        HandRowSplit split = PortraitCombatMath.SplitHandRows(count, HandRowMode.Alternating);
         Assert.Equal(expectedUpper, split.BackRowCount);
         Assert.Equal(expectedLower, split.FrontRowCount);
         Assert.Equal(count, split.BackRowCount + split.FrontRowCount);
         Assert.True(split.BackRowCount >= split.FrontRowCount);
+    }
+
+    [Theory]
+    [InlineData(0, 0, 0)]
+    [InlineData(1, 1, 0)]
+    [InlineData(2, 2, 0)]
+    [InlineData(3, 3, 0)]
+    [InlineData(4, 4, 0)]
+    [InlineData(5, 5, 0)]
+    [InlineData(6, 5, 1)]
+    [InlineData(7, 5, 2)]
+    [InlineData(8, 5, 3)]
+    [InlineData(9, 5, 4)]
+    [InlineData(10, 5, 5)]
+    [InlineData(11, 5, 6)]
+    [InlineData(12, 5, 7)]
+    public void FixedUpperRowFillsToFiveBeforeTheLowerRowTakesAny(int count, int expectedUpper, int expectedLower)
+    {
+        HandRowSplit split = PortraitCombatMath.SplitHandRows(count, HandRowMode.Fixed);
+        Assert.Equal(expectedUpper, split.BackRowCount);
+        Assert.Equal(expectedLower, split.FrontRowCount);
+        Assert.Equal(count, split.BackRowCount + split.FrontRowCount);
+        Assert.True(split.BackRowCount <= 5);
+    }
+
+    [Fact]
+    public void FixedKeepsOneToFiveInTheUpperBandAtTheFullScaleAndOverlapsThem()
+    {
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(1920f, stageTopY: 612f);
+        float upperBandY = PortraitCombatMath.ComputeHandCardSlot(1, 0, bands, mode: HandRowMode.Fixed).LocalY;
+        for (int count = 1; count <= 5; count++)
+        {
+            for (int index = 0; index < count; index++)
+            {
+                PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, index, bands, mode: HandRowMode.Fixed);
+                Assert.Equal(0, slot.RowIndex);
+                Assert.Equal(upperBandY, slot.LocalY, 4);
+                Assert.Equal(PortraitCombatMath.CompactHandCardScale, slot.Scale, 4);
+            }
+        }
+
+        // Five cards in one row keep the shape's full scale and overlap; they never shrink.
+        PortraitCardSlot left = PortraitCombatMath.ComputeHandCardSlot(5, 0, bands, mode: HandRowMode.Fixed);
+        PortraitCardSlot next = PortraitCombatMath.ComputeHandCardSlot(5, 1, bands, mode: HandRowMode.Fixed);
+        Assert.True(next.LocalX - left.LocalX < PortraitCombatMath.CardDefaultWidth * left.Scale);
+
+        // The sixth card is the first one in the lower row, below the upper band.
+        PortraitCardSlot sixth = PortraitCombatMath.ComputeHandCardSlot(6, 5, bands, mode: HandRowMode.Fixed);
+        Assert.Equal(1, sixth.RowIndex);
+        Assert.True(sixth.LocalY > upperBandY);
+    }
+
+    [Fact]
+    public void NegativeCountsClampToAnEmptyHandInBothModes()
+    {
+        foreach (HandRowMode mode in new[] { HandRowMode.Alternating, HandRowMode.Fixed })
+            Assert.Equal(new HandRowSplit(0, 0), PortraitCombatMath.SplitHandRows(-3, mode));
+    }
+
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(2340f)]
+    public void HandLayoutModeKeepsTheFitAndOnlyMovesTheRowBoundary(float canvasHeight)
+    {
+        // The upper row takes the first indices in both modes, and the shape's fit (scale, gap, card size) is identical: only
+        // the boundary between the rows moves (4 is 3+1 alternating, 4+0 fixed; 6 is 3+3 alternating, 5+1 fixed).
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+        for (int count = 0; count <= 12; count++)
+        {
+            HandRowSplit alternating = PortraitCombatMath.SplitHandRows(count, HandRowMode.Alternating);
+            HandRowSplit fixedMode = PortraitCombatMath.SplitHandRows(count, HandRowMode.Fixed);
+            HandRowFit alternatingFit = PortraitCombatMath.ComputeHandRowFit(bands, count, HandRowMode.Alternating);
+            HandRowFit fixedFit = PortraitCombatMath.ComputeHandRowFit(bands, count, HandRowMode.Fixed);
+            Assert.Equal(alternating.BackRowCount, alternatingFit.UpperCount);
+            Assert.Equal(fixedMode.BackRowCount, fixedFit.UpperCount);
+            Assert.Equal(alternatingFit.Scale, fixedFit.Scale);
+            Assert.Equal(alternatingFit.Gap, fixedFit.Gap);
+            Assert.Equal(alternatingFit.CardWidth, fixedFit.CardWidth);
+            Assert.Equal(alternatingFit.CardHeight, fixedFit.CardHeight);
+
+            for (int index = 0; index < count; index++)
+            {
+                foreach ((HandRowMode mode, HandRowSplit split, HandRowFit fit) in new[]
+                         {
+                             (HandRowMode.Alternating, alternating, alternatingFit),
+                             (HandRowMode.Fixed, fixedMode, fixedFit),
+                         })
+                {
+                    PortraitCardSlot slot =
+                        PortraitCombatMath.ComputeHandCardSlot(count, index, bands, flat: false, mode: mode);
+                    Assert.Equal(index < split.BackRowCount ? 0 : 1, slot.RowIndex);
+                    Assert.Equal(fit.Scale, slot.Scale, 4);
+                }
+            }
+        }
     }
 
     [Theory]

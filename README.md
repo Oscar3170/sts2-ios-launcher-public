@@ -129,7 +129,9 @@ asking.
 The game starts in landscape and plays as it does on a desktop, with a touch as the mouse. To play with the
 iPhone upright, open the game's **Settings > Graphics** and turn on **Portrait Mode**; the game turns at once,
 also in the middle of a run, and turning it off goes back to landscape. **Set Portrait as Default**, shown
-while Portrait Mode is on, starts the game upright the next time.
+while Portrait Mode is on, starts the game upright the next time. **Flat Hand** lays the hand out in flat rows
+instead of a fan, and **Hand Layout** chooses how the two rows divide: **Alternating** (the default) keeps them
+balanced, **Fixed** fills the upper row to five cards first.
 
 In portrait every screen is laid out for the narrow screen, with buttons and text sized for a finger:
 

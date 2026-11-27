@@ -20,7 +20,8 @@ public sealed record PhoneGraphicsSettings(
     bool FlatHand = false,
     bool PerformanceLog = false,
     bool ReduceEffects = false,
-    bool ReadableDrag = true)
+    bool ReadableDrag = true,
+    HandRowMode HandRow = HandRowMode.Alternating)
 {
     public const string FileName = "phone-graphics.json";
     private const int Format = 1;
@@ -55,6 +56,9 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>Lifts a dragged card above the finger (true, the default) or keeps the point grabbed at the press (false).</summary>
     public PhoneGraphicsSettings WithReadableDrag(bool enabled) => this with { ReadableDrag = enabled };
+
+    /// <summary>Alternating keeps both hand rows balanced (the default); Fixed fills the upper row to five first.</summary>
+    public PhoneGraphicsSettings WithHandRow(HandRowMode mode) => this with { HandRow = mode };
 
     /// <summary>Fraction of the screen's resolution drawn: 3x, 2.5x or 2x pixels per point on a 3x screen.</summary>
     public double ResolutionFactor => FactorOf(Resolution);
@@ -98,6 +102,9 @@ public sealed record PhoneGraphicsSettings(
             bool coolDownWhenHot = Flag(root, "coolDownWhenHot");
             RenderResolution resolution =
                 Enum.TryParse(Text(root, "resolution"), ignoreCase: true, out RenderResolution chosen) ? chosen : RenderResolution.Full;
+            // Hand Layout is Alternating until the player picks Fixed; a missing, unknown or malformed value keeps the default.
+            HandRowMode handRow =
+                Enum.TryParse(Text(root, "handRow"), ignoreCase: true, out HandRowMode chosenRowMode) ? chosenRowMode : HandRowMode.Alternating;
             return new PhoneGraphicsSettings(
                 resolution,
                 lowerIdleFrameRate,
@@ -112,7 +119,9 @@ public sealed record PhoneGraphicsSettings(
                     ? Flag(root, "reduceEffects")
                     : ReducedEffectsOfLegacyFile(resolution, lowerIdleFrameRate, coolDownWhenHot),
                 // Readable drag is the behaviour every earlier build had; only an explicit off turns it off.
-                root.ContainsKey("readableDrag") ? Flag(root, "readableDrag") : true);
+                root.ContainsKey("readableDrag") ? Flag(root, "readableDrag") : true,
+                // Alternating is every earlier build's split: a file from before the setting keeps it.
+                handRow);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
         {
@@ -160,6 +169,7 @@ public sealed record PhoneGraphicsSettings(
             writer.WriteBoolean("performanceLog", PerformanceLog);
             writer.WriteBoolean("reduceEffects", ReduceEffects);
             writer.WriteBoolean("readableDrag", ReadableDrag);
+            writer.WriteString("handRow", HandRow.ToString().ToLowerInvariant());
             writer.WriteEndObject();
         }
         File.Move(partial, path, overwrite: true);
@@ -167,7 +177,7 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>A one-line summary for the log.</summary>
     public string Describe(double appliedFactor) => string.Create(CultureInfo.InvariantCulture,
-        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand} perfLog={PerformanceLog} reduceEffects={ReduceEffects} readableDrag={ReadableDrag}");
+        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand} perfLog={PerformanceLog} reduceEffects={ReduceEffects} readableDrag={ReadableDrag} handRow={HandRow.ToString().ToLowerInvariant()}");
 
     private bool Matches(PhoneGraphicsSettings other) =>
         Resolution == other.Resolution && LowerIdleFrameRate == other.LowerIdleFrameRate &&

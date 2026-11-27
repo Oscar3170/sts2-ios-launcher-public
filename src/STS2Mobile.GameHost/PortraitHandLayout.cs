@@ -34,6 +34,28 @@ internal sealed class PortraitHandLayout
     internal static void SetFlatHandListener(Action? listener) => _flatHandChanged = listener;
 
     /// <summary>
+    /// The Graphics "Hand Layout" choice: how the two permanent rows divide the hand. Alternating keeps both rows balanced;
+    /// Fixed fills the upper row to five first, so one to five cards all sit high. It only changes the split, never the bands,
+    /// card size or selection layout; PhoneGraphics writes it before the next frame and the test host may set it directly.
+    /// </summary>
+    private static HandRowMode _rowMode = HandRowMode.Alternating;
+    private static Action? _rowModeChanged;
+
+    public static HandRowMode RowMode
+    {
+        get => _rowMode;
+        set
+        {
+            if (_rowMode == value) return;
+            _rowMode = value;
+            _rowModeChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Called by PortraitLayout so a static split change relayouts immediately, not on some later frame.</summary>
+    internal static void SetRowModeListener(Action? listener) => _rowModeChanged = listener;
+
+    /// <summary>
     /// The Graphics "Reduce Effects" choice, for the hand: a card arriving from the draw pile draws without its glow (the
     /// <c>NCardHighlight</c> shader quad over the whole card) and without its shadow, and the glow's tween — the game's
     /// <c>AnimShow</c>, which writes the shader width on every frame of it — is stopped rather than run for half a second
@@ -150,6 +172,7 @@ internal sealed class PortraitHandLayout
     private Vector2 _focusedHandVisualScale;
     private PortraitCombatBands? _lastHandBands;
     private bool _lastHandFlat;
+    private HandRowMode _lastRowMode;
     // The open draw batch is a turn's draw with a known size (set by the turn-number block): only such a draw is
     // direction-capped and waits TurnDrawQuietMsec for its next card; other batches (a card effect's draw, a refill of an
     // emptied hand) follow the native animation and the adaptive quiet window.
@@ -337,6 +360,7 @@ internal sealed class PortraitHandLayout
         _lastPlayerTurnNumber = 0;
         _lastHandBands = null;
         _lastHandFlat = _flatHand;
+        _lastRowMode = _rowMode;
         _lastInCardPlay = false;
         _lastFocusedHolderId = _lastDraggedHolderId = 0;
         _lastReduceEffects = false;
@@ -630,6 +654,7 @@ internal sealed class PortraitHandLayout
             // the next idle pass.
             || _reducedCardEffects.Count > 0
             || FlatHand != _lastHandFlat
+            || RowMode != _lastRowMode
             || ReduceEffects != _lastReduceEffects
             || inCardPlay != _lastInCardPlay
             || focusedId != _lastFocusedHolderId || draggedId != _lastDraggedHolderId
@@ -646,6 +671,7 @@ internal sealed class PortraitHandLayout
         _lastDraggedHolderId = draggedId;
         _lastHandBands = bands;
         _lastHandFlat = FlatHand;
+        _lastRowMode = RowMode;
         _lastReduceEffects = ReduceEffects;
 
         HashSet<ulong> activeDimmedCardIds = _activeDimmedCardIds;
@@ -683,7 +709,7 @@ internal sealed class PortraitHandLayout
                 combatInProgress);
 
             int slotIndex = PortraitCombatMath.SlotIndexBesideHeldCard(i, heldIndex);
-            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(handCount, slotIndex, bands, FlatHand);
+            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(handCount, slotIndex, bands, FlatHand, RowMode);
 
             bool isFocused = focusedIndex == i;
             bool interactive = isFocused || PhoneTouchCards.CardIsBeingDragged ||

@@ -50,6 +50,7 @@ internal sealed class PortraitLayout
         _navPads.Attach();
         _settings.Attach(tree);
         PortraitHandLayout.SetFlatHandListener(ApplyImmediate);
+        PortraitHandLayout.SetRowModeListener(ApplyImmediate);
         PortraitGridWindow.Attach();
         PortraitGridHolderScale.Attach();
         QueueApply();
@@ -59,6 +60,7 @@ internal sealed class PortraitLayout
     {
         if (_tree == null) return;
         PortraitHandLayout.SetFlatHandListener(null);
+        PortraitHandLayout.SetRowModeListener(null);
         PortraitGridWindow.Detach();
         PortraitGridHolderScale.Detach();
         _combat.Detach();

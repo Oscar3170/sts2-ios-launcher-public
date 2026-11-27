@@ -6,6 +6,25 @@ namespace STS2Mobile.Platform;
 public readonly record struct HandRowSplit(int BackRowCount, int FrontRowCount);
 
 /// <summary>
+/// The Graphics "Hand Layout" choice: how the permanent two-row hand divides its cards between the upper (back) row and
+/// the lower row. Upper-row cards keep the first hand indices in both modes; only the row each index lands in changes.
+/// </summary>
+public enum HandRowMode
+{
+    /// <summary>
+    /// The upper row takes <c>max(3, ceil(count / 2))</c>, so one to three cards sit high and every later draw keeps both
+    /// rows balanced (4 is 3+1, 5 is 3+2, 8 is 4+4, 10 is 5+5). The default.
+    /// </summary>
+    Alternating,
+
+    /// <summary>
+    /// The upper row fills to five cards first; from the sixth card on, extras go to the lower row (5 is 5+0, 6 is 5+1,
+    /// 10 is 5+5). One to five cards all sit in the upper row band.
+    /// </summary>
+    Fixed,
+}
+
+/// <summary>
 /// One hand's fit: the row split, the resting card scale, the flat-mode horizontal gap and the card's drawn size. The
 /// scale is the shape's full size for every count and mode. Sizes are canvas units at scale 1.
 /// </summary>
@@ -241,25 +260,30 @@ public static class PortraitCombatMath
         heldIndex >= 0 && indexInHand >= heldIndex ? indexInHand + 1 : indexInHand;
 
     /// <summary>
-    /// The permanent two-row reserve: the upper row takes <c>max(3, ceil(count / 2))</c> cards and fills first, so one to
-    /// three cards sit high instead of starting low and jumping up when the fourth arrives (4 is 3+1, 5 is 3+2, 10 is 5+5).
+    /// The permanent two-row reserve from the Graphics "Hand Layout" choice. Alternating takes <c>max(3, ceil(count / 2))</c>
+    /// upper cards, so one to three cards sit high instead of starting low and jumping up when the fourth arrives (4 is 3+1,
+    /// 5 is 3+2, 10 is 5+5). Fixed fills the upper row to five first, so one to five cards all sit high (6 is 5+1, 10 is 5+5).
+    /// The upper row always takes the first hand indices; a crowded row overlaps rather than shrinking.
     /// </summary>
-    public static HandRowSplit SplitHandRows(int cardCount)
+    public static HandRowSplit SplitHandRows(int cardCount, HandRowMode mode = HandRowMode.Alternating)
     {
         int clamped = Math.Max(0, cardCount);
-        int back = Math.Min(clamped, Math.Max(3, (clamped + 1) / 2));
-        return new HandRowSplit(back, clamped - back);
+        int upper = mode == HandRowMode.Fixed
+            ? Math.Min(clamped, 5)
+            : Math.Min(clamped, Math.Max(3, (clamped + 1) / 2));
+        return new HandRowSplit(upper, clamped - upper);
     }
 
     /// <summary>
-    /// The hand's fit for this count and shape. The card scale is the shape's full size for every count and mode; when
-    /// a row is too wide its cards overlap rather than shrink or leave the canvas. The row bands themselves stay where
+    /// The hand's fit for this count, shape and row mode. The card scale is the shape's full size for every count and mode;
+    /// when a row is too wide its cards overlap rather than shrink or leave the canvas. The row bands themselves stay where
     /// the shape's reserve puts them.
     /// </summary>
-    public static HandRowFit ComputeHandRowFit(PortraitCombatBands bands, int count)
+    public static HandRowFit ComputeHandRowFit(PortraitCombatBands bands, int count,
+        HandRowMode mode = HandRowMode.Alternating)
     {
         int clamped = Math.Max(0, count);
-        HandRowSplit split = SplitHandRows(clamped);
+        HandRowSplit split = SplitHandRows(clamped, mode);
         float scale = bands.Compact ? CompactHandCardScale : TallHandCardScale;
         float gap = bands.Compact ? CompactHandGap : TallHandGap;
         return new HandRowFit(split.BackRowCount, split.FrontRowCount, scale, gap,
@@ -425,13 +449,14 @@ public static class PortraitCombatMath
     }
 
     /// <summary>
-    /// The resting holder's local slot in the permanent, top-first two-row hand. Reserve side clearance for its
-    /// separately scaled visual, so focus never needs to move the holder or resize its hitbox.
+    /// The resting holder's local slot in the permanent, top-first two-row hand, split by the Graphics "Hand Layout" mode.
+    /// Reserve side clearance for its separately scaled visual, so focus never needs to move the holder or resize its hitbox.
     /// </summary>
-    public static PortraitCardSlot ComputeHandCardSlot(int count, int index, PortraitCombatBands bands, bool flat = false)
+    public static PortraitCardSlot ComputeHandCardSlot(int count, int index, PortraitCombatBands bands, bool flat = false,
+        HandRowMode mode = HandRowMode.Alternating)
     {
         int clamped = Math.Max(0, count);
-        HandRowFit fit = ComputeHandRowFit(bands, clamped);
+        HandRowFit fit = ComputeHandRowFit(bands, clamped, mode);
         if (clamped == 0)
             return new PortraitCardSlot(0f, HandRowCenterLocalY(bands, 1), fit.Scale, 0f, 1);
 

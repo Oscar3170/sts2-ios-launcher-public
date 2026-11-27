@@ -26,6 +26,7 @@ public sealed partial class PhoneGraphics : Node
     private static readonly string[] PresetChoicesWithCustom = [.. PresetChoices, "Custom"];
     private static readonly string[] ResolutionChoices = ["100%", "83%", "67%"];
     private static readonly string[] OffOn = ["Off", "On"];
+    private static readonly string[] HandLayoutChoices = ["Alternating", "Fixed"];
     private readonly HashSet<int> _touches = new();
     private readonly List<PhoneOptionPaginator> _rows = new();
     private readonly PortraitLayout _portraitLayout = new();
@@ -59,6 +60,7 @@ public sealed partial class PhoneGraphics : Node
             if (!_settings.StartInPortrait && _settings.PortraitMode)
                 _settings = _settings.WithPortraitMode(false);
             PortraitHandLayout.FlatHand = _settings.FlatHand;
+            PortraitHandLayout.RowMode = _settings.HandRow;
             PortraitHandLayout.ReduceEffects = _settings.ReduceEffects;
             PhoneTouchCards.ReadableDrag = _settings.ReadableDrag;
             PortraitFrameTiming.SetEnabled(_settings.PerformanceLog);
@@ -267,6 +269,16 @@ public sealed partial class PhoneGraphics : Node
                 },
                 out _, out _, out _,
                 subtitle: "Lift the card above the finger; off keeps the point you grabbed.");
+            index = AddRow(content, template, divider, index, "Hand Layout", () => HandLayoutChoices,
+                () => (int)_settings.HandRow,
+                choice =>
+                {
+                    Store(_settings.WithHandRow((HandRowMode)choice));
+                    PortraitHandLayout.RowMode = _settings.HandRow;
+                    _portraitLayout.ApplyImmediate();
+                },
+                out _, out _, out _,
+                subtitle: "Alternating balances both rows; Fixed fills the upper row to five first.");
             index = AddRow(content, template, divider, index, "Performance Log", () => OffOn,
                 () => _settings.PerformanceLog ? 1 : 0,
                 choice =>

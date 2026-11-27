@@ -200,6 +200,27 @@ public sealed class PhoneGraphicsSettingsTests : IDisposable
     }
 
     [Fact]
+    public void HandRowDefaultsToAlternatingAndRoundTrips()
+    {
+        // Alternating is every earlier build's behaviour; only an explicit choice of Fixed changes it.
+        Assert.Equal(HandRowMode.Alternating, Defaults.HandRow);
+        var fixedMode = Defaults.WithHandRow(HandRowMode.Fixed);
+        Assert.Equal(HandRowMode.Fixed, fixedMode.HandRow);
+        fixedMode.Save(SettingsFile);
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { HandRow: HandRowMode.Fixed });
+        Assert.True(fixedMode.WithPreset(BatteryPreset.Balanced) is { HandRow: HandRowMode.Fixed, Preset: BatteryPreset.Balanced });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"portraitMode\":true,\"portraitDefault\":true}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { HandRow: HandRowMode.Alternating });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"handRow\":\"alternating\"}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { HandRow: HandRowMode.Alternating });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"handRow\":\"not-a-mode\"}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { HandRow: HandRowMode.Alternating });
+    }
+
+    [Fact]
     public void PortraitDefaultIsClearedOnLoadWhenPortraitModeIsOff()
     {
         File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"portraitMode\":false,\"portraitDefault\":true}");
