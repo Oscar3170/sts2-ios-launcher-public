@@ -1471,10 +1471,36 @@ internal sealed class PortraitCombatStage
             PortraitCombatMath.PortraitRowFit row = PortraitCombatMath.FitSingleRow(capacity, bodies, bands, rowLeft,
                 heroRoomScale, bands.Compact ? 0f : IntentBandHeight);
             float formationScale = plan.SharedBodyScale > 0f ? plan.SharedBodyScale : plan.BodyTargetScale;
-            // Short trios read as one group rather than two tiers if the lineup keeps most of their current size.
+            // Short trios read as one group rather than two tiers if the lineup keeps most of their size in the table.
+            // The table's size depends on which slot the largest body drew (Corpse Slugs: one of three is 10% larger,
+            // and the game picks its slot at random), so compare against the table with the largest body in its
+            // tightest slot: the same trio then gets the same layout in every fight.
+            float trioFormationScale = formationScale;
+            if (capacity == 3)
+            {
+                Control largest = enemies[0];
+                float largestArea = 0f;
+                for (int i = 0; i < enemies.Count; i++)
+                {
+                    float area = bodies[i].Width * bodies[i].Height;
+                    if (area <= largestArea) continue;
+                    largestArea = area;
+                    largest = enemies[i];
+                }
+                float worst = 0f;
+                for (int slot = 0; slot < capacity; slot++)
+                {
+                    (float frameW, float frameH, _, _) = PortraitCombatMath.TallFormationFrame(plan.TallFormation, slot, bands);
+                    float fit = CellFit(largest, frameW, frameH, refl, bands);
+                    worst = worst <= 0f ? fit : Math.Min(worst, fit);
+                }
+                if (worst > 0f)
+                    trioFormationScale = Math.Clamp(Math.Min(plan.BodyTargetScale, worst),
+                        PortraitCombatMath.MinBodyScale, PortraitCombatMath.MaxBodyScale);
+            }
             // Require space for a phone-sized target per enemy even before the crowded row grows a small hitbox.
             bool shortTrioFits = capacity == 3 && !crowded && row.CellWidth >= PortraitBands.MinTarget &&
-                row.RoomScale >= Math.Max(PortraitCombatMath.PeerScaleFloor, Math.Min(formationScale, heroRoomScale) * 0.85f) &&
+                row.RoomScale >= Math.Max(PortraitCombatMath.PeerScaleFloor, Math.Min(trioFormationScale, heroRoomScale) * 0.85f) &&
                 Array.TrueForAll(bodies, body => body.Height <= body.Width);
             if (shortTrioFits || PortraitCombatMath.PrefersSingleRow(bodies, formationScale, row.RoomScale))
             {
