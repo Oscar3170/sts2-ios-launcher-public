@@ -60,6 +60,7 @@ internal static partial class PortraitSubmenuLayout
         public bool CardSizeSaved;
         public float CardWidth;
         public readonly Dictionary<ulong, Vector2> HolderScales = new();
+        public readonly Dictionary<string, ulong> Controls = new();
     }
 
     private static readonly Dictionary<ulong, CardLibraryState> CardLibraryStates = new();
@@ -91,8 +92,8 @@ internal static partial class PortraitSubmenuLayout
         if (screen.GetNodeOrNull<Control>("Sidebar") is not { } sidebar) return;
         CardLibraryState state = CardLibraryStateFor(screen);
         Control? toggle = EnsureCardLibraryToggle(screen, sidebar, state, capture);
-        Control? poolFilters = CardLibraryControl(screen, "PoolFilters");
-        Control? search = CardLibraryUnique(screen, "SearchBar");
+        Control? poolFilters = CardLibraryUnique(screen, state, "PoolFilters");
+        Control? search = CardLibraryUnique(screen, state, "SearchBar");
         Control? shadow = screen.GetNodeOrNull<Control>("Sidebar/Panel/Shadow");
 
         // Everything the header owns is moved out of the desktop sidebar's containers once. Nothing is freed: the filter
@@ -100,10 +101,10 @@ internal static partial class PortraitSubmenuLayout
         MoveCardLibraryToSidebar(search, sidebar);
         MoveCardLibraryToSidebar(poolFilters, sidebar);
         MoveCardLibraryToSidebar(toggle, sidebar);
-        foreach (string name in CardLibrarySorterNames) MoveCardLibraryToSidebar(CardLibraryUnique(screen, name), sidebar);
+        foreach (string name in CardLibrarySorterNames) MoveCardLibraryToSidebar(CardLibraryUnique(screen, state, name), sidebar);
         foreach (string name in CardLibraryTypeNames.Concat(CardLibraryRarityNames).Concat(CardLibraryCostNames)
                      .Concat(CardLibraryStatNames))
-            MoveCardLibraryToSidebar(CardLibraryUnique(screen, name), sidebar);
+            MoveCardLibraryToSidebar(CardLibraryUnique(screen, state, name), sidebar);
 
         if (screen.GetNodeOrNull<Control>("Sidebar/MarginContainer") is { } margins)
             SetKept(margins, "visible", false);
@@ -134,7 +135,9 @@ internal static partial class PortraitSubmenuLayout
         if (toggle is not null)
         {
             float width = Math.Max(CardLibraryControlHeight, content - poolWidth - CardLibraryGap);
-            Place(toggle, CardLibraryMargin + poolWidth + CardLibraryGap, y, width, CardLibraryControlHeight, capture);
+            float toggleTop = y + Math.Max(0f, (poolHeight - CardLibraryControlHeight) * 0.5f);
+            Place(toggle, CardLibraryMargin + poolWidth + CardLibraryGap, toggleTop, width, CardLibraryControlHeight,
+                capture);
             if (toggle.GetNodeOrNull<TextureRect>("HBoxContainer/Image") is { } arrow)
                 if (arrow.FlipV != state.AdvancedOpen) arrow.FlipV = state.AdvancedOpen;
         }
@@ -142,7 +145,7 @@ internal static partial class PortraitSubmenuLayout
 
         float sortWidth = Math.Max(1f, (content - 3f * CardLibraryGap) / 4f);
         for (int i = 0; i < CardLibrarySorterNames.Length; i++)
-            Place(CardLibraryUnique(screen, CardLibrarySorterNames[i]),
+            Place(CardLibraryUnique(screen, state, CardLibrarySorterNames[i]),
                 CardLibraryMargin + i * (sortWidth + CardLibraryGap), y, sortWidth, CardLibraryControlHeight, capture);
         y += CardLibraryControlHeight + CardLibraryGap;
 
@@ -152,20 +155,20 @@ internal static partial class PortraitSubmenuLayout
         if (state.AdvancedOpen)
         {
             float typeWidth = Math.Max(1f, (content - 3f * CardLibraryGap) / 4f);
-            LayoutCardLibraryRow(screen, CardLibraryTypeNames, CardLibraryMargin, advancedTop, typeWidth, capture);
+            LayoutCardLibraryRow(screen, state, CardLibraryTypeNames, CardLibraryMargin, advancedTop, typeWidth, capture);
             advancedTop += CardLibraryControlHeight + CardLibraryRowGap;
-            LayoutCardLibraryRow(screen, CardLibraryRarityNames, CardLibraryMargin, advancedTop, typeWidth, capture);
+            LayoutCardLibraryRow(screen, state, CardLibraryRarityNames, CardLibraryMargin, advancedTop, typeWidth, capture);
             advancedTop += CardLibraryControlHeight + CardLibraryRowGap;
             float costWidth = Math.Max(1f, (content - 4f * CardLibraryGap) / 5f);
-            LayoutCardLibraryRow(screen, CardLibraryCostNames, CardLibraryMargin, advancedTop, costWidth, capture);
+            LayoutCardLibraryRow(screen, state, CardLibraryCostNames, CardLibraryMargin, advancedTop, costWidth, capture);
             advancedTop += CardLibraryControlHeight + CardLibraryRowGap;
             float statWidth = Math.Max(1f, (content - 2f * CardLibraryGap) / 3f);
-            LayoutCardLibraryRow(screen, CardLibraryStatNames, CardLibraryMargin, advancedTop, statWidth, capture);
+            LayoutCardLibraryRow(screen, state, CardLibraryStatNames, CardLibraryMargin, advancedTop, statWidth, capture);
             y = advancedTop + CardLibraryControlHeight;
         }
         foreach (string name in CardLibraryTypeNames.Concat(CardLibraryRarityNames).Concat(CardLibraryCostNames)
                      .Concat(CardLibraryStatNames))
-            if (CardLibraryUnique(screen, name) is { } control)
+            if (CardLibraryUnique(screen, state, name) is { } control)
                 SetKept(control, "visible", state.AdvancedOpen);
 
         float headerBottom = y + CardLibraryGap;
@@ -182,12 +185,12 @@ internal static partial class PortraitSubmenuLayout
     }
 
     /// <summary>Places one row of advanced filter controls, keeping each at a finger's size.</summary>
-    private static void LayoutCardLibraryRow(Control screen, string[] names, float left, float top, float cellWidth,
-        Action<Control> capture)
+    private static void LayoutCardLibraryRow(Control screen, CardLibraryState state, string[] names, float left, float top,
+        float cellWidth, Action<Control> capture)
     {
         for (int i = 0; i < names.Length; i++)
         {
-            if (CardLibraryUnique(screen, names[i]) is not { } control) continue;
+            if (CardLibraryUnique(screen, state, names[i]) is not { } control) continue;
             SetMin(control, new Vector2(CardLibraryControlHeight, CardLibraryControlHeight), capture);
             Place(control, left + i * (cellWidth + CardLibraryGap), top, cellWidth, CardLibraryControlHeight, capture);
         }
@@ -345,9 +348,19 @@ internal static partial class PortraitSubmenuLayout
             _cardLibraryHoverTweenField ??= FindField(_cardLibraryHolderType, "_hoverTween");
     }
 
-    /// <summary>Finds a unique-named control of the card library, before or after it has been moved out of its container.</summary>
-    private static Control? CardLibraryUnique(Control screen, string name) =>
-        screen.GetNodeOrNull<Control>("%" + name);
+    /// <summary>
+    /// Finds a filter or header control by its game name, once per screen. A nested scene's instance root stops answering its
+    /// unique name after it is moved out of the scene's containers, so the first lookup (before the move) is kept by id.
+    /// </summary>
+    private static Control? CardLibraryUnique(Control screen, CardLibraryState state, string name)
+    {
+        if (state.Controls.TryGetValue(name, out ulong id) && GodotObject.InstanceFromId(id) is Control cached &&
+            GodotObject.IsInstanceValid(cached)) return cached;
+        Control? control = screen.GetNodeOrNull<Control>("%" + name)
+            ?? screen.FindChild(name, recursive: true, owned: false) as Control;
+        if (control != null) state.Controls[name] = control.GetInstanceId();
+        return control;
+    }
 
     /// <summary>Finds a control that has no unique name of its own (the pool grid) by its game name.</summary>
     private static Control? CardLibraryControl(Control screen, string name) =>
