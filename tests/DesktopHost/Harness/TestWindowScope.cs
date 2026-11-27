@@ -75,10 +75,19 @@ internal static class TestWindowScope
         int corrections = 0;
         void Correct()
         {
-            if (root.Size == requested || corrections >= 4) return;
+            if (root.Size == requested) return;
+            // Second half of a nudge: the one-pixel-taller window arrived, so the requested size is now a real change.
+            if (root.Size == requested + new Vector2I(0, 1))
+            {
+                DisplayServer.WindowSetSize(requested);
+                return;
+            }
+            if (corrections >= 4) return;
             corrections++;
             Log.Info($"[TEST] borderless window grew to {root.Size}; restoring the requested {requested}");
-            DisplayServer.WindowSetSize(requested);
+            // The display server may already cache the requested size while the window manager kept the grown one, which
+            // makes a direct request a no-op; ask for one pixel more first and finish on the resulting size change.
+            DisplayServer.WindowSetSize(requested + new Vector2I(0, 1));
         }
         root.SizeChanged += Correct;
         Correct();
@@ -86,8 +95,9 @@ internal static class TestWindowScope
 
     /// <summary>
     /// Waits, before the scenario starts, for the window manager's startup growth to be undone. Without slow-starting mods
-    /// the main menu can be ready before the late title-bar growth arrives, and the size-change corrections above can then
-    /// see a stale size and stop. Re-requests the size a bounded number of times; returns the final root size.
+    /// the main menu can be ready before the late title-bar growth arrives; the window then stays at the grown size while
+    /// the display server's cached size already equals the request, so a plain re-request is a no-op. Each attempt first
+    /// asks for one pixel more, then the requested size. Bounded; returns the final root size.
     /// </summary>
     public static async System.Threading.Tasks.Task<Vector2I> SettleAsync(SceneTree tree)
     {
@@ -98,8 +108,9 @@ internal static class TestWindowScope
             if (frame % 30 == 0)
             {
                 Log.Info($"[TEST] window settle: root={root.Size} display={DisplayServer.WindowGetSize()}; requesting {requested}");
-                DisplayServer.WindowSetSize(requested);
+                DisplayServer.WindowSetSize(requested + new Vector2I(0, 1));
             }
+            else if (frame % 30 == 2) DisplayServer.WindowSetSize(requested);
             await tree.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
         }
         return root.Size;
