@@ -2019,9 +2019,10 @@ internal sealed class PortraitCombatStage
         // frame. A real fight keeps a ground line: its floor art is bottom-anchored below.
         if (IsEndingScene(bgRoot))
         {
-            float cover = Math.Max(SafeAreaCanvas.PortraitWidth / artWidth, canvasHeight / artHeight);
-            float artCenterY = (topLeft.Y + bottomRight.Y) * 0.5f;
-            float eventOriginY = canvasHeight * 0.5f - artCenterY * cover;
+            PortraitCombatMath.PortraitCoverFraming ending = PortraitCombatMath.ComputeCoverFraming(
+                artWidth, artHeight, topLeft.Y, bottomRight.Y, SafeAreaCanvas.PortraitWidth, canvasHeight);
+            float cover = ending.Scale;
+            float eventOriginY = ending.OriginY;
             bgContainer.SetMeta("portrait_floor_horizon", eventOriginY + PortraitCombatMath.GroundArtLocalY * cover);
             bgContainer.SetMeta("portrait_formation_offset", plan.FormationOffset);
             bgContainer.Scale = new Vector2(cover, cover);

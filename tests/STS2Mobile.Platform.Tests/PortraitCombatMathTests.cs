@@ -729,6 +729,32 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
+    public void CoverFramingFillsTheCanvasAndCentresThePicture()
+    {
+        // The Architect's ending picture: the 6144x2880 base art at 0.47 inside a 2881x1350 scene frame centred on the
+        // container origin, so its drawn rectangle is 2887.68 wide, from -675.36 to 678.24.
+        const float artWidth = 2887.68f;
+        const float artHeight = 1353.6f;
+        const float artTop = -675.36f;
+        const float artBottom = 678.24f;
+
+        foreach (float canvasHeight in new[] { 1920f, 2340f })
+        {
+            PortraitCombatMath.PortraitCoverFraming frame = PortraitCombatMath.ComputeCoverFraming(
+                artWidth, artHeight, artTop, artBottom, 1080f, canvasHeight);
+            // The taller canvas is covered by height; the shorter one too (this picture is much wider than 9:16).
+            Assert.Equal(canvasHeight / artHeight, frame.Scale, 0.0005f);
+            Assert.True(artWidth * frame.Scale >= 1080f - 0.01f);
+            float drawnTop = frame.OriginY + artTop * frame.Scale;
+            float drawnBottom = frame.OriginY + artBottom * frame.Scale;
+            // No band is left above or below the picture, and its composition centre stays on the canvas centre.
+            Assert.True(drawnTop <= 0.01f, $"top band {drawnTop}");
+            Assert.True(drawnBottom >= canvasHeight - 0.01f, $"bottom band {drawnBottom}");
+            Assert.Equal(canvasHeight * 0.5f, (drawnTop + drawnBottom) * 0.5f, 0.01f);
+        }
+    }
+
+    [Fact]
     public void EncounterSlotsAreFrozenBeforeTheEggsSpawn()
     {
         // Ovicopter's markers, with only the boss present; the encounter fills the last free slot first (egg5).

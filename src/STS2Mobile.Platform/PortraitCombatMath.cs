@@ -1412,5 +1412,31 @@ public static class PortraitCombatMath
         return new HpTextBlockFit(shieldRight + gap - leftAtScale, scale);
     }
 
+    /// <summary>
+    /// Where a full-canvas picture is drawn: the container scale and the canvas line its local origin sits on.
+    /// </summary>
+    public readonly record struct PortraitCoverFraming(float Scale, float OriginY);
+
+    /// <summary>
+    /// Frames a scene that is a picture rather than a floor (the Architect's ending): the art covers both canvas
+    /// dimensions, and its own centre lands on the canvas centre, so the composition's subject stays in view with no
+    /// empty band above, below or beside it.
+    /// </summary>
+    /// <param name="artWidth">The art's authored width in the background container's space.</param>
+    /// <param name="artHeight">Its authored height.</param>
+    /// <param name="artTopLocal">Its top edge in the container's local space.</param>
+    /// <param name="artBottomLocal">Its bottom edge in the container's local space.</param>
+    /// <param name="canvasWidth">The portrait canvas width.</param>
+    /// <param name="canvasHeight">The portrait canvas height.</param>
+    public static PortraitCoverFraming ComputeCoverFraming(float artWidth, float artHeight, float artTopLocal,
+        float artBottomLocal, float canvasWidth, float canvasHeight)
+    {
+        float width = Math.Max(1f, artWidth);
+        float height = Math.Max(1f, artHeight);
+        float scale = Math.Max(canvasWidth / width, canvasHeight / height);
+        float centerY = (artTopLocal + artBottomLocal) * 0.5f;
+        return new PortraitCoverFraming(scale, canvasHeight * 0.5f - centerY * scale);
+    }
+
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
 }
