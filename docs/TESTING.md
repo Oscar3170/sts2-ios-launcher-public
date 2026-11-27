@@ -40,7 +40,7 @@ The scripts resize the game window, never the display. Review phone-sized copies
 | Variable | Meaning |
 |---|---|
 | `STS2MOBILE_TEST_INSETS=top,side` | Safe-area insets as fractions of the window, returned to `SafeAreaCanvas` by the host's `NativeExports`. Default none. |
-| `STS2MOBILE_TEST_TIMEOUT` | Seconds to wait for `RESULTS.json` (default 240; tours 1200; `stage-encounters` 720; `rest-options` 420). The host finishes a little before it. |
+| `STS2MOBILE_TEST_TIMEOUT` | Seconds to wait for `RESULTS.json` (default 240; tours 1200; `stage-encounters` 720; `rest-options` 420; `stage-fabricator` 420). The host finishes a little before it. |
 | `STS2MOBILE_TEST_OUTPUT` | The run's folder. Default `.work/test-runs/<scenario>-<timestamp>`. |
 | `STS2MOBILE_PROJECT_ROOT` | The checkout results belong to, when the scripts run from a copy. |
 | `STS2MOBILE_TEST_VIA_STEAM=1` | Launch through `steam -applaunch`. Steam starts the game from its own environment, so insets, proofs and `STS2_STAGE_ENCOUNTERS` need the default direct launch. |

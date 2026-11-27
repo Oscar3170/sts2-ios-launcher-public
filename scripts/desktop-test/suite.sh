@@ -25,7 +25,7 @@ scenarios=(
   portrait-leave shop shop-courier weirdshop shop-states blitz rewards rewards-variants screens treasure rest
   rest-options rest-tour deck-view upgrade enchant transform map map-history event event-popup events-tight ancient
   ancient-pael ancient-dialogue ancient-art-tour game-over game-over-win game-over-boss game-over-room
-  game-over-boss-win stage-backdrops stage-encounters tour-overgrowth tour-underdocks tour-hive tour-glory
+  game-over-boss-win stage-backdrops stage-encounters stage-fabricator tour-overgrowth tour-underdocks tour-hive tour-glory
 )
 if (($# > 0)); then scenarios=("$@"); fi
 

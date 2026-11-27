@@ -199,6 +199,9 @@ internal sealed class LauncherHostRunner
                     case "stage-osty":
                         await RunStageEncountersAsync();
                         break;
+                    case "stage-fabricator":
+                        await RunStageFabricatorAsync();
+                        break;
                     case "stage-backdrops":
                         await RunStageBackdropsAsync();
                         break;
@@ -218,7 +221,7 @@ internal sealed class LauncherHostRunner
                                                  "decimillipede, hand-rows, hand-selection, regent-stars, combat-piles, status-scaling, " +
                                                  "shop, shop-courier, weirdshop, shop-states, blitz, header-inventory, header-indicators, potions, orbs, rewards, rewards-variants, screens, treasure, rest, rest-options, rest-tour, " +
                                                  "map, map-history, event, event-popup, events-tight, ancient, ancient-pael, ancient-art-tour, ancient-dialogue, " +
-                                                 "tour-<act>, select-confirm, reward-guard, stage-encounters, stage-backdrops, or set STS2_PORTRAIT_PROOF to a PortraitProof mode.");
+                                                 "tour-<act>, select-confirm, reward-guard, stage-encounters, stage-fabricator, stage-backdrops, or set STS2_PORTRAIT_PROOF to a PortraitProof mode.");
                         break;
                 }
             }
@@ -484,6 +487,17 @@ internal sealed class LauncherHostRunner
     {
         var pointer = new VirtualPointer(_tree, PointerMode.Touch);
         await TestDriver.RunStageScenarioAsync(_options, _report, _screenshots, pointer);
+    }
+
+    /// <summary>
+    /// The Fabricator's own summon acceptance run (<c>stage-fabricator</c>): its reserved bot slots are checked on the drawn
+    /// frame after every enemy-turn summon, then again after a death and re-summon. The scenario lives in
+    /// LauncherFabricatorChecks.cs.
+    /// </summary>
+    private async Task RunStageFabricatorAsync()
+    {
+        var pointer = new VirtualPointer(_tree, PointerMode.Touch);
+        await TestDriver.RunFabricatorScenarioAsync(_options, _report, _screenshots, pointer);
     }
 
     /// <summary>
