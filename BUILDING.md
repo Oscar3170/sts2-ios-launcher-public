@@ -88,6 +88,7 @@ For game UI changes, see [AGENTS.md](AGENTS.md) for when to use a Cecil hook, ho
 - `tools/python/bin/python3 tools/mono/analyze_session.py <log>` reads a play session from the game's log (`Documents/full-game-startup.log` in the app's container), from its `[stats]` samples (older logs tag them `[proof]`): frame rate, memory, heat and battery.
 - `tools/python/bin/python3 tools/scan_no_game_files.py analysis/full-game-mono/FullGame.ipa`: the scan for game files. The build already runs it.
 - `git status --porcelain -uall` must never show a game file (`.dll`, `.pck`, extracted resources) as untracked or staged. They belong only in the gitignored folders.
+- `scripts/desktop-test/`: the desktop test host, which runs the in-game portrait code inside the installed desktop game on Linux (and, untested yet, macOS) with scripted fixtures and real pointer input. See [docs/TESTING.md](docs/TESTING.md). It needs an installed game, so it is not part of `scripts/test.sh` or the IPA build.
 
 Manual branch runs of [Build IPA](.github/workflows/build-ipa.yml) cache the installed .NET/iOS and Godot tools and the locked NuGet packages. The tool cache is keyed by platform, Xcode build, and pinned provisioning inputs. Tagged releases provision from scratch. Every run still executes tests and produces and scans a fresh IPA; neither game files nor compiled app outputs belong in the cache.
 
@@ -122,7 +123,7 @@ One switch is for `scripts/test.sh`, not the app: `STS2_TEST_MOD_ZIP=<path to a 
 - `src/STS2Mobile.FullGame/staged`, `addons`, and `icon.png`: prepared host inputs, none from the game.
 - `.local/signing.json`: bundle identifier and development team captured from the generated Xcode project before regeneration.
 - `.local/device.json`: the signing team, bundle id and iPhone for the signed build and the install.
-- `.work`: local logs.
+- `.work`: local logs, desktop test results (`.work/test-runs`) and build stamps.
 
 These paths are not publication files. Do not share generated game packs or compiled assemblies as part of the source repository.
 

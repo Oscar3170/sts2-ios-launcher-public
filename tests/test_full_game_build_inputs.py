@@ -32,6 +32,12 @@ class FullGameBuildInputTests(unittest.TestCase):
         (self.root / "tools/setup_ios.py").write_text("shared")
         self.assertEqual(list(inputs.snapshot(self.root)), ["tools/setup_ios.py"])
 
+    def test_snapshot_leaves_out_the_desktop_test_scripts(self):
+        (self.root / "scripts/desktop-test").mkdir(parents=True)
+        (self.root / "scripts/desktop-test/run.sh").write_text("desktop only")
+        (self.root / "scripts/build-mono.sh").write_text("shared")
+        self.assertEqual(list(inputs.snapshot(self.root)), ["scripts/build-mono.sh"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -58,8 +58,10 @@ def snapshot(root: Path = ROOT) -> dict[str, str]:
             if (
                 path.is_file()
                 and path.suffix in SOURCE_SUFFIXES
-                # tools/mono only feeds the Mono build, which guards its own steps by hash.
-                and not (IGNORED_DIRECTORIES | {"ios-dotnet", "python", "__pycache__", "mono"}) & set(relative.parts)
+                # tools/mono only feeds the Mono build, which guards its own steps by hash; scripts/desktop-test is the
+                # desktop test host's, which never reaches the app.
+                and not (IGNORED_DIRECTORIES | {"ios-dotnet", "python", "__pycache__", "mono", "desktop-test"})
+                & set(relative.parts)
             ):
                 files[str(relative)] = sha256_file(path)
     # The built-in mods setup fetched, which the patcher embeds and the host compiles against.
