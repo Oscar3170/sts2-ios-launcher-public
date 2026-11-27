@@ -40,7 +40,10 @@ internal sealed class PortraitRunHeader(Action queueApply)
     private const float PotionRowGap = 8f;
     private const float PotionHolderSeparation = 4f;
     private const float RelicSideMargin = 20f;
-    private const float RelicClipTopGap = 14f;
+    // The relic clip starts right at the stone's bottom (the holders' own padding keeps the art off its torn edge) and leaves
+    // the band's last 14 units empty, so it is still two lines of relics tall and a third line never peeks in. The band's
+    // bottom (and so the stage under it) does not depend on this.
+    private const float RelicClipBottomGap = 14f;
     private const float RelicFadeSeconds = 0.25f;
     private const float MapDeckSeparation = 8f;
     private const float TopBarButtonWidth = PortraitBands.MinTarget;
@@ -972,7 +975,7 @@ internal sealed class PortraitRunHeader(Action queueApply)
         // The clip is fixed inside the band the stage was tuned around: relics wrap into lines and scroll; neither the count
         // nor a scroll ever moves the stage, the backgrounds or the control rail.
         HeaderBox clip = PortraitHeaderMath.RelicClip(canvas.X, capHeight, PortraitBands.TopBarHeight,
-            PortraitBands.RelicBandHeight, RelicSideMargin, RelicClipTopGap);
+            PortraitBands.RelicBandHeight - RelicClipBottomGap, RelicSideMargin, 0f);
         state.Clip.AnchorLeft = 0f;
         state.Clip.AnchorTop = 0f;
         state.Clip.AnchorRight = 0f;

@@ -35,7 +35,7 @@ internal static class PortraitBands
     /// <summary>Everything the top bar covers below the safe cap. Screens that hide the relic strip start here.</summary>
     public const float TopBarHeight = TopBarRowHeight + PotionRowHeight;
 
-    /// <summary>The gap above the relic strip plus its two rows of 96 unit relics (186 with 78 unit relics).</summary>
+    /// <summary>The relic strip right under the stone: two rows of 96 unit relics (186 with 78 unit relics) and the space below.</summary>
     public const float RelicBandHeight = 222f;
 
     /// <summary>Below the safe cap, where a screen that keeps the relic strip in view starts (the fight's stage).</summary>
