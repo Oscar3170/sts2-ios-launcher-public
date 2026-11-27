@@ -465,6 +465,91 @@ internal sealed class PortraitCombatRail
         }
     }
 
+    /// <summary>
+    /// The desktop state of a choice screen's own pile, captured before the rail places it: the game gives every
+    /// NCombatPilesContainer its own copy of the three piles for Peek mode, and those copies are not the fight's own.
+    /// </summary>
+    internal readonly record struct ChoicePileDesktop(Vector2 Pivot, Vector2 Scale, Vector2 Position, Vector2 Show, Vector2 Hide);
+
+    /// <summary>Reads a choice screen's pile before <see cref="PlaceChoicePile"/> touches it, for the landscape restore.</summary>
+    internal static ChoicePileDesktop CaptureChoicePile(Control pile)
+    {
+        PileFields fields = FieldsOf(pile);
+        return new ChoicePileDesktop(
+            pile.PivotOffset,
+            pile.Scale,
+            pile.Position,
+            fields.Show?.GetValue(pile) is Vector2 show ? show : pile.Position,
+            fields.Hide?.GetValue(pile) is Vector2 hide ? hide : pile.Position);
+    }
+
+    /// <summary>
+    /// Places one of a choice screen's own piles on the portrait rail: the same 80-unit art at the fight's pile scale,
+    /// its show and hide targets both on the portrait place so Peek can show it without a desktop corner slide, and a
+    /// touch area of 44 points around the drawn 42.9 points. The screen's pile is only visible while the player peeks,
+    /// so it must already stand on the rail from its first drawn frame.
+    /// </summary>
+    internal static void PlaceChoicePile(Control pile, Vector2 showPos, Vector2 hidePos, float scale)
+    {
+        pile.PivotOffset = new Vector2(40f, 40f);
+        pile.Scale = new Vector2(scale, scale);
+        float grow = 80f * scale < PortraitBands.MinTarget
+            ? (PortraitBands.MinTarget - 80f * scale) * 0.5f + 2f
+            : 0f;
+        if (grow > 0f) PhoneHitArea.Grow(pile, grow, grow, grow, grow);
+
+        PileFields fields = FieldsOf(pile);
+        fields.Show?.SetValue(pile, showPos);
+        fields.Hide?.SetValue(pile, hidePos);
+        if (fields.Tween?.GetValue(pile) is Tween tween)
+        {
+            if (tween.IsRunning()) tween.Kill();
+            fields.Tween.SetValue(pile, null);
+        }
+        pile.Position = showPos;
+    }
+
+    /// <summary>Puts a choice screen's pile back exactly as its scene had it when Portrait Mode is turned off.</summary>
+    internal static void RestoreChoicePile(Control pile, ChoicePileDesktop desktop)
+    {
+        PhoneHitArea.Remove(pile);
+        pile.PivotOffset = desktop.Pivot;
+        pile.Scale = desktop.Scale;
+        pile.Position = desktop.Position;
+        PileFields fields = FieldsOf(pile);
+        fields.Show?.SetValue(pile, desktop.Show);
+        fields.Hide?.SetValue(pile, desktop.Hide);
+        if (fields.Tween?.GetValue(pile) is Tween tween)
+        {
+            if (tween.IsRunning()) tween.Kill();
+            fields.Tween.SetValue(pile, null);
+        }
+    }
+
+    private readonly record struct PileFields(FieldInfo? Show, FieldInfo? Hide, FieldInfo? Tween);
+
+    private static readonly Dictionary<Type, PileFields> PileFieldCache = new();
+
+    /// <summary>The base NCombatCardPile's private show/hide/tween fields, by name, cached per runtime type.</summary>
+    private static PileFields FieldsOf(Control pile)
+    {
+        Type type = pile.GetType();
+        if (PileFieldCache.TryGetValue(type, out PileFields cached)) return cached;
+        FieldInfo? Find(string name)
+        {
+            for (Type? t = type; t != null; t = t.BaseType)
+            {
+                FieldInfo? field = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
+                                                      BindingFlags.DeclaredOnly);
+                if (field != null) return field;
+            }
+            return null;
+        }
+        var fields = new PileFields(Find("_showPosition"), Find("_hidePosition"), Find("_positionTween"));
+        PileFieldCache[type] = fields;
+        return fields;
+    }
+
     private static void LayoutPileButton(Control pile, CombatReflection refl, Vector2 showPos, Vector2 hidePos, float scale)
     {
         pile.PivotOffset = new Vector2(40f, 40f);

@@ -171,10 +171,22 @@ internal sealed class PortraitOverlayLayout
     private readonly HashSet<ulong> _ftues = new();
     private readonly HashSet<ulong> _previewRows = new();
     private readonly HashSet<ulong> _peekButtons = new();
+    private readonly HashSet<ulong> _inspectScreens = new();
+    private readonly Dictionary<ulong, InspectUpgradeState> _inspectUpgrades = new();
+    private readonly HashSet<ulong> _inspectArranged = new();
+    private readonly Dictionary<ulong, ulong> _choicePiles = new();
+    private readonly Dictionary<ulong, PortraitCombatRail.ChoicePileDesktop> _choicePileStates = new();
+    private bool _inspectFrameBound;
+    private bool _handPeekFrameBound;
     private const string PeekButtonTypeName = "MegaCrit.Sts2.Core.Nodes.Combat.NPeekButton";
+    private const string HandNodeTypeName = "MegaCrit.Sts2.Core.Nodes.Combat.NPlayerHand";
     private const string CardSelectionNamespace = "MegaCrit.Sts2.Core.Nodes.Screens.CardSelection";
     private const float PeekSideMargin = 32f;
     private const float PeekBottomMargin = 150f;
+    // The hand's own peek (the eye in a selection) stays just above the rail instead of on the draw pile; both numbers
+    // put its 128-unit (44 point) picture clear of every rail control and the hand.
+    private const float HandPeekTopGap = 12f;
+    private const float HandPeekSideMargin = 20f;
 
     /// <summary>Called for every node the tree adds: tutorial popups and card preview rows are followed from then on.</summary>
     public void Track(Node node)
@@ -185,12 +197,20 @@ internal sealed class PortraitOverlayLayout
             _ftues.Add(control.GetInstanceId());
         else if (type.FullName == PeekButtonTypeName)
             _peekButtons.Add(control.GetInstanceId());
+        else if (type.FullName == InspectCardScreenTypeName)
+            RememberInspectScreen(control);
         else if (control.Name == "Cards" && control.GetParent() is Control parent &&
                  parent.Name.ToString().Contains("PreviewContainer", StringComparison.Ordinal) &&
                  !PortraitSelectionPreview.Owns(control))
             _previewRows.Add(control.GetInstanceId());
         else
+        {
             TrackChoice(control, type.FullName);
+            // A card choice screen in a fight carries its own copy of the draw, discard and exhaust piles for Peek mode.
+            // They are laid out like the fight's own piles so peeking never shows them at their desktop corners.
+            if (control.GetNodeOrNull<Control>("%CombatPiles") is { } combatPiles)
+                _choicePiles[control.GetInstanceId()] = combatPiles.GetInstanceId();
+        }
     }
 
     private static bool IsFtueRoot(Type type)
@@ -210,26 +230,54 @@ internal sealed class PortraitOverlayLayout
         foreach (ulong id in _previewRows)
             if (GodotObject.InstanceFromId(id) is Control row && GodotObject.IsInstanceValid(row) && row.IsVisibleInTree())
                 FitPreviewRow(row, canvas);
+        bool handPeekVisible = false;
         foreach (ulong id in _peekButtons)
-            if (GodotObject.InstanceFromId(id) is Control peek && GodotObject.IsInstanceValid(peek) && peek.IsInsideTree())
-                PlacePeekButton(peek);
+        {
+            if (GodotObject.InstanceFromId(id) is not Control peek || !GodotObject.IsInstanceValid(peek) ||
+                !peek.IsInsideTree())
+                continue;
+            PlacePeekButton(peek);
+            if (peek.Visible && peek.GetParent()?.GetType().FullName == HandNodeTypeName) handPeekVisible = true;
+        }
+        // The hand pass re-places its peek in FramePreDraw (after this process pass), so the hand's eye is put back above
+        // the rail from our own pre-draw handler, connected later and therefore after the hand's.
+        if (handPeekVisible) BindHandPeekFrame();
+        else UnbindHandPeekFrame();
         UpdateChoices(canvas);
+        if (_inspectScreens.Count > 0)
+        {
+            bool anyVisible = false;
+            foreach (ulong id in _inspectScreens)
+            {
+                if (Live(id) is not { } screen || !screen.IsVisibleInTree()) continue;
+                anyVisible = true;
+                LayoutInspectUpgrade(screen, canvas);
+            }
+            // The tip pass is only worth its per-frame callback while an inspector is on screen; when the reused screen is
+            // closed it stays in the tree, so visibility, not the tracked set, decides.
+            if (anyVisible) BindInspectFrame();
+            else UnbindInspectFrame();
+        }
         _gameOver.OnProcessFrame();
     }
 
     /// <summary>
     /// Every card choice screen shown in a fight has a peek button (to look at the fight behind it) at the left middle, which in
     /// portrait sits on the first card: a touch there hit the button and the card did not pick. In portrait it moves to
-    /// the bottom left corner, under the cards' row and beside the screen's own prompt. The hand's select mode keeps its own,
-    /// which is over the player, not over cards.
+    /// the bottom left corner, under the cards' row and beside the screen's own prompt, clear of the rail's piles. The
+    /// hand's own peek in a selection moves just above the rail's left end, off the draw pile it used to cover.
     /// </summary>
     private void PlacePeekButton(Control peek)
     {
+        if (peek.GetParent()?.GetType().FullName == HandNodeTypeName)
+        {
+            PlaceHandPeek(peek);
+            return;
+        }
         if (peek.GetParent()?.GetType().Namespace != CardSelectionNamespace) return;
-        // The choose a card screen places its peek with Skip in one footer row (PlaceCombatPeek).
-        if (peek.GetParent()?.GetType().FullName == ChooseCardTypeName) return;
         // The bundle choice places it in its own footer beside Cancel and Confirm.
         if (peek.GetParent()?.GetType().FullName == ChooseBundleTypeName) return;
+        // The hand's select mode has its own rule above; no snapshot is taken here, so its native restore is the hand's.
         Capture(peek);
         float size = peek.OffsetRight - peek.OffsetLeft;
         if (size < 1f) size = 128f;
@@ -241,6 +289,67 @@ internal sealed class PortraitOverlayLayout
         peek.OffsetBottom = -PeekBottomMargin;
         peek.OffsetTop = -PeekBottomMargin - size;
         if (_logged.Add(peek.GetInstanceId())) GD.Print($"Portrait overlay: peek button of {peek.GetParent()!.GetType().Name} moved to the bottom left.");
+    }
+
+    /// <summary>
+    /// The hand's select-mode eye used to sit at the rail's left end, on top of the fight's draw pile. It moves just above
+    /// the rail instead, still a 44-point picture in the stage's lower band, clear of the piles, End Turn, the energy orb
+    /// and the hand. The hand layout keeps its own capture/restore: this pass only moves it while it is visible.
+    /// </summary>
+    private void BindHandPeekFrame()
+    {
+        if (_handPeekFrameBound) return;
+        _handPeekFrameBound = true;
+        RenderingServer.FramePreDraw += PlaceHandPeeksFrame;
+    }
+
+    private void UnbindHandPeekFrame()
+    {
+        if (!_handPeekFrameBound) return;
+        _handPeekFrameBound = false;
+        RenderingServer.FramePreDraw -= PlaceHandPeeksFrame;
+    }
+
+    private void PlaceHandPeeksFrame()
+    {
+        if (!SafeAreaCanvas.IsPortrait) return;
+        foreach (ulong id in _peekButtons)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control peek || !GodotObject.IsInstanceValid(peek) ||
+                !peek.IsInsideTree() || !peek.Visible)
+                continue;
+            if (peek.GetParent()?.GetType().FullName == HandNodeTypeName) PlaceHandPeek(peek);
+        }
+    }
+
+    private void PlaceHandPeek(Control peek)
+    {
+        if (!peek.Visible) return;
+        Vector2 canvas = CanvasOf(peek);
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvas.Y, 0f);
+        float size = Math.Max(PortraitBands.MinTarget, Math.Max(peek.Size.X, peek.Size.Y));
+        float left = HandPeekSideMargin;
+        float top = bands.RailTopY - HandPeekTopGap - size;
+        Vector2 parentScale = peek.GetParent() is Control parent
+            ? parent.GetGlobalTransformWithCanvas().Scale.Abs()
+            : Vector2.One;
+        Vector2 localSize = new(size / Math.Max(parentScale.X, 0.01f), size / Math.Max(parentScale.Y, 0.01f));
+        Vector2 local = peek.GetParent() is Control owner
+            ? owner.GetGlobalTransformWithCanvas().AffineInverse() * new Vector2(left, top)
+            : new Vector2(left, top);
+        if (peek.AnchorLeft != 0f || peek.AnchorTop != 0f || peek.AnchorRight != 0f || peek.AnchorBottom != 0f)
+        {
+            peek.AnchorLeft = 0f;
+            peek.AnchorTop = 0f;
+            peek.AnchorRight = 0f;
+            peek.AnchorBottom = 0f;
+        }
+        if (peek.PivotOffset != Vector2.Zero) peek.PivotOffset = Vector2.Zero;
+        if (peek.Scale != Vector2.One) peek.Scale = Vector2.One;
+        if (peek.Size.DistanceSquaredTo(localSize) > 0.25f) peek.Size = localSize;
+        if (peek.Position.DistanceSquaredTo(local) > 0.25f) peek.Position = local;
+        if (_logged.Add(peek.GetInstanceId()))
+            GD.Print($"Portrait overlay: the hand's peek button moved above the rail at {left:F0},{top:F0}.");
     }
 
     private void KeepFtueOnScreen(Control ftue, Vector2 canvas)
@@ -493,6 +602,7 @@ internal sealed class PortraitOverlayLayout
                 if (Live(id) is { } tickbox) GrowInspectTickbox(tickbox);
             foreach (ulong id in _gridConfirms)
                 if (Live(id) is { } confirm) GrowGridConfirm(confirm);
+            LayoutChoicePiles(canvas);
         }
         catch (Exception error)
         {
@@ -746,9 +856,8 @@ internal sealed class PortraitOverlayLayout
                 new Vector2(footerRight - skipSize.X / 2f - centre.X, footerTop + skipSize.Y / 2f - centre.Y),
                 canvas);
         }
-        if (peekShown && screen.GetNodeOrNull<Control>("%PeekButton") is { } peek)
-            PlaceCombatPeek(peek, PeekLeft, footerTop, peekScale);
-
+        // The choose screen's PeekButton is placed by PlacePeekButton in the clear bottom-left corner, not this footer:
+        // at the footer's left it covered the fight's own draw pile whenever the player peeked.
         if (holders.Count == 0) return;
         // A card keeps its slot: the game moves a hovered card to the end of the row, so the row's order is not the cards'.
         if (!_cardOrders.TryGetValue(screenId, out List<ulong>? order)) _cardOrders[screenId] = order = new List<ulong>();
@@ -1239,13 +1348,14 @@ internal sealed class PortraitOverlayLayout
     // ---- The inspect screen's upgrade tickbox and the card grids' confirm button ----------------------------------------
 
     /// <summary>
-    /// The card inspect screen's upgrade tickbox is 22 points tall. It is a row (box, text) that centres its content, so in
-    /// portrait the row is made 44 points tall and the picture stays as it is; it starts a little higher so it clears the card.
+    /// The inspect screen's upgrade tickbox is 22 points tall. This is the deck/grid rule: the row is made 44 points tall
+    /// (the picture stays as it is) and the scene's own centred offset is raised ten units, so it sits just under the card.
+    /// <see cref="LayoutInspectUpgrade"/> applies the same rule to every inspector, including the in-hand hold, and wins
+    /// over this pass on the drawn frame.
     /// </summary>
     private void GrowInspectTickbox(Control tickbox)
     {
-        // The combat hold-inspect owns this box in portrait: it places it clear of the card and hand (scaled down and
-        // beside the card), so the deck screens' 44-point growth must not move it back under the card.
+        // The combat hold-inspect marks its box; the shared inspect layout places it on the same rule, so skip the duplicate.
         if (tickbox.HasMeta(PhoneTouchCards.CombatInspectMeta)) return;
         PortraitControlSnapshot snap = CaptureChoice(tickbox);
         float parentScale = tickbox.GetParent() is Control parent ? Math.Max(parent.GetGlobalTransformWithCanvas().Scale.Y, 0.01f) : 1f;
@@ -1279,10 +1389,396 @@ internal sealed class PortraitOverlayLayout
         if (_logged.Add(id)) GD.Print($"Portrait overlay: confirm button of {confirm.GetParent()?.GetType().Name} takes touches {pad:F0} above and below it.");
     }
 
+
+    // ---- A choice screen's own combat piles (Peek) ------------------------------------------------------------------
+
+    /// <summary>
+    /// The choose-a-card, simple-select and combat-pile grids carry a private copy of the fight's three piles, shown only
+    /// while the player peeks. Native leaves them at the desktop corners, so in portrait the player saw the draw, discard
+    /// and exhaust piles jump back to their old places and the eye button cover the moved draw pile. Every copy is put on
+    /// the same portrait rail as the fight's own piles, before its first visible frame; the eye buttons then sit clear of
+    /// them (PlacePeekButton/PlaceHandPeek above).
+    /// </summary>
+    private void LayoutChoicePiles(Vector2 canvas)
+    {
+        if (_choicePiles.Count == 0) return;
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvas.Y, 0f);
+        PortraitHudLayout hud = PortraitCombatMath.ComputeHudLayout(canvas.Y, bands);
+        foreach ((ulong screenId, ulong pilesId) in _choicePiles)
+        {
+            if (GodotObject.InstanceFromId(screenId) is not Control screen || !GodotObject.IsInstanceValid(screen) ||
+                !screen.IsInsideTree())
+                continue;
+            if (GodotObject.InstanceFromId(pilesId) is not Control piles || !GodotObject.IsInstanceValid(piles) ||
+                !piles.IsInsideTree())
+                continue;
+            Place(piles, "%DrawPile", "DrawPile", new Vector2(hud.DrawShowX, hud.DrawShowY),
+                new Vector2(hud.DrawHideX, hud.DrawHideY));
+            Place(piles, "%DiscardPile", "DiscardPile", new Vector2(hud.DiscardShowX, hud.DiscardShowY),
+                new Vector2(hud.DiscardHideX, hud.DiscardHideY));
+            Place(piles, "%ExhaustPile", "ExhaustPile", new Vector2(hud.ExhaustShowX, hud.ExhaustShowY),
+                new Vector2(hud.ExhaustHideX, hud.ExhaustShowY));
+
+            void Place(Control container, string unique, string name, Vector2 show, Vector2 hide)
+            {
+                if ((container.GetNodeOrNull<Control>(unique) ?? container.GetNodeOrNull<Control>(name)) is not { } pile ||
+                    !GodotObject.IsInstanceValid(pile))
+                    return;
+                ulong id = pile.GetInstanceId();
+                if (!_choicePileStates.ContainsKey(id))
+                    _choicePileStates[id] = PortraitCombatRail.CaptureChoicePile(pile);
+                PortraitCombatRail.PlaceChoicePile(pile, show, hide, hud.PileScale);
+                if (_logged.Add(id))
+                    GD.Print($"Portrait overlay: {screen.GetType().Name}'s {name} on the portrait rail at {show}.");
+            }
+        }
+    }
+
+    private void RestoreChoicePiles()
+    {
+        foreach ((ulong id, PortraitCombatRail.ChoicePileDesktop desktop) in _choicePileStates)
+        {
+            if (GodotObject.InstanceFromId(id) is Control pile && GodotObject.IsInstanceValid(pile))
+                PortraitCombatRail.RestoreChoicePile(pile, desktop);
+        }
+        _choicePileStates.Clear();
+    }
+
+    // ---- The card inspect screen: tips, previews and the View Upgrades box ------------------------------------------
+
+    private const string TipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
+    private static Type? _tipSetType;
+    private static FieldInfo? _tipOwnerField, _tipTextField, _tipCardsField;
+    private static PropertyInfo? _gameInstanceProperty, _hoverTipsContainerProperty;
+    private static bool _tipReflectionResolved, _tipReflectionOk;
+
+    /// <summary>
+    /// Tracks a card inspect screen and captures its native View Upgrades box before the game or the combat hold touches
+    /// it. The screen is reused for every inspection, so this is the one moment the scene's own offsets are known.
+    /// </summary>
+    private void RememberInspectScreen(Control screen)
+    {
+        ulong id = screen.GetInstanceId();
+        if (!_inspectScreens.Add(id)) return;
+        if (screen.GetNodeOrNull<Control>("%Upgrade") is { } upgrade)
+            _inspectUpgrades[id] = InspectUpgradeState.Capture(upgrade);
+        if (_logged.Add(id)) GD.Print($"Portrait overlay: inspect card screen tracked ({screen.GetType().Name}).");
+    }
+
+    /// <summary>
+    /// The inspect screen's own composition in portrait: the card keeps its centre and size, keyword tips are packed into
+    /// rows above it (or below when above cannot hold them at a readable scale), card previews stack in the free column
+    /// beside it, and the View Upgrades box is centred under the card exactly as on the deck and card-grid inspectors.
+    /// Every block is kept clear of the card; this runs after the game's own tip pass and before the frame is drawn, so
+    /// neither the game nor PhoneHoverTips can put a tip or preview back over the card.
+    /// </summary>
+    private void LayoutInspectTips(Control screen)
+    {
+        if (!TryInspectCardRect(screen, out InspectCardMath.Rect card)) return;
+        if (!TryFindTipColumns(screen, out Control? text, out Control? cards)) return;
+        if (!TryCollectTipSizes(text, out List<InspectCardMath.Size> textSizes)) return;
+        if (!TryCollectTipSizes(cards, out List<InspectCardMath.Size> cardSizes)) return;
+        if (textSizes.Count == 0 && cardSizes.Count == 0) return;
+
+        _inspectUpgrades.TryGetValue(screen.GetInstanceId(), out InspectUpgradeState? state);
+        Control? upgrade = state != null && GodotObject.InstanceFromId(state.Id) is Control liveUpgrade &&
+                           GodotObject.IsInstanceValid(liveUpgrade) && liveUpgrade.IsVisibleInTree()
+            ? liveUpgrade
+            : null;
+        Vector2 canvas = screen.GetViewport()?.GetVisibleRect().Size ?? CanvasOf(screen);
+        InspectCardMath.Rect upgradeRect = default;
+        if (upgrade != null)
+        {
+            Rect2 drawn = upgrade.GetGlobalRect();
+            if (drawn.Size.X >= 1f && drawn.Size.Y >= 1f)
+                upgradeRect = new InspectCardMath.Rect(drawn.Position.X, drawn.Position.Y, drawn.Size.X, drawn.Size.Y);
+        }
+        InspectCardMath.Layout layout = InspectCardMath.Compute(new InspectCardMath.Request(
+            CanvasWidth: canvas.X,
+            CanvasHeight: canvas.Y,
+            CardCentreX: (card.X + card.Width * 0.5f),
+            CardCentreY: (card.Y + card.Height * 0.5f),
+            CardScale: card.Width / InspectCardMath.CardWidth,
+            TextTips: textSizes,
+            CardPreviews: cardSizes,
+            Upgrade: upgradeRect,
+            PreferredScale: 1.4f,
+            MinScale: PhoneHoverTips.MinFitScale,
+            LeftArrow: ArrowRect(screen, "LeftArrow"),
+            RightArrow: ArrowRect(screen, "RightArrow")));
+
+        ApplyTipBlock(text, layout.Text);
+        ApplyTipBlock(cards, layout.Cards);
+        _inspectArranged.Add(screen.GetInstanceId());
+        if (_logged.Add(screen.GetInstanceId()))
+            GD.Print($"Portrait overlay: inspect card tips {Describe(layout.Text)} previews {Describe(layout.Cards)} " +
+                     $"card={card.X:F0},{card.Y:F0} {card.Width:F0}x{card.Height:F0}.");
+
+        static string Describe(InspectCardMath.Block? block) => block is { } b
+            ? $"{b.Rect.X:F0},{b.Rect.Y:F0} {b.Rect.Width:F0}x{b.Rect.Height:F0}@{b.Scale:F2}"
+            : "none";
+    }
+
+    /// <summary>
+    /// The inspect screen's View Upgrades box: exactly the deck/grid inspector's row. That layout makes it 44 points tall
+    /// and raises the scene's own centred offset by ten units (<see cref="GrowInspectTickbox"/>); the same native offset,
+    /// centred on the screen and with the same 44-point height, is applied here to the in-hand hold as well.
+    /// </summary>
+    private void LayoutInspectUpgrade(Control screen, Vector2 canvas)
+    {
+        ulong screenId = screen.GetInstanceId();
+        if (!_inspectUpgrades.TryGetValue(screenId, out InspectUpgradeState? state))
+        {
+            if (screen.GetNodeOrNull<Control>("%Upgrade") is not { } found) return;
+            _inspectUpgrades[screenId] = state = InspectUpgradeState.Capture(found);
+        }
+        if (GodotObject.InstanceFromId(state.Id) is not Control upgrade || !GodotObject.IsInstanceValid(upgrade) ||
+            !upgrade.IsInsideTree())
+            return;
+
+        Vector2 screenScale = screen.GetGlobalTransformWithCanvas().Scale.Abs();
+        float width = state.Width;
+        float localHeight = Math.Max(state.Height, PortraitBands.MinTarget / Math.Max(screenScale.Y, 0.01f));
+        var localSize = new Vector2(width, localHeight);
+        var local = new Vector2(
+            screen.Size.X * 0.5f - width * 0.5f,
+            screen.Size.Y * 0.5f + state.OffsetTop - InspectTickboxRaise);
+
+        if (upgrade.AnchorLeft != 0f || upgrade.AnchorTop != 0f || upgrade.AnchorRight != 0f || upgrade.AnchorBottom != 0f)
+        {
+            upgrade.AnchorLeft = 0f;
+            upgrade.AnchorTop = 0f;
+            upgrade.AnchorRight = 0f;
+            upgrade.AnchorBottom = 0f;
+        }
+        if (upgrade.PivotOffset != Vector2.Zero) upgrade.PivotOffset = Vector2.Zero;
+        if (upgrade.Scale != Vector2.One) upgrade.Scale = Vector2.One;
+        if (upgrade.CustomMinimumSize != localSize) upgrade.CustomMinimumSize = localSize;
+        if (upgrade.Size.DistanceSquaredTo(localSize) > 0.25f) upgrade.Size = localSize;
+        if (upgrade.Position.DistanceSquaredTo(local) > 0.25f) upgrade.Position = local;
+    }
+
+
+    private void BindInspectFrame()
+    {
+        if (_inspectFrameBound) return;
+        _inspectFrameBound = true;
+        RenderingServer.FramePreDraw += LayoutInspectFrame;
+    }
+
+    private void UnbindInspectFrame()
+    {
+        if (!_inspectFrameBound) return;
+        _inspectFrameBound = false;
+        RenderingServer.FramePreDraw -= LayoutInspectFrame;
+    }
+
+    /// <summary>
+    /// The tip placement pass. It runs from FramePreDraw so it is after the game's own tip process and after
+    /// PhoneHoverTips' fit; that pass subscribed on its first frame, long before any inspect screen exists.
+    /// </summary>
+    private void LayoutInspectFrame()
+    {
+        if (!SafeAreaCanvas.IsPortrait || _inspectScreens.Count == 0) return;
+        using (PortraitFrameTiming.Begin(PortraitFrameTiming.Hover))
+        {
+            try
+            {
+                foreach (ulong id in _inspectScreens)
+                    if (Live(id) is { } screen && screen.IsVisibleInTree()) LayoutInspectTips(screen);
+            }
+            catch (Exception error)
+            {
+                if (++_inspectErrors <= 3)
+                    GD.PrintErr("Portrait overlay: an inspect screen's tips were left as the game placed them: ", error);
+                if (_inspectErrors >= 30) UnbindInspectFrame();
+            }
+        }
+    }
+
+    private int _inspectErrors;
+
+    private static bool EnsureTipReflection()
+    {
+        if (_tipReflectionResolved) return _tipReflectionOk;
+        _tipReflectionResolved = true;
+        const BindingFlags inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        const BindingFlags stat = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+        _tipSetType = typeof(NGame).Assembly.GetType(TipSetTypeName);
+        _tipOwnerField = _tipSetType?.GetField("_owner", inst);
+        _tipTextField = _tipSetType?.GetField("_textHoverTipContainer", inst);
+        _tipCardsField = _tipSetType?.GetField("_cardHoverTipContainer", inst);
+        _gameInstanceProperty = typeof(NGame).GetProperty("Instance", stat);
+        _hoverTipsContainerProperty = typeof(NGame).GetProperty("HoverTipsContainer", inst);
+        _tipReflectionOk = _tipSetType != null && _tipOwnerField != null && _tipTextField != null &&
+                           _tipCardsField != null && _gameInstanceProperty != null && _hoverTipsContainerProperty != null;
+        if (!_tipReflectionOk)
+            GD.PrintErr("Portrait overlay: the game's tip set no longer has the expected members; inspect tips stay as placed.");
+        return _tipReflectionOk;
+    }
+
+    private static bool TryFindTipColumns(Control screen, out Control? text, out Control? cards)
+    {
+        text = null;
+        cards = null;
+        if (!EnsureTipReflection()) return false;
+        if (_gameInstanceProperty!.GetValue(null) is not Node game || !GodotObject.IsInstanceValid(game)) return false;
+        if (_hoverTipsContainerProperty!.GetValue(game) is not Node container || !GodotObject.IsInstanceValid(container))
+            return false;
+        foreach (Node child in container.GetChildren())
+        {
+            if (child is not Control set || child.GetType().FullName != TipSetTypeName || !set.Visible ||
+                set.IsQueuedForDeletion())
+                continue;
+            if (!ReferenceEquals(_tipOwnerField!.GetValue(set), screen)) continue;
+            text = _tipTextField!.GetValue(set) as Control;
+            cards = _tipCardsField!.GetValue(set) as Control;
+            return text != null || cards != null;
+        }
+        return false;
+    }
+
+    private static bool TryCollectTipSizes(Control? column, out List<InspectCardMath.Size> sizes)
+    {
+        sizes = new List<InspectCardMath.Size>();
+        if (column == null) return true;
+        if (!GodotObject.IsInstanceValid(column) || !column.IsVisibleInTree()) return true;
+        foreach (Node child in column.GetChildren())
+        {
+            if (child is not Control tip || !tip.Visible || tip.IsQueuedForDeletion()) continue;
+            Vector2 size = tip.Size;
+            if (size.X < 2f || size.Y < 2f) size = tip.GetCombinedMinimumSize();
+            if (size.X < 2f || size.Y < 2f) return false;
+            sizes.Add(new InspectCardMath.Size(size.X, size.Y));
+        }
+        return true;
+    }
+
+    private static void ApplyTipBlock(Control? column, InspectCardMath.Block? block)
+    {
+        if (column == null || !GodotObject.IsInstanceValid(column) || !column.IsInsideTree()) return;
+        if (block is not { } placed || placed.Rect.Width < 2f || placed.Rect.Height < 2f || placed.Scale <= 0.01f) return;
+        var scale = new Vector2(placed.Scale, placed.Scale);
+        if (column.PivotOffset != Vector2.Zero) column.PivotOffset = Vector2.Zero;
+        if (!column.Scale.IsEqualApprox(scale)) column.Scale = scale;
+        var localSize = new Vector2(placed.Rect.Width / placed.Scale, placed.Rect.Height / placed.Scale);
+        if (!column.Size.IsEqualApprox(localSize)) column.Size = localSize;
+        var origin = new Vector2(placed.Rect.X, placed.Rect.Y);
+        if (column.GlobalPosition.DistanceSquaredTo(origin) > 0.25f) column.GlobalPosition = origin;
+        int index = 0;
+        foreach (Node child in column.GetChildren())
+        {
+            if (child is not Control tip || !tip.Visible || tip.IsQueuedForDeletion()) continue;
+            if (index >= placed.Offsets.Count) break;
+            InspectCardMath.Point offset = placed.Offsets[index++];
+            var local = new Vector2(offset.X, offset.Y);
+            if (tip.Position.DistanceSquaredTo(local) > 0.25f) tip.Position = local;
+        }
+    }
+
+    private static InspectCardMath.Rect? ArrowRect(Control screen, string name)
+    {
+        if (screen.GetNodeOrNull<Control>(name) is not { } arrow || !GodotObject.IsInstanceValid(arrow) ||
+            !arrow.IsVisibleInTree() || arrow.Modulate.A < 0.05f)
+            return null;
+        Rect2 rect = arrow.GetGlobalRect();
+        return new InspectCardMath.Rect(rect.Position.X, rect.Position.Y, rect.Size.X, rect.Size.Y);
+    }
+
+    /// <summary>The drawn card: an NCard root is a point at the card's centre and its visual size is 300x422 at its scale.</summary>
+    private static bool TryInspectCardRect(Control screen, out InspectCardMath.Rect rect)
+    {
+        rect = default;
+        if (screen.GetNodeOrNull<Control>("Card") is not { } card || !GodotObject.IsInstanceValid(card) ||
+            !card.IsVisibleInTree())
+            return false;
+        Vector2 size = new Vector2(InspectCardMath.CardWidth, InspectCardMath.CardHeight) *
+                       card.GetGlobalTransformWithCanvas().Scale.Abs();
+        if (size.X < 10f || size.Y < 10f) return false;
+        Vector2 centre = card.GlobalPosition;
+        rect = new InspectCardMath.Rect(centre.X - size.X * 0.5f, centre.Y - size.Y * 0.5f, size.X, size.Y);
+        return true;
+    }
+
+    /// <summary>Puts the tips back the way the game lays them out when Portrait Mode is turned off mid-inspection.</summary>
+    private void RestoreInspectTips()
+    {
+        UnbindInspectFrame();
+        if (_inspectArranged.Count == 0) return;
+        foreach (ulong id in _inspectArranged)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control screen || !GodotObject.IsInstanceValid(screen) ||
+                !screen.IsVisibleInTree())
+                continue;
+            try
+            {
+                screen.GetType().GetMethod("UpdateCardDisplay", InstAll)?.Invoke(screen, null);
+            }
+            catch (Exception error)
+            {
+                GD.PrintErr("Portrait overlay: the inspect tips could not be put back: ", error.Message);
+            }
+        }
+        _inspectArranged.Clear();
+    }
+
+    /// <summary>
+    /// Puts back the two things only this pass changed for every inspect screen: the box's anchors (it is a centre-anchored
+    /// scene control) and its minimum size. The offsets, scale and pivot are the combat hold's or the choice layout's to
+    /// restore, so the deck/grid pre-hold state is kept exactly.
+    /// </summary>
+    private void RestoreInspectUpgrades()
+    {
+        foreach ((ulong id, InspectUpgradeState state) in _inspectUpgrades)
+        {
+            if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) &&
+                GodotObject.InstanceFromId(state.Id) is Control upgrade && GodotObject.IsInstanceValid(upgrade))
+                state.RestoreFrame(upgrade);
+        }
+    }
+
+    private sealed class InspectUpgradeState
+    {
+        public readonly ulong Id;
+        private readonly float _anchorLeft, _anchorTop, _anchorRight, _anchorBottom;
+        private readonly float _offsetLeft, _offsetTop, _offsetRight, _offsetBottom;
+        private readonly Vector2 _minimum;
+
+        private InspectUpgradeState(Control control)
+        {
+            Id = control.GetInstanceId();
+            _anchorLeft = control.AnchorLeft;
+            _anchorTop = control.AnchorTop;
+            _anchorRight = control.AnchorRight;
+            _anchorBottom = control.AnchorBottom;
+            _offsetLeft = control.OffsetLeft;
+            _offsetTop = control.OffsetTop;
+            _offsetRight = control.OffsetRight;
+            _offsetBottom = control.OffsetBottom;
+            _minimum = control.CustomMinimumSize;
+        }
+
+        public float Width => Math.Max(_offsetRight - _offsetLeft, 1f);
+        public float Height => Math.Max(_offsetBottom - _offsetTop, 1f);
+        public float OffsetTop => _offsetTop;
+
+        public static InspectUpgradeState Capture(Control control) => new(control);
+
+        public void RestoreFrame(Control control)
+        {
+            control.AnchorLeft = _anchorLeft;
+            control.AnchorTop = _anchorTop;
+            control.AnchorRight = _anchorRight;
+            control.AnchorBottom = _anchorBottom;
+            control.CustomMinimumSize = _minimum;
+        }
+    }
+
     // ---- Putting the choices back ----------------------------------------------------------------------------------------
 
     private void RestoreChoices()
     {
+        RestoreChoicePiles();
         foreach ((ulong id, ChoiceButton state) in _choiceButtons)
             if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button))
                 RestoreChoiceButton(button, state);
@@ -1326,6 +1822,11 @@ internal sealed class PortraitOverlayLayout
         _inspectTickboxes.RemoveWhere(Dead);
         _liftedChoiceBanners.RemoveWhere(Dead);
         _gridConfirms.RemoveWhere(Dead);
+        _inspectScreens.RemoveWhere(Dead);
+        _inspectArranged.RemoveWhere(Dead);
+        foreach (ulong id in _inspectUpgrades.Keys.Where(Dead).ToList()) _inspectUpgrades.Remove(id);
+        foreach (ulong id in _choicePiles.Keys.Where(Dead).ToList()) _choicePiles.Remove(id);
+        foreach (ulong id in _choicePileStates.Keys.Where(Dead).ToList()) _choicePileStates.Remove(id);
         foreach (ulong id in _choiceButtons.Keys.Where(Dead).ToList()) _choiceButtons.Remove(id);
         foreach (ulong id in _buttonRows.Keys.Where(Dead).ToList()) _buttonRows.Remove(id);
         foreach (ulong id in _bundleButtonSizes.Keys.Where(Dead).ToList()) _bundleButtonSizes.Remove(id);
@@ -1338,7 +1839,10 @@ internal sealed class PortraitOverlayLayout
 
     public void RestoreLandscape()
     {
+        UnbindHandPeekFrame();
         RestoreChoices();
+        RestoreInspectTips();
+        RestoreInspectUpgrades();
         RestoreOverlayBackstop();
         foreach (ulong id in _popupPads)
             if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button))
