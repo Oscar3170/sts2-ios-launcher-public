@@ -455,9 +455,14 @@ internal static partial class PortraitSubmenuLayout
     {
         if (!SafeAreaCanvas.IsPortrait || CardLibraryStates.Count == 0) return;
         foreach (CardLibraryState state in CardLibraryStates.Values)
-            if (GodotObject.InstanceFromId(state.Screen) is Control screen && GodotObject.IsInstanceValid(screen) &&
-                screen.IsVisibleInTree() && screen.GetNodeOrNull<Control>("%CardGrid") is { } grid)
-                ReconcileCardLibraryWindow(grid, state);
+        {
+            if (GodotObject.InstanceFromId(state.Screen) is not Control screen || !GodotObject.IsInstanceValid(screen) ||
+                !screen.IsVisibleInTree() || screen.GetNodeOrNull<Control>("%CardGrid") is not { } grid)
+                continue;
+            ReconcileCardLibraryWindow(grid, state);
+            // A card the finger moves onto snaps to the game's hover scale in its own input/_Process; keep the column's.
+            if (state.CardWidth > 0.5f) ScaleCardLibraryHolders(grid, state, PortraitGridMath.HolderScale(state.CardWidth));
+        }
     }
 
     /// <summary>

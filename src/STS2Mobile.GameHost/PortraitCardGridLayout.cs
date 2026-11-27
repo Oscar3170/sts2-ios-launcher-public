@@ -68,6 +68,7 @@ internal sealed class PortraitCardGridLayout
         public bool BorderFadeVisible;
         public ulong EdgeShade;
         public float EdgeShadeHeight;
+        public bool RebuiltBeforeDraw;
     }
 
     /// <summary>One text control's own wrapping and sizing, before portrait took it in hand.</summary>
@@ -183,15 +184,23 @@ internal sealed class PortraitCardGridLayout
     private bool _windowPassSubscribed;
 
     /// <summary>
-    /// The row-window pass runs from <see cref="RenderingServer.FramePreDraw"/>, after every node's _Process. This
-    /// <see cref="Update"/> runs from the scene tree's process_frame, which fires before the nodes process: the grid's own
-    /// recycler (in its _Process) then rebound the foot row after the repair, and that frame was drawn with it.
+    /// The row-window and holder-scale passes run from <see cref="RenderingServer.FramePreDraw"/>, after every node's
+    /// _Process and input. <see cref="Update"/> runs from the scene tree's process_frame, which fires before the nodes
+    /// process: the grid's own recycler (in its _Process) then rebound the foot row after the repair, and a card the finger
+    /// moved onto snapped to the game's hover scale (its unhover tween pulls it to 0.8), and that frame was drawn with them.
     /// </summary>
     private void ReconcileWindowsBeforeDraw()
     {
         foreach ((ulong id, GridState state) in _gridStates)
-            if (GodotObject.InstanceFromId(id) is Control grid && GodotObject.IsInstanceValid(grid) && grid.IsVisibleInTree())
-                ReconcileGridWindow(grid, state);
+        {
+            if (GodotObject.InstanceFromId(id) is not Control grid || !GodotObject.IsInstanceValid(grid) || !grid.IsVisibleInTree())
+                continue;
+            ReconcileGridWindow(grid, state);
+            // A holder still at the game's own scale means the grid has just built its rows again; the next process-frame
+            // pass lays the grid out again for that (the deck view's own pass puts its card offset back).
+            if (state.AppliedCardWidth > 0.5f && ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(state.AppliedCardWidth)))
+                state.RebuiltBeforeDraw = true;
+        }
     }
 
     /// <summary>Each frame: the grid's own rect, the holder scales and the deck's footer are kept where portrait put them.</summary>
@@ -219,7 +228,8 @@ internal sealed class PortraitCardGridLayout
         }
         // A holder back at the game's own scale means the grid has just built its rows again (a sort, a preview closing, a
         // resize): the deck view's own pass also puts its 100-unit card offset back, so lay the grid out again once.
-        bool rebuilt = ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(cardWidth));
+        bool rebuilt = ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(cardWidth)) || state.RebuiltBeforeDraw;
+        state.RebuiltBeforeDraw = false;
         if (rebuilt && YOffsetOf(grid) != 0) ApplyGridPortrait(grid, state, canvas, capHeight);
         // The row window is kept in ReconcileWindowsBeforeDraw, after the grid's own _Process.
     }
