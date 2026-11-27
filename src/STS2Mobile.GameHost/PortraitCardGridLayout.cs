@@ -173,6 +173,25 @@ internal sealed class PortraitCardGridLayout
         foreach ((ulong id, PortraitGridScreen screen) in _viewUpgrades)
             if (GodotObject.InstanceFromId(id) is Control box && GodotObject.IsInstanceValid(box) && box.IsVisibleInTree())
                 UpdateViewUpgradesBox(box, screen, canvas);
+        if (!_windowPassSubscribed && _gridStates.Count > 0)
+        {
+            RenderingServer.FramePreDraw += ReconcileWindowsBeforeDraw;
+            _windowPassSubscribed = true;
+        }
+    }
+
+    private bool _windowPassSubscribed;
+
+    /// <summary>
+    /// The row-window pass runs from <see cref="RenderingServer.FramePreDraw"/>, after every node's _Process. This
+    /// <see cref="Update"/> runs from the scene tree's process_frame, which fires before the nodes process: the grid's own
+    /// recycler (in its _Process) then rebound the foot row after the repair, and that frame was drawn with it.
+    /// </summary>
+    private void ReconcileWindowsBeforeDraw()
+    {
+        foreach ((ulong id, GridState state) in _gridStates)
+            if (GodotObject.InstanceFromId(id) is Control grid && GodotObject.IsInstanceValid(grid) && grid.IsVisibleInTree())
+                ReconcileGridWindow(grid, state);
     }
 
     /// <summary>Each frame: the grid's own rect, the holder scales and the deck's footer are kept where portrait put them.</summary>
@@ -202,7 +221,7 @@ internal sealed class PortraitCardGridLayout
         // resize): the deck view's own pass also puts its 100-unit card offset back, so lay the grid out again once.
         bool rebuilt = ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(cardWidth));
         if (rebuilt && YOffsetOf(grid) != 0) ApplyGridPortrait(grid, state, canvas, capHeight);
-        ReconcileGridWindow(grid, state);
+        // The row window is kept in ReconcileWindowsBeforeDraw, after the grid's own _Process.
     }
 
     // ---- keeping the game's row window on the portrait viewport --------------------------------------------------
@@ -378,6 +397,11 @@ internal sealed class PortraitCardGridLayout
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
     public void RestoreGridsLandscape()
     {
+        if (_windowPassSubscribed)
+        {
+            RenderingServer.FramePreDraw -= ReconcileWindowsBeforeDraw;
+            _windowPassSubscribed = false;
+        }
         foreach ((ulong id, GridState state) in _gridStates)
         {
             if (state.Header != 0 && GodotObject.InstanceFromId(state.Header) is Control header && GodotObject.IsInstanceValid(header) &&

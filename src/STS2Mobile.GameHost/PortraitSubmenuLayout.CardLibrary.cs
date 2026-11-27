@@ -245,7 +245,7 @@ internal static partial class PortraitSubmenuLayout
             }
         }
         ScaleCardLibraryHolders(grid, state, PortraitGridMath.HolderScale(cardWidth));
-        ReconcileCardLibraryWindow(grid, state);
+        // The row window is kept in OnCardLibraryPreDraw, after the grid's own _Process.
     }
 
     /// <summary>Gives every holder the column's scale and keeps it there past the game's own unhover tween.</summary>
@@ -440,8 +440,24 @@ internal static partial class PortraitSubmenuLayout
         if (tree is null || tree == _cardLibraryTree) return;
         if (_cardLibraryTree != null && GodotObject.IsInstanceValid(_cardLibraryTree))
             _cardLibraryTree.ProcessFrame -= OnCardLibraryProcessFrame;
+        else
+            RenderingServer.FramePreDraw += OnCardLibraryPreDraw;
         _cardLibraryTree = tree;
         tree.ProcessFrame += OnCardLibraryProcessFrame;
+    }
+
+    /// <summary>
+    /// The row-window pass, from <see cref="RenderingServer.FramePreDraw"/>: after every node's _Process, so the grid's own
+    /// recycler (which runs in its _Process while the content moves) cannot rebind the foot row after it and have that frame
+    /// drawn. The layout pass itself runs from process_frame, before the nodes process.
+    /// </summary>
+    private static void OnCardLibraryPreDraw()
+    {
+        if (!SafeAreaCanvas.IsPortrait || CardLibraryStates.Count == 0) return;
+        foreach (CardLibraryState state in CardLibraryStates.Values)
+            if (GodotObject.InstanceFromId(state.Screen) is Control screen && GodotObject.IsInstanceValid(screen) &&
+                screen.IsVisibleInTree() && screen.GetNodeOrNull<Control>("%CardGrid") is { } grid)
+                ReconcileCardLibraryWindow(grid, state);
     }
 
     /// <summary>
