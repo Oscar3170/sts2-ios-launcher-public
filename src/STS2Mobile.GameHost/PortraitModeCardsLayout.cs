@@ -7,8 +7,9 @@ namespace STS2Mobile.GameHost;
 
 /// <summary>
 /// The singleplayer and multiplayer-host mode cards in portrait: the native buttons stay in their own row (their input
-/// connections, hotkeys and hover tweens stay intact), the row is scaled, and the cards are placed two to a line with the
-/// last card centred and their interiors at the reference card's measured places. The row is laid out from each card's
+/// connections, hotkeys and hover tweens stay intact), the row is scaled, and the cards are placed up to three to a line,
+/// the lines balanced (5 = 3 + 2, 4 = 2 + 2) and centred, with their interiors at the reference card's measured places. The
+/// cards are sized for a full line of three, so hiding a mode does not resize the rest. The row is laid out from each card's
 /// DRAWN bounds, not its control rectangle: the native background art is taller than the control, and spacing the controls
 /// made the art of one row cover the next. The row's sort callback, the cards' cross-row focus plan and the desktop values
 /// are per submenu and live here; the menu coordinator fits the screen and passes the safe band.
@@ -22,6 +23,7 @@ internal sealed class PortraitModeCardsLayout
     private const float ModeCardWidth = 362f;
     private const float ModeCardHeight = 545f;
     private const float ModeGap = 18f;
+    private const int ModeLineMax = 3;
     private const float ModeTop = 100f;
     // Space kept under the cards for the mode screen's own title and the back button.
     private const float ModeReserved = 430f;
@@ -95,18 +97,42 @@ internal sealed class PortraitModeCardsLayout
         List<Control> cards = row.GetChildren().OfType<Control>().Where(card => card.Visible).ToList();
         if (state.FocusCount != cards.Count)
         {
+            int[] starts = LineStarts(cards.Count);
             for (int i = 0; i < cards.Count; i++)
             {
-                int line = i / 2, inLine = Math.Min(2, cards.Count - line * 2);
+                (int line, int col) = Cell(starts, i);
                 SaveFocus(cards[i]);
-                cards[i].FocusNeighborLeft = cards[line * 2].GetPath();
-                cards[i].FocusNeighborRight = cards[line * 2 + inLine - 1].GetPath();
-                cards[i].FocusNeighborTop = cards[Math.Max(0, i - 2)].GetPath();
-                cards[i].FocusNeighborBottom = cards[Math.Min(cards.Count - 1, i + 2)].GetPath();
+                cards[i].FocusNeighborLeft = cards[starts[line]].GetPath();
+                cards[i].FocusNeighborRight = cards[starts[line + 1] - 1].GetPath();
+                cards[i].FocusNeighborTop = cards[line == 0 ? i : NearestInLine(starts, line - 1, col)].GetPath();
+                cards[i].FocusNeighborBottom =
+                    cards[line == starts.Length - 2 ? i : NearestInLine(starts, line + 1, col)].GetPath();
             }
             state.FocusCount = cards.Count;
         }
     }
+
+    /// <summary>
+    /// Where each line starts, plus the count as the end: ceil(count / 3) lines, the earlier lines taking the extra card.
+    /// </summary>
+    private static int[] LineStarts(int count)
+    {
+        int lines = Math.Max(1, (count + ModeLineMax - 1) / ModeLineMax);
+        var starts = new int[lines + 1];
+        for (int line = 0; line < lines; line++)
+            starts[line + 1] = starts[line] + count / lines + (line < count % lines ? 1 : 0);
+        return starts;
+    }
+
+    private static (int Line, int Col) Cell(int[] starts, int index)
+    {
+        int line = 0;
+        while (index >= starts[line + 1]) line++;
+        return (line, index - starts[line]);
+    }
+
+    private static int NearestInLine(int[] starts, int line, int col) =>
+        Math.Min(starts[line] + col, starts[line + 1] - 1);
 
     /// <summary>
     /// Lays out the visible cards from their drawn bounds: interiors first, then the union of their texture/plate children,
@@ -155,8 +181,9 @@ internal sealed class PortraitModeCardsLayout
             }
         }
 
-        int rows = Math.Max(1, (cards.Count + 1) / 2);
-        float rowWidth = 2f * cellWidth + ModeGap;
+        int[] starts = LineStarts(cards.Count);
+        int rows = starts.Length - 1;
+        float rowWidth = ModeLineMax * cellWidth + (ModeLineMax - 1) * ModeGap;
         float height = rows * cellHeight + (rows - 1) * ModeGap;
         Rect2 safe = state.Safe;
         float available = Math.Max(200f, safe.Size.Y - ModeReserved);
@@ -170,7 +197,8 @@ internal sealed class PortraitModeCardsLayout
 
         for (int i = 0; i < cards.Count; i++)
         {
-            int line = i / 2, col = i % 2, inLine = Math.Min(2, cards.Count - line * 2);
+            (int line, int col) = Cell(starts, i);
+            int inLine = starts[line + 1] - starts[line];
             float cellLeft = col * (cellWidth + ModeGap) - (inLine * (cellWidth + ModeGap) - ModeGap) * 0.5f;
             var place = new Vector2(
                 cellLeft + (cellWidth - drawn[i].Size.X) * 0.5f - drawn[i].Position.X,
