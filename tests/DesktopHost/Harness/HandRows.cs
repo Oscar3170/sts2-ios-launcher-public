@@ -43,6 +43,13 @@ internal sealed partial class TestDriver
             await WaitUntilStableAsync(() => HandSettledSignature(hand),
                 $"hand_rows_{count} layout", TimeSpan.FromSeconds(1.2));
             NHandCardHolder[] cards = hand.ActiveHolders.ToArray();
+            // The two-row hand is the portrait layout's; landscape keeps the game's own fan, whose cards follow an arc.
+            if (!IsPortraitHost())
+            {
+                _report.Skip($"hand_{count}_rows", "landscape keeps the game's fanned hand");
+                await CaptureAsync($"hand_rows_{count}");
+                continue;
+            }
             float y = HandRowsRowY(cards[0]);
             upperY ??= y;
             _report.Check($"hand_{count}_upper_row_stable", Math.Abs(y - upperY.Value) < HandRowsRowTolerance(),
