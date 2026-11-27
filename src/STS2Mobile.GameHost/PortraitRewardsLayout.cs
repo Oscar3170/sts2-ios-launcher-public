@@ -49,6 +49,7 @@ internal sealed class PortraitRewardsLayout
         public readonly Control List = list;
         public readonly Control? Action = action;
         public readonly bool Blitz = blitz;
+        public Control? Banner;
         public int RowCount = -1;
         public float ContentHeight;
         public bool Placed;
@@ -61,6 +62,7 @@ internal sealed class PortraitRewardsLayout
     private readonly Dictionary<ulong, LootScreenState> _lootScreens = new();
     private readonly HashSet<ulong> _lootRows = new();
     private readonly HashSet<ulong> _lootSkipsHidden = new();
+    private readonly HashSet<ulong> _lootBannersHidden = new();
     private readonly Dictionary<ulong, (bool Had, bool Value)> _rewardAutoSizes = new();
     private readonly Dictionary<ulong, BoxContainer.AlignmentMode> _alternativeAlignments = new();
     private readonly HashSet<ulong> _liftedBanners = new();
@@ -80,9 +82,10 @@ internal sealed class PortraitRewardsLayout
 
     public void Update(Vector2 canvas, float capHeight)
     {
+        bool cardRewardOpen = CardRewardShown();
         foreach (LootScreenState state in _lootScreens.Values)
             if (GodotObject.IsInstanceValid(state.Screen) && state.Screen.IsVisibleInTree())
-                UpdateLootPortrait(state, canvas, capHeight);
+                UpdateLootPortrait(state, canvas, capHeight, cardRewardOpen);
         foreach (ulong id in _cardRewards)
             if (GodotObject.InstanceFromId(id) is Control screen && GodotObject.IsInstanceValid(screen) && screen.IsInsideTree())
                 UpdateCardRewardPortrait(screen, canvas, capHeight);
@@ -122,6 +125,7 @@ internal sealed class PortraitRewardsLayout
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
                 snapshot.Restore(control);
         _snapshots.Clear();
+        _lootBannersHidden.Clear();
     }
 
     public void RestoreAlignments()
@@ -162,6 +166,7 @@ internal sealed class PortraitRewardsLayout
         _liftedBanners.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _lootRows.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         _lootSkipsHidden.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
+        _lootBannersHidden.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
         foreach (ulong id in _lootScreens.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _lootScreens.Remove(id);
         foreach (ulong id in _rewardAutoSizes.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _rewardAutoSizes.Remove(id);
         foreach (ulong id in _alternativeAlignments.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _alternativeAlignments.Remove(id);
@@ -188,19 +193,40 @@ internal sealed class PortraitRewardsLayout
         Capture(window, captureVisible: false);
         Capture(mask, captureVisible: false);
         Capture(list, captureVisible: false);
+        if (state.Banner == null && window.GetNodeOrNull<Control>("Background/Banner") is { } banner)
+        {
+            state.Banner = banner;
+            Capture(banner, captureVisible: true);
+        }
         // Rows are two units taller and 14 apart (was 86 and 10), so a loot row is at least 44 points deep.
         if (!list.HasThemeConstantOverride("separation") ||
             list.GetThemeConstant("separation") != (int)PortraitBetweenMath.LootRowSeparation)
             list.AddThemeConstantOverride("separation", (int)PortraitBetweenMath.LootRowSeparation);
-        UpdateLootPortrait(state, canvas, capHeight);
+        UpdateLootPortrait(state, canvas, capHeight, CardRewardShown());
     }
 
-    private void UpdateLootPortrait(LootScreenState state, Vector2 canvas, float capHeight)
+    private void UpdateLootPortrait(LootScreenState state, Vector2 canvas, float capHeight, bool cardRewardOpen)
     {
         // The rows are laid out first: the window's height and place come from how tall their block is (the list keeps one
         // row size; its labels read at 15 points; it is walked only when its rows change).
         int rowCount = state.List.GetChildCount();
         if (rowCount != state.RowCount) ApplyLootRows(state, rowCount);
+
+        // A card reward over the loot window has its own banner just under the stone header; the loot window's banner now
+        // stands where that one is drawn, so it steps aside while the reward is open and comes back with the loot rows.
+        if (state.Banner is { } lootBanner)
+        {
+            ulong bannerId = lootBanner.GetInstanceId();
+            if (cardRewardOpen && lootBanner.Visible)
+            {
+                lootBanner.Hide();
+                _lootBannersHidden.Add(bannerId);
+            }
+            else if (!cardRewardOpen && _lootBannersHidden.Remove(bannerId) && !lootBanner.Visible)
+            {
+                lootBanner.Show();
+            }
+        }
 
         float laneTop = PortraitBetweenMath.ActionLaneTop(state.Blitz, canvas.Y, PortraitBands.MinTarget);
         LootWindowFit fit = PortraitBetweenMath.LootWindow(
