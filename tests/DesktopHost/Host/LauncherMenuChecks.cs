@@ -99,6 +99,87 @@ internal sealed partial class TestDriver
             $"widest={widest:F0} safeWidth={safe.Size.X:F0}");
     }
 
+    // ---- compendium submenu (menu-audit) ---------------------------------------------------------------
+
+    private float _modeCardDrawnWidth;
+
+    /// <summary>
+    /// Records a singleplayer mode card's DRAWN width in canvas units before that screen closes, so the compendium's cards
+    /// are compared with the card the player actually saw on the mode picker, not with a constant.
+    /// </summary>
+    private void RememberModeCardWidth(Control modes)
+    {
+        _modeCardDrawnWidth = 0f;
+        if (!SafeAreaCanvas.IsPortrait) return;
+        Control? card = modes.GetNodeOrNull<Control>("ButtonContainer")?.GetChildren().OfType<Control>()
+            .FirstOrDefault(candidate => candidate.Visible);
+        if (card is null) return;
+        _modeCardDrawnWidth = DrawnWidth(card);
+    }
+
+    /// <summary>A card's drawn art width in canvas units, without the card's own hover scale (the row owns the portrait scale).</summary>
+    private static float DrawnWidth(Control card)
+    {
+        Rect2 local = PortraitDrawnBounds.Of(card);
+        Control parent = card.GetParent() as Control ?? card;
+        return local.Size.X * Math.Abs(parent.GetGlobalTransformWithCanvas().Scale.X);
+    }
+
+    /// <summary>
+    /// The compendium's four cards follow the singleplayer mode cards: two lines of two, each card as wide as a mode card,
+    /// and the Character Stats / Run History buttons centred under the lower line, touch-sized and clear of the cards.
+    /// </summary>
+    private void CheckCompendiumLayout(Control screen)
+    {
+        if (!SafeAreaCanvas.IsPortrait) return;
+        Rect2 safe = PortraitSafeRect();
+        Control[] cards = FindAll<Control>(screen)
+            .Where(control => control.GetType().Name == "NShortSubmenuButton" && control.IsVisibleInTree()).ToArray();
+        Control[] buttons = FindAll<Control>(screen)
+            .Where(control => control.GetType().Name == "NCompendiumBottomButton" && control.IsVisibleInTree()).ToArray();
+        if (cards.Length < 3 || buttons.Length < 1)
+        {
+            _report.Fail("menu_compendium_layout", $"cards={cards.Length} buttons={buttons.Length}: nothing to measure");
+            return;
+        }
+        Rect2[] cardRects = cards.Select(card => card.GetGlobalRect()).ToArray();
+        float[] widths = cards.Select(DrawnWidth).ToArray();
+        Control[][] lines = cards.GroupBy(card => Mathf.RoundToInt(card.GetGlobalRect().GetCenter().Y))
+            .OrderBy(line => line.Key)
+            .Select(line => line.OrderBy(card => card.GetGlobalRect().Position.X).ToArray()).ToArray();
+        bool inOrder = lines.SelectMany(line => line).Select(card => card.GetIndex())
+            .SequenceEqual(cards.Select(card => card.GetIndex()).OrderBy(index => index));
+        bool twoLines = lines.Length == 2 && lines[0].Length <= 2 && lines[0].Length >= lines[1].Length;
+        bool sameWidth = _modeCardDrawnWidth > 0f
+            && widths.All(width => Mathf.Abs(width - _modeCardDrawnWidth) <= 2f);
+
+        Rect2[] buttonRects = buttons.Select(button => button.GetGlobalRect()).ToArray();
+        Rect2 buttonUnion = buttonRects[0];
+        bool buttonsClear = true;
+        for (int i = 0; i < buttons.Length; i++)
+        {
+            buttonUnion = buttonUnion.Merge(buttonRects[i]);
+            if (cardRects.Any(card => card.Intersects(buttonRects[i]))) buttonsClear = false;
+            for (int j = i + 1; j < buttons.Length; j++)
+                if (buttonRects[i].Intersects(buttonRects[j])) buttonsClear = false;
+        }
+        float cardsBottom = cardRects.Max(card => card.End.Y);
+        bool buttonsBelow = buttonRects.All(button => button.Position.Y >= cardsBottom - 0.5f);
+        bool buttonsTouchSized = buttons.All(button =>
+        {
+            Vector2 box = HostTouchTargetBox(button).Size;
+            return box.X >= PortraitBands.MinTarget - 0.5f && box.Y >= PortraitBands.MinTarget - 0.5f;
+        });
+        bool onCanvas = cardRects.All(safe.Encloses) && buttonRects.All(safe.Encloses);
+
+        _report.Check("menu_compendium_layout",
+            twoLines && inOrder && sameWidth && onCanvas && buttonsBelow && buttonsClear
+            && Mathf.Abs(buttonUnion.GetCenter().X - safe.GetCenter().X) <= 8f && buttonsTouchSized,
+            $"lines={string.Join("+", lines.Select(line => line.Length))} widths=[{string.Join(",", widths.Select(w => w.ToString("F1")))}] " +
+            $"mode={_modeCardDrawnWidth:F1} cards={string.Join(" ", cardRects.Select(r => r.ToString()))} " +
+            $"buttons={string.Join(" ", buttonRects.Select(r => r.ToString()))} union={buttonUnion} safe={safe}");
+    }
+
     private partial void CheckModeSetupLayout(string mode, Control setup, IReadOnlyList<NCharacterSelectButton> roster)
     {
         if (!SafeAreaCanvas.IsPortrait) return;

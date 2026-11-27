@@ -86,7 +86,14 @@ internal sealed partial class TestDriver
             PopAll(menu);
         }
 
-        await AuditOpenedAsync("singleplayer", menu.OpenSingleplayerSubmenu(), () => { PopAll(menu); return Task.CompletedTask; });
+        NSubmenu singleplayer = menu.OpenSingleplayerSubmenu();
+        await AuditOpenedAsync("singleplayer", singleplayer, () =>
+        {
+            // Remember the card the player sees on the mode picker: the compendium's cards must match its drawn width.
+            RememberModeCardWidth(singleplayer);
+            PopAll(menu);
+            return Task.CompletedTask;
+        });
 
         foreach (string screen in new[]
                  {
@@ -115,10 +122,23 @@ internal sealed partial class TestDriver
         menu.Call("OpenMultiplayerSubmenu");
         await AuditOpenedAsync("join-friend", Push(menu, "MainMenu.NJoinFriendScreen"), () => { PopAll(menu); return Task.CompletedTask; });
 
-        await AuditOpenedAsync("compendium", menu.OpenCompendiumSubmenu(), null);
-        NSubmenu library = Push(menu, "CardLibrary.NCardLibrary");
-        // There is no run at the main menu.
-        if (library is NCardLibrary cardLibrary) cardLibrary.Initialize(null!);
+        NCompendiumSubmenu? compendium = menu.OpenCompendiumSubmenu();
+        await AuditOpenedAsync("compendium", compendium, null);
+        NSubmenu? library = null;
+        if (compendium is not null)
+        {
+            CheckCompendiumLayout(compendium);
+            await TapMenuAsync(compendium.GetNode<Control>("%CardLibraryButton"), "audit_compendium_card_library");
+            library = FindAll<Control>(_tree.Root).OfType<NCardLibrary>().LastOrDefault(screen => screen.IsVisibleInTree());
+            _report.Check("menu_compendium_card_library_opens", library is not null,
+                "tapping Card Library on the compendium opens the native card library");
+        }
+        if (library is null)
+        {
+            library = Push(menu, "CardLibrary.NCardLibrary");
+            // There is no run at the main menu.
+            if (library is NCardLibrary pushed) pushed.Initialize(null!);
+        }
         await AuditOpenedAsync("card-library", library, () => { menu.SubmenuStack.Pop(); return Task.CompletedTask; });
         foreach (string screen in new[]
                  {
