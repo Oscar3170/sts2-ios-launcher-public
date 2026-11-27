@@ -56,6 +56,7 @@ internal sealed class PortraitRewardsLayout
         // its row up inside the panel instead of resizing and re-centring the panel.
         public float FrameContentHeight;
         public Vector2 Target;
+        public bool HasTarget;
         public bool Placed;
         public Tween? Fade;
     }
@@ -115,7 +116,7 @@ internal sealed class PortraitRewardsLayout
         _lootRows.Clear();
         if (_placeBeforeDrawSubscribed)
         {
-            RenderingServer.FramePreDraw -= KeepPlacedWindowsBeforeDraw;
+            RenderingServer.FramePreDraw -= PlaceLootWindowsBeforeDraw;
             _placeBeforeDrawSubscribed = false;
         }
     }
@@ -123,20 +124,51 @@ internal sealed class PortraitRewardsLayout
     private bool _placeBeforeDrawSubscribed;
 
     /// <summary>
-    /// A loot screen coming back from the card reward replays the game's entrance: its tween slides the window from 100 units
-    /// below the game's place, and its first step runs in the frame it starts, after the process-frame pass that replaces it
-    /// with the fade alone. That one frame drew the panel 85 units low. A placed window is put back at its place before each
-    /// draw (a position is only a transform, drawn at once); the process-frame pass still swaps the game's tween for ours.
+    /// Puts each loot window at its portrait place and takes over the game's entrance, after all of the game's own work in
+    /// the frame. The game's entrance (<c>AfterOverlayShown</c>, also when a card reward closes) tweens the window up from
+    /// 100 units below where it stands; its first step runs in the frame it starts, which a process-frame pass only sees
+    /// a frame later, so that frame drew the panel 85 units low. Done here, the swap is in place before any frame is drawn
+    /// (positions and modulates are drawn at once).
     /// </summary>
-    private void KeepPlacedWindowsBeforeDraw()
+    private void PlaceLootWindowsBeforeDraw()
     {
         foreach (LootScreenState state in _lootScreens.Values)
+            if (state.HasTarget && GodotObject.IsInstanceValid(state.Screen) && state.Screen.IsVisibleInTree())
+                PlaceLootWindow(state);
+    }
+
+    private void PlaceLootWindow(LootScreenState state)
+    {
+        Control window = state.Window;
+        Vector2 target = state.Target;
+        FieldInfo? fadeField = RewardsFadeTween(state.Screen.GetType());
+        Tween? fadeTween = fadeField?.GetValue(state.Screen) as Tween;
+        // Only the entrance is taken over. A complete set (the final boss offers none; a terminal set whose last reward was
+        // taken) fades its empty window out instead, and turning that fade-out into this fade-in showed an empty loot window.
+        bool complete = state.Screen.Get("IsComplete").AsBool();
+        if (!complete && fadeTween != null && fadeTween.IsValid() && fadeTween.IsRunning() && state.Fade != fadeTween)
         {
-            if (!state.Placed || !GodotObject.IsInstanceValid(state.Window) || !state.Window.IsVisibleInTree()) continue;
-            if (state.Fade is { } ours && GodotObject.IsInstanceValid(ours) && ours.IsRunning() &&
-                RewardsFadeTween(state.Screen.GetType())?.GetValue(state.Screen) == ours)
-                continue;
-            if (state.Window.Position.DistanceSquaredTo(state.Target) > 0.25f) state.Window.Position = state.Target;
+            // The game's entrance slides the window to its desktop place and fades it in; take the slide over so it ends at
+            // the portrait place (the window starts transparent, so nothing is seen at the desktop place). A loot screen
+            // coming back from the card reward is already in its portrait place (only its modulate faded): the list must not
+            // dip 100 units and slide back, because a row that moves under a finger drops its press (and the rows' guard
+            // then holds touches for another third of a second). Its return is the fade alone.
+            fadeTween.Kill();
+            Tween fade = window.CreateTween().SetParallel(true);
+            fade.TweenProperty(window, "modulate", Colors.White, 0.5);
+            if (!state.Placed)
+                fade.TweenProperty(window, "position:y", target.Y, 0.5)
+                    .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Back).From(target.Y + 100f);
+            window.Position = state.Placed ? target : new Vector2(target.X, target.Y + 100f);
+            fadeField?.SetValue(state.Screen, fade);
+            state.Fade = fade;
+        }
+        else if (state.Fade == null || !state.Fade.IsValid() || !state.Fade.IsRunning())
+        {
+            if (window.Position.DistanceSquaredTo(target) > 0.25f) window.Position = target;
+            // The place is known after a fade of ours has finished; a layout that ran before the game's entrance still gets
+            // its slide.
+            if (state.Fade != null) state.Placed = true;
         }
     }
 
@@ -221,7 +253,7 @@ internal sealed class PortraitRewardsLayout
                 screen, window, mask, list, screen.GetNodeOrNull<Control>("ProceedButton"), PortraitBetweenLayout.IsBlitzRun());
         if (!_placeBeforeDrawSubscribed)
         {
-            RenderingServer.FramePreDraw += KeepPlacedWindowsBeforeDraw;
+            RenderingServer.FramePreDraw += PlaceLootWindowsBeforeDraw;
             _placeBeforeDrawSubscribed = true;
         }
         Capture(window, captureVisible: false);
@@ -291,37 +323,9 @@ internal sealed class PortraitRewardsLayout
             mask.OffsetBottom = -PortraitBetweenMath.LootMaskBottom;
         }
 
-        var target = new Vector2(fit.X, fit.Y);
-        state.Target = target;
-        FieldInfo? fadeField = RewardsFadeTween(state.Screen.GetType());
-        Tween? fadeTween = fadeField?.GetValue(state.Screen) as Tween;
-        // Only the entrance is taken over. A complete set (the final boss offers none; a terminal set whose last reward was
-        // taken) fades its empty window out instead, and turning that fade-out into this fade-in showed an empty loot window.
-        bool complete = state.Screen.Get("IsComplete").AsBool();
-        if (!complete && fadeTween != null && fadeTween.IsValid() && fadeTween.IsRunning() && state.Fade != fadeTween)
-        {
-            // The game's entrance slides the window to its desktop place and fades it in; take the slide over so it ends at
-            // the portrait place (the window starts transparent, so nothing is seen at the desktop place). A loot screen
-            // coming back from the card reward is already in its portrait place (only its modulate faded): the list must not
-            // dip 100 units and slide back, because a row that moves under a finger drops its press (and the rows' guard
-            // then holds touches for another third of a second). Its return is the fade alone.
-            fadeTween.Kill();
-            Tween fade = window.CreateTween().SetParallel(true);
-            fade.TweenProperty(window, "modulate", Colors.White, 0.5);
-            if (!state.Placed)
-                fade.TweenProperty(window, "position:y", fit.Y, 0.5)
-                    .SetEase(Tween.EaseType.Out).SetTrans(Tween.TransitionType.Back).From(fit.Y + 100f);
-            window.Position = target;
-            fadeField?.SetValue(state.Screen, fade);
-            state.Fade = fade;
-        }
-        else if (state.Fade == null || !state.Fade.IsValid() || !state.Fade.IsRunning())
-        {
-            if (window.Position.DistanceSquaredTo(target) > 0.25f) window.Position = target;
-            // The place is known after a fade of ours has finished; a layout that ran before the game's entrance still gets
-            // its slide.
-            if (state.Fade != null) state.Placed = true;
-        }
+        // The window's place is set, and the game's entrance taken over, in PlaceLootWindowsBeforeDraw.
+        state.Target = new Vector2(fit.X, fit.Y);
+        state.HasTarget = true;
 
         // The game's scroll engages when the list is 400 units tall; a list that overflows this shorter mask is made tall
         // enough for the drag to reach its last row (see LootScrollMinimumHeight).
