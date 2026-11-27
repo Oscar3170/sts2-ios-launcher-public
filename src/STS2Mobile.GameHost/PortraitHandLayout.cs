@@ -920,7 +920,7 @@ internal sealed class PortraitHandLayout
         {
             bool isConfirmButton = confirm.GetType().FullName == ConfirmButtonTypeName;
             ulong confirmId = confirm.GetInstanceId();
-            if (!_selectionControls.TryGetValue(confirmId, out ControlDesktopState confirmDesktop))
+            if (!_selectionControls.TryGetValue(confirmId, out ControlDesktopState? confirmDesktop))
             {
                 confirmDesktop = CaptureControl(confirm);
                 if (isConfirmButton)
@@ -980,7 +980,7 @@ internal sealed class PortraitHandLayout
             preview.OffsetBottom = preview.OffsetTop;
             preview.Scale = new Vector2(layout.PreviewScale, layout.PreviewScale);
         }
-        else if (preview != null && _selectionControls.TryGetValue(preview.GetInstanceId(), out ControlDesktopState previewDesktop))
+        else if (preview != null && _selectionControls.TryGetValue(preview.GetInstanceId(), out ControlDesktopState? previewDesktop))
         {
             RestoreControl(preview, previewDesktop);
             _selectionControls.Remove(preview.GetInstanceId());
@@ -1102,7 +1102,7 @@ internal sealed class PortraitHandLayout
             var targetPosition = new Vector2(canvasX - SafeAreaCanvas.PortraitWidth * 0.5f, canvasY - _selectionCenterY);
             var targetScale = new Vector2(cardScale, cardScale);
 
-            if (!_selectionHolderEase.TryGetValue(holderId, out SelectionHolderEase ease))
+            if (!_selectionHolderEase.TryGetValue(holderId, out SelectionHolderEase? ease))
             {
                 ease = new SelectionHolderEase
                 {

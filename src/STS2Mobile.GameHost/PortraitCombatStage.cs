@@ -551,10 +551,12 @@ internal sealed class PortraitCombatStage
         if (!plan.StageLogged)
         {
             var cellWidths = new List<string>();
-            if (plan.Crowd.Widths != null)
+            // A local, so the null test (a default plan has no cells yet) does not mark the plan's own cells maybe-null.
+            float[]? loggedWidths = plan.Crowd.Widths;
+            if (loggedWidths != null)
             {
-                for (int i = 0; i < plan.Crowd.Widths.Length && i < 8; i++)
-                    cellWidths.Add(plan.Crowd.Widths[i].ToString("F0"));
+                for (int i = 0; i < loggedWidths.Length && i < 8; i++)
+                    cellWidths.Add(loggedWidths[i].ToString("F0"));
             }
             GD.Print($"Portrait stage: capacity={plan.Capacity} dominant={plan.Dominant} crowd={plan.CrowdEnabled}/{plan.CrowdComputed} " +
                      $"reserved={plan.ReservedBoss} row={plan.SingleRow} " +

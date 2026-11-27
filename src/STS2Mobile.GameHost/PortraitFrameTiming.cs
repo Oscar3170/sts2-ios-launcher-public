@@ -58,7 +58,7 @@ internal static class PortraitFrameTiming
     private static int _lastGc0, _lastGc1, _lastGc2;
     private static int _secondGc0, _secondGc1, _secondGc2;
     private static bool _allocationAvailable = true;
-    private static bool FrameGcSeen;
+    private static bool _frameGcSeen;
     private static ulong _lastFrameIndex;
     private static ulong _lastPrintMsec;
     private static int _secondFrames;
@@ -107,7 +107,7 @@ internal static class PortraitFrameTiming
             FrameTicks[_pass] += ticks;
             if (ticks > FrameMax[_pass]) FrameMax[_pass] = ticks;
             int collections = GC.CollectionCount(0) - _gc0 + GC.CollectionCount(1) - _gc1 + GC.CollectionCount(2) - _gc2;
-            if (collections > 0) FrameGcSeen = true;
+            if (collections > 0) _frameGcSeen = true;
             double ms = ticks * Millisecond;
             if (ms < SpikeMsec) return;
             // A GC pause inside the pass is part of its wall time; the counters say whether the pause or the pass's own work
@@ -185,8 +185,8 @@ internal static class PortraitFrameTiming
         _lastGc1 = gc1;
         _lastGc2 = gc2;
         // The frame's passes have all closed: what they saw is the frame's answer to "was this a GC frame".
-        LastFrameGcInPass = FrameGcSeen;
-        FrameGcSeen = false;
+        LastFrameGcInPass = _frameGcSeen;
+        _frameGcSeen = false;
 
         bool any = false;
         for (int pass = 0; pass < PassCount; pass++)
