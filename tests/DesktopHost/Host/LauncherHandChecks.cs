@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Combat;
@@ -77,7 +78,48 @@ internal sealed partial class TestDriver
     // lower row takes any, so the first three draws never change rows.
     private partial int HandRowsCardLimit() => 10;
 
-    private partial int HandRowsUpperCount(int count) => PortraitCombatMath.SplitHandRows(count).BackRowCount;
+    // The Hand Layout setting was added after these checks: read and write its static by reflection so this check compiles
+    // against the unfixed launcher and fails on the drawn rows instead of a missing member. Once present, Fixed is the enum's
+    // second value and PortraitCombatMath.ComputeHandCardSlot takes it as the fifth argument.
+    private static readonly PropertyInfo? HandRowModeProperty =
+        typeof(PortraitHandLayout).GetProperty("RowMode", BindingFlags.Public | BindingFlags.Static);
+    private static readonly MethodInfo? HandRowSlotMethod = typeof(PortraitCombatMath)
+        .GetMethods(BindingFlags.Public | BindingFlags.Static)
+        .FirstOrDefault(method => method.Name == nameof(PortraitCombatMath.ComputeHandCardSlot)
+            && method.GetParameters().Length == 5);
+
+    private static bool? FixedHandRowsEnabled()
+    {
+        PropertyInfo? property = HandRowModeProperty;
+        if (property is null) return null;
+        if (property.GetValue(null) is not { } value) return null;
+        return Equals(value, Enum.Parse(property.PropertyType, "Fixed"));
+    }
+
+    private static bool TrySetFixedHandRows(bool fixedRows)
+    {
+        PropertyInfo? property = HandRowModeProperty;
+        if (property is null) return false;
+        object value = Enum.Parse(property.PropertyType, fixedRows ? "Fixed" : "Alternating");
+        if (!Equals(property.GetValue(null), value))
+            property.SetValue(null, value);
+        return true;
+    }
+
+    private static PortraitCardSlot ExpectedSlot(int count, int index, PortraitCombatBands bands, bool flat, bool fixedRows)
+    {
+        MethodInfo? method = HandRowSlotMethod;
+        if (!fixedRows || method is null)
+            return PortraitCombatMath.ComputeHandCardSlot(count, index, bands, flat);
+        object mode = Enum.Parse(method.GetParameters()[4].ParameterType, "Fixed");
+        return (PortraitCardSlot)method.Invoke(null, new object[] { count, index, bands, flat, mode })!;
+    }
+
+    // The requirement's own split, not the launcher's policy: Alternating takes max(3, ceil(n/2)) upper cards; Fixed fills
+    // the upper row to five first. The harness compares the cards it sees against this formula, so a changed launcher
+    // constant cannot pass both sides.
+    private static int ExpectedUpperCount(int count, bool fixedRows) =>
+        fixedRows ? Math.Min(count, 5) : Math.Min(count, Math.Max(3, (count + 1) / 2));
 
     // Both rows keep the shape's full card size and never leave the 12-unit margin; cards overlap when crowded.
     private partial float HandRowsRowTolerance() => 8f;
@@ -87,17 +129,33 @@ internal sealed partial class TestDriver
 
     private partial float HandRowsLowerRowTolerance() => 8f;
 
-    private partial void CheckHandRowsLayout(int count, IReadOnlyList<NHandCardHolder> cards, NCombatRoom room)
+    private partial void CheckHandRowsLayout(int count, IReadOnlyList<NHandCardHolder> cards, NCombatRoom room) =>
+        CheckHandRowsLayoutForMode(count, cards, room, fixedRows: false, $"hand_{count}");
+
+    private void CheckHandRowsLayoutForMode(int count, IReadOnlyList<NHandCardHolder> cards, NCombatRoom room,
+        bool fixedRows, string prefix)
     {
         if (!SafeAreaCanvas.IsPortrait) return;
         PortraitCombatBands bands = LauncherBands();
         Rect2 canvasMargin = LauncherCanvas().Grow(-PortraitCombatMath.HandEdgeMargin);
         float upperY = HandRowsRowY(cards[0]);
-        int upperCount = HandRowsUpperCount(count);
+        int upperCount = ExpectedUpperCount(count, fixedRows);
         // The planned row line, not the rotated hit-box AABB: the fan moves the AABB centre by a few units.
         int observedUpper = cards.Count(card => HandRowsRowY(card) < upperY + 100f);
-        _report.Check($"hand_{count}_upper_row_fills_first", observedUpper == upperCount,
-            $"upper row cards={observedUpper}, expected={upperCount} of {count}");
+        _report.Check($"{prefix}_upper_row_fills_first", observedUpper == upperCount,
+            $"upper row cards={observedUpper}, expected={upperCount} of {count} fixed={fixedRows}");
+        // Every card's row band: the first upperCount indices are drawn on the upper row line, the rest on the lower one.
+        float lowerLine = upperCount < cards.Count ? HandRowsRowY(cards[upperCount]) : upperY;
+        for (int i = 0; i < cards.Count; i++)
+        {
+            float cardY = HandRowsRowY(cards[i]);
+            bool upper = i < upperCount;
+            bool rowOk = upper
+                ? Math.Abs(cardY - upperY) < HandRowsRowTolerance()
+                : cardY > upperY + 100f && Math.Abs(cardY - lowerLine) < HandRowsLowerRowTolerance();
+            _report.Check($"{prefix}_card_{i}_row", rowOk, $"Y={cardY:F1} upper={upper} fixed={fixedRows}");
+        }
+
         // Both hand rows sit between the rail and the canvas bottom. A rotated card may lift its AABB up to the fan
         // bound (6 units) above the row's flat top; that lift is allowed, the row line is not.
         float expectedScale = PortraitCombatMath.HandCardScaleFor(bands, count);
@@ -114,7 +172,7 @@ internal sealed partial class TestDriver
                 && Math.Abs(card.GetCenter().Y - rowLine) <= 6f;
             cardDetails.Add($"{card} row={rowLine:F1}");
         }
-        _report.Check($"hand_{count}_hand_band", bandOk,
+        _report.Check($"{prefix}_hand_band", bandOk,
             $"hand top={bands.HandTopY:F0}; cards={string.Join("; ", cardDetails)}");
 
         Rect2[] rail =
@@ -132,10 +190,10 @@ internal sealed partial class TestDriver
             return;
         }
 
-        _report.Check($"hand_{count}_rail_stable", _handRowsRail is { } before
+        _report.Check($"{prefix}_rail_stable", _handRowsRail is { } before
             && rail.Zip(before).All(pair => pair.First.Position.DistanceTo(pair.Second.Position) < 2f),
             $"rail now={string.Join("; ", rail)} before={string.Join("; ", _handRowsRail ?? Array.Empty<Rect2>())}");
-        _report.Check($"hand_{count}_stage_stable", _handRowsStage is { } stageBefore && stage.IsEqualApprox(stageBefore),
+        _report.Check($"{prefix}_stage_stable", _handRowsStage is { } stageBefore && stage.IsEqualApprox(stageBefore),
             "the player's stage transform stays fixed while the hand grows");
     }
 
@@ -149,7 +207,9 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// At every hand size: verify the fan, record the room, flip to Flat Hand, wait for the per-frame pass to relayout,
-    /// verify flat rows and that only the hand moved, capture the 5/10-card views, then restore fan.
+    /// verify flat rows and that only the hand moved, capture the 5/10-card views, then restore fan. At 4, 5, 6 and 8 cards
+    /// also flip the Hand Layout setting to Fixed: the drawn hand must move the fourth card up (and the sixth into the lower
+    /// row) without a restart, and only the hand may move, then Alternating is restored and checked too.
     /// </summary>
     private partial async Task CheckHandRowsModesAsync(int count, IReadOnlyList<NHandCardHolder> cards, NCombatRoom room)
     {
@@ -157,7 +217,7 @@ internal sealed partial class TestDriver
         PortraitCombatBands bands = LauncherBands();
         Rect2[] fanRail = LauncherHandRailRects(room);
         Transform2D fanStage = room.CreatureNodes.First(c => c.Entity.IsPlayer).GetGlobalTransform();
-        CheckHandModeGeometry(count, cards, bands, flat: false, "fan");
+        CheckHandModeGeometry(count, cards, bands, flat: false, fixedRows: false, "fan");
         if (count is 5 or 10) await CaptureAsync($"hand_rows_{count}_fan");
 
         SetFlatHandMode(true);
@@ -165,8 +225,8 @@ internal sealed partial class TestDriver
         {
             await WaitForHandModeAsync(count, cards, bands, flat: true, $"hand_rows_{count}_flat");
             await WaitSecondsAsync(0.35);
-            CheckHandModeGeometry(count, cards, bands, flat: true, "flat");
-            AssertHandLayoutStable(room, bands, fanRail, fanStage, count);
+            CheckHandModeGeometry(count, cards, bands, flat: true, fixedRows: false, "flat");
+            AssertHandLayoutStable(room, bands, fanRail, fanStage, count, "flat");
             if (count is 5 or 10) await CaptureAsync($"hand_rows_{count}_flat");
         }
         finally
@@ -175,6 +235,50 @@ internal sealed partial class TestDriver
         }
 
         await WaitForHandModeAsync(count, cards, bands, flat: false, $"hand_rows_{count}_fan_return");
+
+        if (count is 4 or 5 or 6 or 8)
+            await CheckFixedHandRowsAsync(count, cards, bands, room);
+    }
+
+    /// <summary>
+    /// The Hand Layout setting's Fixed mode on the drawn hand: switching the static mid-fight must relayout the same cards
+    /// (no restart), put the first five indices in the upper row band (so 4 is 4+0, 5 is 5+0 and 6 is 5+1), and leave the
+    /// rail, bands and stage alone. Alternating is restored and waited for afterwards, so the next count starts from today's
+    /// layout.
+    /// </summary>
+    private async Task CheckFixedHandRowsAsync(int count, IReadOnlyList<NHandCardHolder> cards,
+        PortraitCombatBands bands, NCombatRoom room)
+    {
+        Rect2[] fanRail = LauncherHandRailRects(room);
+        Transform2D fanStage = room.CreatureNodes.First(c => c.Entity.IsPlayer).GetGlobalTransform();
+        if (FixedHandRowsEnabled() is not { } fixedEnabled)
+        {
+            _report.Fail($"hand_rows_{count}_fixed_setting",
+                "PortraitHandLayout.RowMode is missing: the Hand Layout setting cannot be exercised");
+            return;
+        }
+        _report.Check($"hand_rows_{count}_fixed_default_alternating", !fixedEnabled,
+            $"fixed={fixedEnabled} before the Fixed pass");
+        if (!TrySetFixedHandRows(true))
+        {
+            _report.Fail($"hand_rows_{count}_fixed_setting", "PortraitHandLayout.RowMode could not be set");
+            return;
+        }
+        try
+        {
+            await WaitForFixedHandRowsAsync(count, cards, bands, $"hand_rows_{count}_fixed");
+            await WaitSecondsAsync(0.35);
+            CheckHandModeGeometry(count, cards, bands, flat: false, fixedRows: true, "fixed");
+            CheckHandRowsLayoutForMode(count, cards, room, fixedRows: true, $"hand_fixed_{count}");
+            AssertHandLayoutStable(room, bands, fanRail, fanStage, count, "fixed");
+            if (count is 5 or 6) await CaptureAsync($"hand_rows_{count}_fixed");
+        }
+        finally
+        {
+            TrySetFixedHandRows(false);
+        }
+
+        await WaitForHandModeAsync(count, cards, bands, flat: false, $"hand_rows_{count}_alternating_return");
     }
 
     private Rect2[] LauncherHandRailRects(NCombatRoom room) =>
@@ -235,10 +339,59 @@ internal sealed partial class TestDriver
         }
     }
 
-    private void CheckHandModeGeometry(int count, IReadOnlyList<NHandCardHolder> cards, PortraitCombatBands bands,
-        bool flat, string mode)
+    /// <summary>
+    /// Waits for the Fixed split on the drawn hand: every holder's target must be the Fixed slot and the cards must actually
+    /// be on the upper/lower row bands the split calls for (4 and 5 all upper, 6 five plus one). A hand that never leaves
+    /// Alternating fails here rather than after a fixed wait.
+    /// </summary>
+    private async Task<long> WaitForFixedHandRowsAsync(int count, IReadOnlyList<NHandCardHolder> cards,
+        PortraitCombatBands bands, string step)
     {
-        int upper = PortraitCombatMath.SplitHandRows(count).BackRowCount;
+        int expectedUpper = ExpectedUpperCount(count, fixedRows: true);
+        long start = (long)Engine.GetProcessFrames();
+        while (true)
+        {
+            bool matches = true;
+            string mismatch = "";
+            for (int i = 0; i < cards.Count; i++)
+            {
+                PortraitCardSlot slot = ExpectedSlot(count, i, bands, flat: false, fixedRows: true);
+                Vector2 target = new(slot.LocalX, slot.LocalY);
+                if (cards[i].TargetPosition.DistanceTo(target) > 0.5f)
+                {
+                    matches = false;
+                    mismatch = $"card {i} target {cards[i].TargetPosition} != fixed {target}";
+                    break;
+                }
+            }
+            float upperY = HandRowsRowY(cards[0]);
+            int observedUpper = cards.Count(card => HandRowsRowY(card) < upperY + 100f);
+            if (observedUpper != expectedUpper)
+            {
+                matches = false;
+                mismatch = $"upper row cards={observedUpper}, expected={expectedUpper}";
+            }
+
+            long frames = (long)Engine.GetProcessFrames() - start;
+            if (matches)
+            {
+                _report.Check(step + "_settled", true, $"{frames} frames, upper={observedUpper}");
+                return frames;
+            }
+            if (frames > 10)
+            {
+                _report.Check(step + "_settled", false,
+                    $"after {frames} frames: upper={observedUpper} expected={expectedUpper}; {mismatch}");
+                return frames;
+            }
+            await WaitFramesAsync(1);
+        }
+    }
+
+    private void CheckHandModeGeometry(int count, IReadOnlyList<NHandCardHolder> cards, PortraitCombatBands bands,
+        bool flat, bool fixedRows, string mode)
+    {
+        int upper = ExpectedUpperCount(count, fixedRows);
         Rect2 margin = LauncherCanvas().Grow(-PortraitCombatMath.HandEdgeMargin);
         float expected = PortraitCombatMath.HandCardScaleFor(bands, count);
         bool scaleOk = true, rotationOk = true, marginOk = true, rowLineOk = true;
@@ -247,7 +400,7 @@ internal sealed partial class TestDriver
         for (int i = 0; i < cards.Count; i++)
         {
             NHandCardHolder holder = cards[i];
-            PortraitCardSlot slot = PortraitCombatMath.ComputeHandCardSlot(count, i, bands, flat);
+            PortraitCardSlot slot = ExpectedSlot(count, i, bands, flat, fixedRows);
             scaleOk &= Math.Abs(holder.Scale.X - expected) < 0.02f;
             float angle = flat ? 0f : slot.AngleDegrees;
             rotationOk &= Math.Abs(holder.RotationDegrees - angle) < 0.6f;
@@ -273,7 +426,7 @@ internal sealed partial class TestDriver
     }
 
     private void AssertHandLayoutStable(NCombatRoom room, PortraitCombatBands before, Rect2[] railBefore,
-        Transform2D stageBefore, int count)
+        Transform2D stageBefore, int count, string mode)
     {
         PortraitCombatBands now = LauncherBands();
         Rect2[] rail = LauncherHandRailRects(room);
@@ -284,7 +437,7 @@ internal sealed partial class TestDriver
             pair.First.Position.DistanceTo(pair.Second.Position) < 2f);
         Transform2D stage = room.CreatureNodes.First(c => c.Entity.IsPlayer).GetGlobalTransform();
         bool stageStable = stage.IsEqualApprox(stageBefore);
-        _report.Check($"hand_rows_{count}_flat_layout_stable", bandsStable && railStable && stageStable,
+        _report.Check($"hand_rows_{count}_{mode}_layout_stable", bandsStable && railStable && stageStable,
             $"hand top {before.HandTopY:F1}->{now.HandTopY:F1}; rail={string.Join("; ", rail)} " +
             $"before={string.Join("; ", railBefore)}; stage stable={stageStable}");
     }

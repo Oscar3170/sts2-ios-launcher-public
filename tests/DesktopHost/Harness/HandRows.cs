@@ -18,7 +18,8 @@ internal sealed partial class TestDriver
     /// <summary>
     /// Draws the hand one card at a time and checks that every count lands in the upper row first and leaves the rest of the
     /// fight alone. The host supplies its row policy: the launcher's permanent two-row hand with up to ten cards
-    /// (LauncherHandChecks.cs).
+    /// (LauncherHandChecks.cs). Each count also flips the launcher's Hand Layout setting to Fixed (portrait only) and checks
+    /// the drawn rows against the 5-then-lower split before restoring Alternating.
     /// </summary>
     private async Task RunHandRowsAsync(RunState state)
     {
@@ -54,17 +55,6 @@ internal sealed partial class TestDriver
             upperY ??= y;
             _report.Check($"hand_{count}_upper_row_stable", Math.Abs(y - upperY.Value) < HandRowsRowTolerance(),
                 $"first card Y={y:F1}, one-card Y={upperY:F1}");
-            int upperCount = HandRowsUpperCount(count);
-            float lowerLine = upperCount < cards.Length ? HandRowsRowY(cards[upperCount]) : y;
-            for (int i = 0; i < cards.Length; i++)
-            {
-                float cardY = HandRowsRowY(cards[i]);
-                bool upper = i < upperCount;
-                bool rowOk = upper
-                    ? Math.Abs(cardY - y) < HandRowsRowTolerance()
-                    : cardY > y + 100f && Math.Abs(cardY - lowerLine) < HandRowsLowerRowTolerance();
-                _report.Check($"hand_{count}_card_{i}_row", rowOk, $"Y={cardY:F1} upper={upper}");
-            }
             CheckHandRowsLayout(count, cards, room);
             await CheckHandRowsModesAsync(count, cards, room);
             await CaptureAsync($"hand_rows_{count}");

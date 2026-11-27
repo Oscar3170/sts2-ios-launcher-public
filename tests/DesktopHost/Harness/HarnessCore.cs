@@ -1005,13 +1005,12 @@ internal sealed partial class TestDriver
     // The hand policy the hand-rows scenario draws against: the launcher's permanent two-row hand fills the upper row first
     // and holds up to ten (LauncherHandChecks.cs).
     private partial int HandRowsCardLimit();
-    private partial int HandRowsUpperCount(int count);
     private partial float HandRowsRowTolerance();
     private partial float HandRowsRowY(NHandCardHolder holder);
     private partial float HandRowsLowerRowTolerance();
     private partial void CheckHandRowsLayout(int count, IReadOnlyList<NHandCardHolder> cards, NCombatRoom room);
-    // hand-rows flips the launcher's Flat Hand setting per count and checks both modes; the hand-selection flow adds one
-    // flat pass.
+    // hand-rows flips the launcher's Flat Hand and Hand Layout settings per count and checks every mode; the hand-selection
+    // flow adds one flat pass.
     private partial Task CheckHandRowsModesAsync(int count, IReadOnlyList<NHandCardHolder> cards, NCombatRoom room);
     private partial bool FlatHandSupported();
     private partial void SetFlatHandMode(bool flat);
