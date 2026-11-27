@@ -558,7 +558,8 @@ internal sealed class PortraitCombatStage
                 for (int i = 0; i < loggedWidths.Length && i < 8; i++)
                     cellWidths.Add(loggedWidths[i].ToString("F0"));
             }
-            GD.Print($"Portrait stage: capacity={plan.Capacity} dominant={plan.Dominant} crowd={plan.CrowdEnabled}/{plan.CrowdComputed} " +
+            GD.Print($"Portrait stage: capacity={plan.Capacity} roster={plan.PlannedEnemies}+{plan.PlannedPlayers}p " +
+                     $"dominant={plan.Dominant} crowd={plan.CrowdEnabled}/{plan.CrowdComputed} " +
                      $"reserved={plan.ReservedBoss} row={plan.SingleRow} " +
                      $"backBoss={plan.BackBoss} stagger={plan.Staggered} chain={plan.Segmented} target={plan.BodyTargetScale:F3} " +
                      $"shared={plan.SharedBodyScale:F3} locked={plan.SharedLocked} left={plan.CrowdLeft:F0} " +
@@ -1286,7 +1287,7 @@ internal sealed class PortraitCombatStage
             _bossArmOriginals.Clear();
         }
 
-        plan = new CombatStagePlan { CanvasHeight = canvasHeight, Bands = bands };
+        plan = new CombatStagePlan { CanvasHeight = canvasHeight, Bands = bands, PlannedPlayers = players.Count, PlannedEnemies = enemies.Count };
         state.Stage = plan;
 
         bool segmented = enemies.Count > 0;
@@ -2526,6 +2527,8 @@ internal sealed class PortraitCombatStage
         /// <summary>The enemy roster the slot table was last assigned for, so an unchanged roster costs nothing.</summary>
         public readonly HashSet<ulong> LiveIds = new();
         public bool StageLogged;
+        /// <summary>The players and enemies present when the plan was frozen, for the stage log.</summary>
+        public int PlannedPlayers, PlannedEnemies;
         public readonly HashSet<ulong> PlacementLogged = new();
         public float BodyTargetScale;
         public TextureRect? Seam;
