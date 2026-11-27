@@ -277,23 +277,25 @@ internal sealed partial class TestDriver
     }
 
     /// <summary>
-    /// A second fixed fight: three Corpse Slugs. At 9:19.5 the launcher stages them as two front enemies and one back-row
-    /// enemy (front feet ~1318, back ~916 in the 141924 run); at 9:16 they form the one crowd row. The NibbitsNormal fight
-    /// above is one row at both shapes, so this pass keeps the tall shape's back-row enemy target coverage (padding and
-    /// snap releases aimed across the front row) deterministic instead of leaving it to whichever act the run drew. The
-    /// act stays Overgrowth, so the backdrop/scene is the same valid act scene at both shapes; the fight, its three
-    /// enemies and the shape's formation are asserted, and a mismatch throws instead of continuing.
+    /// A second fixed fight: four Exoskeletons (fixed slots first..fourth). At 9:19.5 the launcher stages them as two front
+    /// and two back-row enemies (front feet ~1324, back ~916-935); at 9:16 they form the one crowd row. The NibbitsNormal
+    /// fight above is one row at both shapes, so this pass keeps the tall shape's back-row enemy target coverage (padding
+    /// and snap releases aimed across the front row) deterministic instead of leaving it to whichever act the run drew.
+    /// (Corpse Slugs used to serve here, but a short trio is one row on both shapes now.) The act stays Overgrowth, so the
+    /// backdrop/scene is the same valid act scene at both shapes; the fight, its four enemies and the shape's formation are
+    /// asserted, and a mismatch throws instead of continuing.
     /// </summary>
     private async Task RunBackRowFightAsync(Player player)
     {
+        const int FightSize = 4;
         RunState state = RunManager.Instance.DebugOnlyGetState()
             ?? throw new InvalidOperationException("No run state for the back-row fight.");
-        EncounterModel encounter = ModelDb.Encounter<CorpseSlugsNormal>().ToMutable();
+        EncounterModel encounter = ModelDb.Encounter<ExoskeletonsNormal>().ToMutable();
         encounter.GenerateMonstersWithSlots(state);
         int generated = encounter.MonstersWithSlots.Count;
-        if (generated != 3)
+        if (generated != FightSize)
             throw new InvalidOperationException(
-                $"CorpseSlugsNormal generated {generated} monsters; the back-row fight needs exactly three.");
+                $"ExoskeletonsNormal generated {generated} monsters; the back-row fight needs exactly {FightSize}.");
 
         Log.Info($"[TEST] entering fixed back-row encounter {encounter.GetType().Name} " +
                  $"({generated} monsters, act {state.Act.GetType().Name})");
@@ -318,15 +320,15 @@ internal sealed partial class TestDriver
         _report.Phase("back_row_fight_entered",
             $"act={state.Act.GetType().Name} encounter={encounter.GetType().Name} monsters={enemies.Count} " +
             $"compact={bands.Compact} feet=[{feetText}]");
-        _report.Check("touch-combat_back_row_fight_enemies", enemies.Count == 3,
+        _report.Check("touch-combat_back_row_fight_enemies", enemies.Count == FightSize,
             $"encounter={encounter.GetType().Name} living enemies={enemies.Count}");
         _report.Check("touch-combat_back_row_fight_formation",
             bands.Compact ? spread <= 8f : spread >= 150f,
             $"compact={bands.Compact} feet=[{feetText}] spread={spread:F1} " +
             "(single row <=8 at 9:16, staggered back row >=150 at 9:19.5)");
-        if (enemies.Count != 3)
+        if (enemies.Count != FightSize)
             throw new InvalidOperationException(
-                $"CorpseSlugsNormal entered with {enemies.Count} living enemies; the back-row pass needs three.");
+                $"ExoskeletonsNormal entered with {enemies.Count} living enemies; the back-row pass needs {FightSize}.");
 
         // At 9:19.5 target the back-row (highest) enemy explicitly; at 9:16 every enemy is the one row, so take the
         // clearest release available. The points must be outside every other hitbox or the pass fails loudly.
@@ -367,7 +369,7 @@ internal sealed partial class TestDriver
             $"(clearance {snap.Clearance:F1} from the others)",
             "touch-combat_15a_second_snap_aiming", "touch-combat_15_second_snap_play");
         _report.Pass("touch-combat_back_row_fight_complete",
-            $"three Corpse Slugs, compact={bands.Compact}, back-row target releases ran");
+            $"four Exoskeletons, compact={bands.Compact}, back-row target releases ran");
     }
 
     /// <summary>

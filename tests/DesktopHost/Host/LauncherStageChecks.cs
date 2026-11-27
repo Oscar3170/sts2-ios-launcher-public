@@ -1167,6 +1167,11 @@ internal sealed partial class TestDriver
         if (bottoms.Length == 0) return;
         _report.Check(phase + "_feet_above_rail", bottoms.All(b => b <= bands.RailTopY + 1f),
             $"railTop={bands.RailTopY} bottoms={string.Join(", ", bottoms.Select(b => b.ToString("F1")))}");
+        // A short trio stands in one row on both portrait shapes whenever the row fits (the user's choice): Corpse Slugs
+        // draw one slug 10% larger in a random slot, and the layout must not depend on which slot that is.
+        if (phase.StartsWith("CorpseSlugsNormal", StringComparison.Ordinal) && bottoms.Length == 3)
+            _report.Check(phase + "_one_row", bottoms.Max() - bottoms.Min() <= 8f,
+                $"compact={bands.Compact} bottoms={string.Join(", ", bottoms.Select(b => b.ToString("F1")))}");
         // The stage assigns each creature its own foot line (portrait_feet_y): a pair's first is higher, the second a
         // little higher, lone enemies a little raised. Use those assignments when every non-flying creature has one; the
         // old front-line rules are only a fallback for a room that does not publish them.
