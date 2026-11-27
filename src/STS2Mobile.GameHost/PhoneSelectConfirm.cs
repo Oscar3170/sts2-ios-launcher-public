@@ -45,7 +45,6 @@ internal sealed class PhoneSelectConfirm
     private const string ChooseRelicTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.NChooseARelicSelection";
     private const string TreasureTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic.NTreasureRoomRelicCollection";
     private const string RestSiteRoomTypeName = "MegaCrit.Sts2.Core.Nodes.Rooms.NRestSiteRoom";
-    private const string RestSiteButtonTypeName = "MegaCrit.Sts2.Core.Nodes.RestSite.NRestSiteButton";
     private const string MerchantSlotTypeName = "MegaCrit.Sts2.Core.Nodes.Screens.Shops.NMerchantSlot";
     private const string CardHolderTypeName = "MegaCrit.Sts2.Core.Nodes.Cards.Holders.NCardHolder";
     private const string HoverTipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
@@ -172,7 +171,6 @@ internal sealed class PhoneSelectConfirm
     private readonly Type? _merchantSlotType;
     private readonly FieldInfo? _isHovered;
     private readonly FieldInfo? _ignoreMouseRelease;
-    private readonly FieldInfo? _restUnclickable;
     private readonly MethodInfo? _slotOnSelected;
     private readonly MethodInfo? _slotClearTip;
     private readonly MethodInfo? _createTips;
@@ -270,7 +268,6 @@ internal sealed class PhoneSelectConfirm
         Type? cardHolderType = sts2.GetType(CardHolderTypeName);
         _isHovered = cardHolderType?.GetField("_isHovered", InstAll);
         _ignoreMouseRelease = _merchantSlotType?.GetField("_ignoreMouseRelease", InstAll);
-        _restUnclickable = sts2.GetType(RestSiteButtonTypeName)?.GetField("_isUnclickable", InstAll);
         _slotOnSelected = _merchantSlotType?.GetMethod("OnSelected", InstAll, Type.EmptyTypes);
         _slotClearTip = _merchantSlotType?.GetMethod("ClearHoverTip", InstAll, Type.EmptyTypes);
         Type? tipSet = sts2.GetType(HoverTipSetTypeName);
@@ -313,7 +310,7 @@ internal sealed class PhoneSelectConfirm
             if (name == ChooseCardTypeName && node is Control chooseCard) Track(chooseCard, _chooseCard);
             else if (name == ChooseRelicTypeName && node is Control chooseRelic) Track(chooseRelic, _chooseRelic);
             else if (name == TreasureTypeName && node is Control treasure) Track(treasure, _treasure);
-            else if (name == RestSiteRoomTypeName && node is Control rest && _restUnclickable != null) Track(rest, _rest);
+            else if (name == RestSiteRoomTypeName && node is Control rest) Track(rest, _rest);
             else if (_merchantSlotType != null && _merchantSlotType.IsInstanceOfType(node))
             {
                 // A slot already in the shop when Portrait Mode is turned on is ready; a new one is not yet.
@@ -935,16 +932,14 @@ internal sealed class PhoneSelectConfirm
     }
 
     /// <summary>
-    /// Rest-site options: the room's own choice buttons. The first tap selects one and keeps the game's option description on
-    /// screen (an option's focus is what makes the room show it); the second tap on the same option runs the game's own
-    /// release, which takes the option. The selecting press is stopped by the button's own unclickable guard, so its release
-    /// cannot take the option; the guard is put back on the confirming tap and whenever the selection is let go.
+    /// Rest-site options: the room's own choice buttons. The first tap selects one; its focus gives the game's hovered look
+    /// (`NRestSiteButton.OnFocus`: enlarged, outlined, brightened) and makes the room show the option's description. The
+    /// selecting press lets go of the button's press record, so its own release takes nothing; the second tap on the same
+    /// option runs the game's own release, which takes the option. The button's unclickable flag is left to the game: it is
+    /// what dims an option the game turned off, and it gates the hovered look.
     /// </summary>
     private sealed class RestAdapter(PhoneSelectConfirm owner) : SelectAdapter(owner)
     {
-        // Buttons whose clickable guard this file turned off, and what it was.
-        private readonly Dictionary<ulong, bool> _suppressed = new();
-
         internal override string Label => "rest option";
         internal override bool IsCard => false;
 
@@ -960,44 +955,16 @@ internal sealed class PhoneSelectConfirm
         internal override Control AttachReticle(Control item) =>
             PhoneSelectConfirm.AttachReticle(item, new Rect2(Vector2.Zero, item.Size));
 
-        // An option's focus is what makes the room show its description (`NRestSiteButton.RefreshTextState`); losing it fades
-        // the copy out again. Both are the game's own paths, so the text and its fade stay native.
+        // An option's focus is its hovered look and what makes the room show its description
+        // (`NRestSiteButton.RefreshTextState`); losing it fades both out again. Both are the game's own paths.
         internal override void ShowTip(Control screen, Control item) => item.GrabFocus();
         internal override void HideTip(Control screen, Control item) => item.ReleaseFocus();
         internal override void Inspect(Control screen, Control item) => item.GrabFocus();
 
-        internal override void Suppress(Control screen, Control item)
-        {
-            if (Owner._restUnclickable == null) return;
-            foreach (ulong dead in _suppressed.Keys.Where(id => !GodotObject.IsInstanceIdValid(id)).ToList()) _suppressed.Remove(dead);
-            ulong id = item.GetInstanceId();
-            if (!_suppressed.ContainsKey(id))
-                _suppressed[id] = Owner._restUnclickable.GetValue(item) is true;
-            Owner._restUnclickable.SetValue(item, true);
-        }
+        internal override void Suppress(Control screen, Control item) => Owner.ClearPress(item);
 
-        internal override void Restore(Control screen, Control item)
-        {
-            if (Owner._restUnclickable == null) return;
-            if (!_suppressed.Remove(item.GetInstanceId(), out bool was)) return;
-            if (GodotObject.IsInstanceValid(item)) Owner._restUnclickable.SetValue(item, was);
-        }
-
-        internal override void Detach(Control screen)
-        {
-            if (Owner._restUnclickable == null) return;
-            foreach ((ulong id, bool was) in _suppressed)
-                if (GodotObject.InstanceFromId(id) is Control button && GodotObject.IsInstanceValid(button))
-                    Owner._restUnclickable.SetValue(button, was);
-            _suppressed.Clear();
-        }
-
-        /// <summary>The confirming tap: the button is clickable again, and its own release is what takes the option.</summary>
-        internal override void Commit(Control screen, Control item)
-        {
-            Restore(screen, item);
-            item.Call("OnRelease");
-        }
+        /// <summary>The confirming tap: the button's own release is what takes the option.</summary>
+        internal override void Commit(Control screen, Control item) => item.Call("OnRelease");
 
         /// <summary>A button the game disabled for its fade, or an option it turned off, cannot be confirmed.</summary>
         internal override bool CanConfirm(Control screen, Control item)
