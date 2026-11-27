@@ -2,8 +2,8 @@ namespace STS2Mobile.Platform.Tests;
 
 public class PortraitHeaderMathTests
 {
-    // The launcher's bands (PortraitBands): 88 unit status row, 140 unit potion row, 222 unit relic band.
-    private const float TopBarRow = 88f, PotionRow = 140f, TopBar = 228f, Band = 222f, Cap = 162f;
+    // The launcher's bands (PortraitBands): 88 unit status row, 140 unit potion band, 222 unit relic band, 106 unit slots.
+    private const float TopBarRow = 88f, PotionRow = 140f, TopBar = 228f, Band = 222f, Cap = 162f, Slot = 106f;
     private const float MapDeck = 262f, Margin = 10f, Gap = 8f;
 
     [Fact]
@@ -12,31 +12,35 @@ public class PortraitHeaderMathTests
         HeaderBox row = PortraitHeaderMath.PotionRow(1080f, Cap, TopBarRow, PotionRow, MapDeck, Margin, Gap);
         HeaderBox buttons = PortraitHeaderMath.MapDeckRow(1080f, Cap, TopBarRow, PotionRow, MapDeck, 127f, Margin);
         Assert.Equal(Margin, row.Left, 3);
-        Assert.Equal(Cap + TopBarRow - PortraitHeaderMath.PotionRowRise, row.Top, 3);
-        Assert.Equal(PotionRow, row.Height, 3);
+        // Below the top row and the ascension number's ink, which reaches 3 units past the row.
+        Assert.Equal(Cap + TopBarRow + PortraitHeaderMath.PotionRowDrop, row.Top, 3);
+        Assert.True(row.Top > Cap + TopBarRow + 3f);
+        Assert.Equal(119f, row.Height, 3);
         Assert.Equal(790f, row.Width, 3);
         Assert.Equal(row.Right + Gap, buttons.Left, 3);
         Assert.Equal(1080f - Margin, buttons.Right, 3);
-        // The buttons keep the second row's band; the tray stands a little higher, onto the stone.
+        // The buttons keep the second row's band.
         Assert.Equal(Cap + TopBarRow + PotionRow / 2f, buttons.Top + buttons.Height / 2f, 3);
-        // The tray's dark box (131 units, 2 below the row's top) ends on the stone, above its 20 unit torn edge.
-        Assert.True(row.Top + 2f + 131f <= Cap + TopBar - 20f);
+        // The tray's dark box (the slot plus 4 units, 2 below the row's top) ends on the stone, above its 20 unit torn edge,
+        // and inside the row.
+        Assert.True(row.Top + 2f + Slot + 4f <= Cap + TopBar - 20f);
+        Assert.True(row.Top + 2f + Slot + 4f <= row.Bottom);
     }
 
     [Fact]
     public void PotionRowKeepsAWholeNumberOfSlotsForTheDefaultCapacity()
     {
-        // Three slots at 44 points (127 units, 4 units apart) plus the tray's 10 unit margins fit the row three times over.
-        float tray = PortraitHeaderMath.PotionStripWidth(3, 127f, 4f, Margin, Margin);
-        Assert.Equal(409f, tray, 3);
+        // Three 106 unit slots, 4 units apart, plus the tray's 10 unit margins fit the row twice over.
+        float tray = PortraitHeaderMath.PotionStripWidth(3, Slot, 4f, Margin, Margin);
+        Assert.Equal(346f, tray, 3);
         Assert.True(tray < 790f);
     }
 
     [Fact]
     public void TwelvePotionSlotsScrollInsteadOfShrinking()
     {
-        float tray = PortraitHeaderMath.PotionStripWidth(12, 127f, 4f, Margin, Margin);
-        Assert.Equal(1588f, tray, 3);
+        float tray = PortraitHeaderMath.PotionStripWidth(12, Slot, 4f, Margin, Margin);
+        Assert.Equal(1336f, tray, 3);
         // Nearly two rows' worth of swiping, inside the eight the acceptance allows.
         Assert.True(tray - 790f <= 8f * 790f);
     }

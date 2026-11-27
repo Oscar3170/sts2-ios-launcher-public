@@ -56,21 +56,27 @@ public static class PortraitHeaderMath
     }
 
     /// <summary>
-    /// How far the potion row sits above the second header row's band. The stone's last 20 units are its torn edge (the dark
-    /// rim and the tear the stage shows through), not stone, and the tray's dark box (131 units, 2 below the row's top, in a
-    /// 140 unit row) ended over it. Lifted by 17, the tray ends 4 units above the torn edge, on the stone. The map and deck
-    /// buttons keep the band: their art ends well inside their boxes, and lifting them would push them into the top row.
+    /// How far the potion row starts below the top row's band: the ascension badge stands on the band's bottom and its
+    /// number's ink reaches 3 units past it, so the tray starts clear of both.
     /// </summary>
-    public const float PotionRowRise = 17f;
+    public const float PotionRowDrop = 4f;
 
     /// <summary>
-    /// The potion row, left of the map and deck buttons in the second header row. Its height is the row's own; what potions
-    /// do not use shows the stone behind the tray.
+    /// How far the potion row ends above the header's bottom. The stone's last 20 units are its torn edge (the dark rim and
+    /// the tear the stage shows through), not stone; ending the row 17 units above the bottom keeps the tray's dark box (the
+    /// slot plus 4 units, 2 below the row's top) 4 units above the torn edge, on the stone.
+    /// </summary>
+    public const float PotionRowLift = 17f;
+
+    /// <summary>
+    /// The potion row, left of the map and deck buttons in the second header row: from just under the top row to just above
+    /// the stone's torn edge, so it is shorter than the band. What potions do not use shows the stone behind the tray.
     /// </summary>
     public static HeaderBox PotionRow(float canvasWidth, float capHeight, float topBarRowHeight, float potionRowHeight,
         float mapDeckWidth, float margin, float gap) =>
-        new(margin, capHeight + topBarRowHeight - PotionRowRise,
-            Math.Max(0f, canvasWidth - 2f * margin - gap - mapDeckWidth), Math.Max(0f, potionRowHeight));
+        new(margin, capHeight + topBarRowHeight + PotionRowDrop,
+            Math.Max(0f, canvasWidth - 2f * margin - gap - mapDeckWidth),
+            Math.Max(0f, potionRowHeight - PotionRowDrop - PotionRowLift));
 
     /// <summary>The map and deck buttons, right of the potion row and centred on the second row's band.</summary>
     public static HeaderBox MapDeckRow(float canvasWidth, float capHeight, float topBarRowHeight, float potionRowHeight,

@@ -25,7 +25,7 @@ internal sealed class PortraitRunHeader(Action queueApply)
     private const float PortraitRelicSize = 96f;
     private const float DesktopRelicSize = 68f;
     private const float RelicSeparation = 8f;
-    // Sizes for a finger. A potion slot is 44 points (127 units) in its own row under the top bar, and the map,
+    // Sizes for a finger. A potion slot is 37 points (106 units) in its own row under the top bar, and the map,
     // deck and settings buttons are 44 points wide, their touch area reaching up into the safe cap to be 44 points tall.
     private const string PotionRowName = "PotionMarginifier";
     internal const string PotionRowScrollName = "PhonePotionRow";
@@ -33,8 +33,9 @@ internal sealed class PortraitRunHeader(Action queueApply)
     private const string MapDeckRowName = "PhoneMapDeckRow";
     internal const string RelicClipName = "PhoneRelicRow";
     private const string RelicExtentName = "Extent";
-    private const float PotionSlotSize = PortraitBands.MinTarget;
-    private const float PotionPictureScale = 1.5f;
+    private const float PotionSlotSize = PortraitBands.PotionSlotSize;
+    // The game's 60 unit potion picture at 75 units in a 106 unit slot (the same share as 90 in the former 127).
+    private const float PotionPictureScale = 1.25f;
     private const float PotionRowMargin = 10f;
     private const float PotionRowGap = 8f;
     private const float PotionHolderSeparation = 4f;

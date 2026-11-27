@@ -250,11 +250,13 @@ internal sealed partial class TestDriver
         {
             Rect2 rect = holder.GetGlobalRect();
             bool inView = rowRect.Grow(2f).Encloses(rect);
+            // The slot is the header's own size (37 points), not the 44 point minimum: a 44 point slot reached into the
+            // top row over the ascension badge.
             _report.Check($"header_potion_{i}_in_stone",
                 rect.Position.Y >= stone.Position.Y && rect.End.Y <= stone.End.Y
                 && (!inView || (rect.Position.X >= stone.Position.X - 1f && rect.End.X <= stone.End.X + 1f))
-                && rect.Size.X >= PortraitBands.MinTarget - 1f && rect.Size.Y >= PortraitBands.MinTarget - 1f,
-                $"holder={rect} stone={stone} inView={inView} minimum={PortraitBands.MinTarget:F0}");
+                && rect.Size.X >= PortraitBands.PotionSlotSize - 1f && rect.Size.Y >= PortraitBands.PotionSlotSize - 1f,
+                $"holder={rect} stone={stone} inView={inView} slot={PortraitBands.PotionSlotSize:F0}");
         }
         int potionCount = player.Potions.Count();
         var lastPotion = holders.Last();
