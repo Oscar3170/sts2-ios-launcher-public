@@ -66,18 +66,11 @@ internal static partial class PortraitSubmenuLayout
     private static readonly Dictionary<ulong, CardLibraryState> CardLibraryStates = new();
     private static SceneTree? _cardLibraryTree;
 
-    // The grid's native layout members. NCardGrid's recycler decides from the whole screen, so in a grid that starts under
-    // the header it rebinds the row standing at the grid's clipped foot; the reconcile pass below re-points the same
-    // holders at the window the visible area needs, after the game's own pass.
+    // The grid's native layout members (its row window is kept by PortraitGridWindow).
     private static Type? _cardLibraryGridType;
     private static FieldInfo? _cardLibraryCardSizeField, _cardLibraryNeedsReinitField;
     private static Type? _cardLibraryHolderType;
     private static FieldInfo? _cardLibraryHoverTweenField;
-    private static FieldInfo? _cardLibraryRowsField, _cardLibrarySlidingIndexField;
-    private static PropertyInfo? _cardLibrarySortedCardsProperty;
-    private static MethodInfo? _cardLibraryAssignRowMethod, _cardLibraryPositionRowsMethod, _cardLibraryUpdateNavigationMethod;
-    private static readonly object[] CardLibraryRowArgs = new object[2];
-    private static readonly object[] CardLibraryIndexArgs = new object[1];
 
     /// <summary>
     /// The card library: a header bar with the native search field, the pool tabs and the four sort buttons, an advanced
@@ -245,7 +238,8 @@ internal static partial class PortraitSubmenuLayout
             }
         }
         ScaleCardLibraryHolders(grid, state, PortraitGridMath.HolderScale(cardWidth));
-        // The row window is kept in OnCardLibraryPreDraw, after the grid's own _Process.
+        // While the content moves the game's recycler hands the window to PortraitGridWindow; this catches an offset set directly.
+        PortraitGridWindow.Reconcile(grid);
     }
 
     /// <summary>Gives every holder the column's scale and keeps it there past the game's own unhover tween.</summary>
@@ -266,43 +260,6 @@ internal static partial class PortraitSubmenuLayout
         }
     }
 
-    /// <summary>
-    /// Keeps the native row window on the cards the visible grid is showing. The game's recycler measures the whole screen,
-    /// so a grid that starts under the header makes it rebind the row at the clipped foot back and forth. This pass runs each
-    /// frame after the game's, re-points the same holders at the window the grid needs and does nothing while it is right.
-    /// </summary>
-    private static void ReconcileCardLibraryWindow(Control grid, CardLibraryState state)
-    {
-        if (state.CardWidth < 1f) return;
-        ResolveCardLibraryGridReflection();
-        if (_cardLibraryNeedsReinitField?.GetValue(grid) is true) return;
-        if (_cardLibraryRowsField is null || _cardLibrarySortedCardsProperty is null) return;
-        if (_cardLibraryRowsField.GetValue(grid) is not System.Collections.IList rows || rows.Count == 0) return;
-        if (_cardLibrarySortedCardsProperty.GetValue(grid) is not System.Collections.IList cards || cards.Count == 0) return;
-        if (grid.GetNodeOrNull<Control>("%ScrollContainer") is not { } scroll) return;
-        int columns = PortraitGridMath.Columns;
-        int total = (cards.Count + columns - 1) / columns;
-        int pool = rows.Count;
-        float pitch = PortraitGridMath.CardHeightFor(state.CardWidth) + PortraitGridMath.CardPadding;
-        if (pitch < 1f) return;
-        int firstVisible = (int)MathF.Floor((-scroll.Position.Y - PortraitGridMath.ContentTopPadding) / pitch);
-        int wanted = Math.Clamp(firstVisible - 1, 0, Math.Max(0, total - pool));
-        int current = _cardLibrarySlidingIndexField?.GetValue(grid) is int sliding ? sliding / columns : 0;
-        if (wanted == current) return;
-        int start = wanted * columns;
-        if (_cardLibrarySlidingIndexField != null) _cardLibrarySlidingIndexField.SetValue(grid, start);
-        if (_cardLibraryAssignRowMethod == null) return;
-        for (int i = 0; i < pool; i++)
-        {
-            CardLibraryRowArgs[0] = rows[i]!;
-            CardLibraryRowArgs[1] = start + i * columns;
-            _cardLibraryAssignRowMethod.Invoke(grid, CardLibraryRowArgs);
-        }
-        CardLibraryIndexArgs[0] = start;
-        _cardLibraryPositionRowsMethod?.Invoke(grid, CardLibraryIndexArgs);
-        _cardLibraryUpdateNavigationMethod?.Invoke(grid, null);
-    }
-
     private static void SetCardLibraryNeedsReinit(Control grid)
     {
         if (_cardLibraryNeedsReinitField != null) _cardLibraryNeedsReinitField.SetValue(grid, true);
@@ -311,37 +268,14 @@ internal static partial class PortraitSubmenuLayout
     /// <summary>Resolves the native grid's private layout members once.</summary>
     private static void ResolveCardLibraryGridReflection()
     {
-        if (_cardLibraryGridType != null && _cardLibraryRowsField != null) return;
+        if (_cardLibraryGridType != null) return;
         Assembly game = typeof(MegaCrit.Sts2.Core.Nodes.NGame).Assembly;
-        _cardLibraryGridType ??= game.GetType("MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid");
+        _cardLibraryGridType = game.GetType("MegaCrit.Sts2.Core.Nodes.Cards.NCardGrid");
         if (_cardLibraryGridType is { } type)
         {
             const BindingFlags hidden = BindingFlags.Instance | BindingFlags.NonPublic;
             _cardLibraryCardSizeField ??= type.GetField("_cardSize", hidden);
             _cardLibraryNeedsReinitField ??= type.GetField("_needsReinit", hidden);
-            if (_cardLibraryRowsField == null)
-            {
-                const BindingFlags any = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic |
-                                         BindingFlags.DeclaredOnly;
-                _cardLibraryRowsField = type.GetField("_cardRows", any);
-                _cardLibrarySlidingIndexField = type.GetField("_slidingWindowCardIndex", any);
-                _cardLibrarySortedCardsProperty = type.GetProperty("SortedCards", BindingFlags.Instance | BindingFlags.Public);
-                foreach (MethodInfo method in type.GetMethods(any))
-                {
-                    switch (method.Name)
-                    {
-                        case "AssignCardsToRow" when method.GetParameters().Length == 2:
-                            _cardLibraryAssignRowMethod ??= method;
-                            break;
-                        case "UpdateGridPositions" when method.GetParameters().Length == 1:
-                            _cardLibraryPositionRowsMethod ??= method;
-                            break;
-                        case "UpdateGridNavigation" when method.GetParameters().Length == 0:
-                            _cardLibraryUpdateNavigationMethod ??= method;
-                            break;
-                    }
-                }
-            }
         }
         _cardLibraryHolderType ??= game.GetType(CardLibraryHolderTypeName);
         if (_cardLibraryHolderType is not null)
@@ -447,9 +381,9 @@ internal static partial class PortraitSubmenuLayout
     }
 
     /// <summary>
-    /// The row-window pass, from <see cref="RenderingServer.FramePreDraw"/>: after every node's _Process, so the grid's own
-    /// recycler (which runs in its _Process while the content moves) cannot rebind the foot row after it and have that frame
-    /// drawn. The layout pass itself runs from process_frame, before the nodes process.
+    /// The holder-scale pass, from <see cref="RenderingServer.FramePreDraw"/>: a card the finger moves onto snaps to the
+    /// game's hover scale in its own input/_Process, after the layout pass (process_frame). A scale is only a transform, so
+    /// it is drawn at once; the row window is never kept from here (see <see cref="PortraitGridWindow"/>).
     /// </summary>
     private static void OnCardLibraryPreDraw()
     {
@@ -459,8 +393,6 @@ internal static partial class PortraitSubmenuLayout
             if (GodotObject.InstanceFromId(state.Screen) is not Control screen || !GodotObject.IsInstanceValid(screen) ||
                 !screen.IsVisibleInTree() || screen.GetNodeOrNull<Control>("%CardGrid") is not { } grid)
                 continue;
-            ReconcileCardLibraryWindow(grid, state);
-            // A card the finger moves onto snaps to the game's hover scale in its own input/_Process; keep the column's.
             if (state.CardWidth > 0.5f) ScaleCardLibraryHolders(grid, state, PortraitGridMath.HolderScale(state.CardWidth));
         }
     }

@@ -50,6 +50,7 @@ internal sealed class PortraitLayout
         _navPads.Attach();
         _settings.Attach(tree);
         PortraitHandLayout.SetFlatHandListener(ApplyImmediate);
+        PortraitGridWindow.Attach();
         QueueApply();
     }
 
@@ -57,6 +58,7 @@ internal sealed class PortraitLayout
     {
         if (_tree == null) return;
         PortraitHandLayout.SetFlatHandListener(null);
+        PortraitGridWindow.Detach();
         _combat.Detach();
         _header.Detach();
         _navPads.Detach();

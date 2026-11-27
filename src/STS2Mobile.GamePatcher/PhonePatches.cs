@@ -23,6 +23,8 @@ internal static class PhonePatches
         // skipped. A build whose two methods do not match the tested shape keeps its fan rather than losing the hand.
         new("The phone lays out the hand's cards itself", false, HandLayoutPatches.SuppressNativeTargets, CanSkipOnTestedBuild: true),
         new("Osty grows without leaving his portrait slot", false, OstyPositionPatch.SuppressNativePosition, CanSkipOnTestedBuild: true),
+        new("Card grids keep their rows while scrolled in portrait", false, CardGridWindowPatch.LetThePhoneKeepTheRowWindow,
+            CanSkipOnTestedBuild: true),
     ];
 
     // The game looks for release_info.json beside its executable. On the phone that is the app, which holds no game file and

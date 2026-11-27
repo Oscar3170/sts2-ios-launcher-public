@@ -174,28 +174,28 @@ internal sealed class PortraitCardGridLayout
         foreach ((ulong id, PortraitGridScreen screen) in _viewUpgrades)
             if (GodotObject.InstanceFromId(id) is Control box && GodotObject.IsInstanceValid(box) && box.IsVisibleInTree())
                 UpdateViewUpgradesBox(box, screen, canvas);
-        if (!_windowPassSubscribed && _gridStates.Count > 0)
+        if (!_scalePassSubscribed && _gridStates.Count > 0)
         {
-            RenderingServer.FramePreDraw += ReconcileWindowsBeforeDraw;
-            _windowPassSubscribed = true;
+            RenderingServer.FramePreDraw += ScaleHoldersBeforeDraw;
+            _scalePassSubscribed = true;
         }
     }
 
-    private bool _windowPassSubscribed;
+    private bool _scalePassSubscribed;
 
     /// <summary>
-    /// The row-window and holder-scale passes run from <see cref="RenderingServer.FramePreDraw"/>, after every node's
-    /// _Process and input. <see cref="Update"/> runs from the scene tree's process_frame, which fires before the nodes
-    /// process: the grid's own recycler (in its _Process) then rebound the foot row after the repair, and a card the finger
-    /// moved onto snapped to the game's hover scale (its unhover tween pulls it to 0.8), and that frame was drawn with them.
+    /// The holder-scale pass also runs from <see cref="RenderingServer.FramePreDraw"/>, after every node's _Process and
+    /// input: a card the finger moves onto snaps to the game's hover scale there (its unhover tween pulls it to 0.8), after
+    /// the process-frame pass, and that frame was drawn with it. A scale is only a transform, so setting it this late is
+    /// drawn at once. The row window is never kept from here: a holder rebound after the last deferred-call flush draws the
+    /// previous card's face for a frame (see <see cref="PortraitGridWindow"/>).
     /// </summary>
-    private void ReconcileWindowsBeforeDraw()
+    private void ScaleHoldersBeforeDraw()
     {
         foreach ((ulong id, GridState state) in _gridStates)
         {
             if (GodotObject.InstanceFromId(id) is not Control grid || !GodotObject.IsInstanceValid(grid) || !grid.IsVisibleInTree())
                 continue;
-            ReconcileGridWindow(grid, state);
             // A holder still at the game's own scale means the grid has just built its rows again; the next process-frame
             // pass lays the grid out again for that (the deck view's own pass puts its card offset back).
             if (state.AppliedCardWidth > 0.5f && ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(state.AppliedCardWidth)))
@@ -231,88 +231,9 @@ internal sealed class PortraitCardGridLayout
         bool rebuilt = ScaleGridHolders(grid, state, PortraitGridMath.HolderScale(cardWidth)) || state.RebuiltBeforeDraw;
         state.RebuiltBeforeDraw = false;
         if (rebuilt && YOffsetOf(grid) != 0) ApplyGridPortrait(grid, state, canvas, capHeight);
-        // The row window is kept in ReconcileWindowsBeforeDraw, after the grid's own _Process.
-    }
-
-    // ---- keeping the game's row window on the portrait viewport --------------------------------------------------
-
-    private static FieldInfo? _cardRowsField;
-    private static FieldInfo? _slidingIndexField;
-    private static PropertyInfo? _sortedCardsProperty;
-    private static MethodInfo? _assignRowMethod;
-    private static MethodInfo? _positionRowsMethod;
-    private static MethodInfo? _updateNavigationMethod;
-    private static readonly object[] RowInvokeArgs = new object[2];
-    private static readonly object[] IndexInvokeArgs = new object[1];
-
-    /// <summary>
-    /// Keeps the game's rows on the cards the portrait viewport is showing. NCardGrid's own recycler decides from the whole
-    /// screen: row 0 below the screen's top means "recycle above" and the last row above the screen's bottom means "recycle
-    /// below", and in portrait both are true at once (the grid starts under the header band), so it rebinds the row standing
-    /// at the grid's clipped foot back and forth every time the scroll moves. This pass re-points the same holders at the
-    /// window the visible area needs, with their absolute positions, so a visible row keeps its cards and its place; it runs
-    /// after the game's own pass in the frame, so the rebind is never drawn. It runs during a finger drag too: the game's
-    /// recycler only runs while the content moves, and skipping this pass then left its back-and-forth on screen as the
-    /// flicker of the row at the foot. Nothing happens while the window is already right (one int compare), and the
-    /// assignment only runs on the frames the window moves.
-    /// </summary>
-    private static void ReconcileGridWindow(Control grid, GridState state)
-    {
-        if (state.AppliedCardWidth < 1f) return;
-        ResolveWindowReflection();
-        if (_cardRowsField == null || _sortedCardsProperty == null) return;
-        if (_cardRowsField.GetValue(grid) is not System.Collections.IList rows || rows.Count == 0) return;
-        if (_sortedCardsProperty.GetValue(grid) is not System.Collections.IList cards || cards.Count == 0) return;
-        if (GridScroll(grid, state) is not { } scroll) return;
-        int columns = PortraitGridMath.Columns;
-        int total = (cards.Count + columns - 1) / columns;
-        int pool = rows.Count;
-        float pitch = PortraitGridMath.CardHeightFor(state.AppliedCardWidth) + PortraitGridMath.CardPadding;
-        if (pitch < 1f) return;
-        // The row standing at the top of the grid, with one row of overscan above it (the same reach the game's own pool has).
-        int firstVisible = (int)MathF.Floor((-scroll.Position.Y - PortraitGridMath.ContentTopPadding) / pitch);
-        int wanted = Math.Clamp(firstVisible - 1, 0, Math.Max(0, total - pool));
-        int current = _slidingIndexField?.GetValue(grid) is int sliding ? sliding / columns : 0;
-        if (wanted == current) return;
-        int start = wanted * columns;
-        if (_slidingIndexField != null) _slidingIndexField.SetValue(grid, start);
-        if (_assignRowMethod == null) return;
-        for (int i = 0; i < pool; i++)
-        {
-            RowInvokeArgs[0] = rows[i]!;
-            RowInvokeArgs[1] = start + i * columns;
-            _assignRowMethod.Invoke(grid, RowInvokeArgs);
-        }
-        IndexInvokeArgs[0] = start;
-        _positionRowsMethod?.Invoke(grid, IndexInvokeArgs);
-        _updateNavigationMethod?.Invoke(grid, null);
-    }
-
-    /// <summary>Resolves the grid's row list, its window index and the row methods it re-points them with.</summary>
-    private static void ResolveWindowReflection()
-    {
-        if (_cardRowsField != null) return;
-        ResolveGridReflection();
-        if (_cardGridType is not { } type) return;
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.DeclaredOnly;
-        _cardRowsField = type.GetField("_cardRows", flags);
-        _slidingIndexField = type.GetField("_slidingWindowCardIndex", flags);
-        _sortedCardsProperty = type.GetProperty("SortedCards", BindingFlags.Instance | BindingFlags.Public);
-        foreach (MethodInfo method in type.GetMethods(flags))
-        {
-            switch (method.Name)
-            {
-                case "AssignCardsToRow" when method.GetParameters().Length == 2:
-                    _assignRowMethod ??= method;
-                    break;
-                case "UpdateGridPositions" when method.GetParameters().Length == 1:
-                    _positionRowsMethod ??= method;
-                    break;
-                case "UpdateGridNavigation" when method.GetParameters().Length == 0:
-                    _updateNavigationMethod ??= method;
-                    break;
-            }
-        }
+        // While the content moves the game's recycler hands the window to PortraitGridWindow; this catches a scroll offset
+        // set directly (which the recycler does not see), before the grid draws.
+        PortraitGridWindow.Reconcile(grid);
     }
 
     /// <summary>Tracks the View Upgrades box a deck or selection screen's tickbox stands in and places it in the footer.</summary>
@@ -407,10 +328,10 @@ internal sealed class PortraitCardGridLayout
     /// <summary>Puts the sort row back inside the scrolling content, the grid's card size and clip, and every holder's scale.</summary>
     public void RestoreGridsLandscape()
     {
-        if (_windowPassSubscribed)
+        if (_scalePassSubscribed)
         {
-            RenderingServer.FramePreDraw -= ReconcileWindowsBeforeDraw;
-            _windowPassSubscribed = false;
+            RenderingServer.FramePreDraw -= ScaleHoldersBeforeDraw;
+            _scalePassSubscribed = false;
         }
         foreach ((ulong id, GridState state) in _gridStates)
         {
