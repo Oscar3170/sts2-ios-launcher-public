@@ -1,0 +1,12 @@
+{
+  "id": "STS2MobileDesktopHost",
+  "name": "STS2 Mobile Desktop Host",
+  "author": "Oscar",
+  "description": "Developer-only desktop test host for the iOS launcher's portrait source. Inert unless --sts2mobile-test or --sts2mobile-portrait is on the command line.",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false,
+  "min_game_version": "0.113.1"
+}

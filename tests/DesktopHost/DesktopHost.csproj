@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <!--
+        Desktop test host: a game mod that runs the launcher's in-game portrait source inside the installed desktop game and
+        drives it with the test harness. STS2Mobile.GameHost and STS2Mobile.Platform are compiled from this checkout against
+        the real desktop sts2.dll and GodotSharp.dll instead of STS2Mobile.GameStub. Build and run it with
+        scripts/desktop-test/ (docs/TESTING.md); it needs an installed game, so it is not part of STS2Mobile.slnx or CI.
+    -->
+    <PropertyGroup>
+        <!-- The game's own runtime. The SDK is the one global.json pins. -->
+        <TargetFramework>net9.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <AssemblyName>STS2MobileDesktopHost</AssemblyName>
+        <RootNamespace>STS2Mobile.DesktopHost</RootNamespace>
+        <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+        <!-- The game's assemblies are built for x64; this one is AnyCPU. -->
+        <NoWarn>$(NoWarn);MSB3270</NoWarn>
+        <!-- Sts2DataDir is the game's data folder (sts2.dll, 0Harmony.dll, GodotSharp.dll); scripts/desktop-test/build.sh
+             passes it. -->
+        <GameHostSource>$(MSBuildThisFileDirectory)../../src/STS2Mobile.GameHost</GameHostSource>
+        <PlatformSource>$(MSBuildThisFileDirectory)../../src/STS2Mobile.Platform</PlatformSource>
+    </PropertyGroup>
+    <ItemGroup>
+        <Compile Remove="bin/**;obj/**" />
+    </ItemGroup>
+    <!--
+        The launcher's portrait source, compiled unmodified. Not run here (Host/LauncherHostWiring.cs replaces what
+        PhoneGraphics/GameEntry start):
+          GameEntry, PhoneGraphics, ModImportFlow  Godot Node subclasses that need generated script bindings; they start the
+                                                   game, write settings and import mods.
+          QuickMatchHooks, PhoneRelayConnector, PhoneLobbyBackend, PhoneVoiceDevice
+                                                   QuickMatch (#if QUICKMATCH) relay, lobby and voice.
+        PhoneOptionPaginator is compiled for PortraitProof's reference only and is never instantiated here (only
+        PhoneGraphics creates it). It overrides the protected NPaginator.OnIndexChanged, so sts2.dll is not publicized.
+        Platform's NativeExports is replaced by Host/NativeExports.cs (insets from the environment, never rotates).
+    -->
+    <ItemGroup>
+        <Compile Include="$(GameHostSource)/**/*.cs"
+                 Exclude="$(GameHostSource)/.godot/**;$(GameHostSource)/obj/**;$(GameHostSource)/bin/**;$(GameHostSource)/GameEntry.cs;$(GameHostSource)/PhoneGraphics.cs;$(GameHostSource)/ModImportFlow.cs;$(GameHostSource)/QuickMatchHooks.cs;$(GameHostSource)/PhoneRelayConnector.cs;$(GameHostSource)/PhoneLobbyBackend.cs;$(GameHostSource)/PhoneVoiceDevice.cs"
+                 Link="Launcher/GameHost/%(RecursiveDir)%(Filename)%(Extension)" />
+        <Compile Include="$(PlatformSource)/**/*.cs"
+                 Exclude="$(PlatformSource)/obj/**;$(PlatformSource)/bin/**;$(PlatformSource)/NativeExports.cs"
+                 Link="Launcher/Platform/%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+    <ItemGroup>
+        <Reference Include="0Harmony">
+            <HintPath>$(Sts2DataDir)/0Harmony.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="sts2">
+            <HintPath>$(Sts2DataDir)/sts2.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+        <Reference Include="GodotSharp">
+            <HintPath>$(Sts2DataDir)/GodotSharp.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+    <ItemGroup>
+        <None Include="STS2Mobile.DesktopHost.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+    <Target Name="VerifyGameReferences" BeforeTargets="ResolveReferences">
+        <Error Condition="'$(Sts2DataDir)' == '' or !Exists('$(Sts2DataDir)/sts2.dll')"
+               Text="sts2.dll not found. Set Sts2DataDir to the game's data_sts2_* folder (scripts/desktop-test/build.sh does)." />
+        <Error Condition="!Exists('$(Sts2DataDir)/0Harmony.dll')"
+               Text="0Harmony.dll not found at $(Sts2DataDir)." />
+        <Error Condition="!Exists('$(Sts2DataDir)/GodotSharp.dll')"
+               Text="GodotSharp.dll not found at $(Sts2DataDir)." />
+    </Target>
+</Project>
