@@ -214,6 +214,9 @@ internal sealed class PhoneHoverTips
                 if (child is not Control set || set.GetType().FullName != TipSetTypeName || set.IsQueuedForDeletion() || !set.Visible) continue;
                 if (_ownerField?.GetValue(set) is Control owner && GodotObject.IsInstanceValid(owner) && ShouldRemove(owner))
                 {
+                    // The game's Remove only queues the set for deletion, which happens after this frame is drawn: hide it
+                    // now, or every re-show (a play's state changes re-show a focused creature's tips) flashes for a frame.
+                    set.Visible = false;
                     RemoveTipSet(owner);
                     if (_parkedAfterCardRelease) _parkedOwner = owner;
                     continue;
