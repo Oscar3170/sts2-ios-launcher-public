@@ -328,11 +328,11 @@ internal sealed class PortraitOverlayLayout
         if (!peek.Visible) return;
         Vector2 canvas = CanvasOf(peek);
         float size = Math.Max(PortraitBands.MinTarget, Math.Max(peek.Size.X, peek.Size.Y));
-        float left = HandPeekSideMargin;
-        // A hand selection can fill the band above the rail with previews (the whole-hand and Purity picks do), so the
-        // eye goes to the free top-left of the run content instead: still inside the safe area, far from every pile,
-        // preview and the hand, and a 44-point target of its own.
+        // A hand selection can fill the band above the rail with previews (the whole-hand and Purity picks do), and the
+        // single-card Armaments preview reaches into the top-left, so the eye goes to the free top-right of the run
+        // content: inside the safe area, clear of every pile, preview and the hand, and a 44-point target of its own.
         float contentTop = peek.GetTree() is { } tree ? PortraitLayout.ComputeCapHeight(tree.Root) + PortraitBands.RunContentTop : 0f;
+        float left = canvas.X - HandPeekSideMargin - size;
         float top = contentTop + HandPeekTopGap + 4f;
         Vector2 parentScale = peek.GetParent() is Control parent
             ? parent.GetGlobalTransformWithCanvas().Scale.Abs()
