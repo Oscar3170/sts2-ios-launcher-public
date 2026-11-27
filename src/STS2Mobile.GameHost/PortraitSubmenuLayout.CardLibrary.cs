@@ -23,8 +23,8 @@ internal static partial class PortraitSubmenuLayout
     private const float CardLibraryRowGap = 4f;
     private const float CardLibraryControlHeight = 127f;
     private const float CardLibrarySearchHeight = 127f;
-    private const float CardLibraryPoolWidth = 768f; // six 128 unit pool tabs
-    private const float CardLibraryPoolTab = 128f;
+    private const float CardLibraryPoolWidth = 762f; // six 127 unit pool tabs
+    private const float CardLibraryPoolTab = 127f;
     private const int CardLibraryPoolColumns = 6;
     private const float CardLibraryToggleWidth = 258f;
     private const float CardLibraryGridGap = 8f;
@@ -272,6 +272,7 @@ internal static partial class PortraitSubmenuLayout
     {
         if (state.CardWidth < 1f) return;
         ResolveCardLibraryGridReflection();
+        if (_cardLibraryNeedsReinitField?.GetValue(grid) is true) return;
         if (_cardLibraryRowsField is null || _cardLibrarySortedCardsProperty is null) return;
         if (_cardLibraryRowsField.GetValue(grid) is not System.Collections.IList rows || rows.Count == 0) return;
         if (_cardLibrarySortedCardsProperty.GetValue(grid) is not System.Collections.IList cards || cards.Count == 0) return;
