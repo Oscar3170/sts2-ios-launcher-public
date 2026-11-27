@@ -111,6 +111,13 @@ jobs:
           newest="$(ls -t .work/logs/*.log analysis/full-game-ios/export.log 2>/dev/null | grep -v '/ci-' | head -1 || true)"
           echo "$newest"
           tail -n 40 "$newest"
+          # A failed host export only names analysis/full-game-ios/export.log in its own log: show that log's errors too.
+          if [[ -f analysis/full-game-ios/export.log ]]; then
+            echo "--- analysis/full-game-ios/export.log errors"
+            grep -n -B2 -A8 'ERROR' analysis/full-game-ios/export.log | head -n 200 || true
+            echo "--- analysis/full-game-ios/export.log tail"
+            tail -n 40 analysis/full-game-ios/export.log
+          fi
 
       - name: Upload the IPA
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
