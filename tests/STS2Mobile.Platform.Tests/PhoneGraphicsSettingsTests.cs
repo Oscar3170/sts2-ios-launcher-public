@@ -183,6 +183,23 @@ public sealed class PhoneGraphicsSettingsTests : IDisposable
     }
 
     [Fact]
+    public void ReadableDragDefaultsOnAndRoundTrips()
+    {
+        // Every earlier build lifted the card above the finger; a file from before the setting keeps that.
+        Assert.True(Defaults.ReadableDrag);
+        var anchored = Defaults.WithReadableDrag(false);
+        anchored.Save(SettingsFile);
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReadableDrag: false });
+        Assert.True(anchored.WithPreset(BatteryPreset.Balanced) is { ReadableDrag: false, Preset: BatteryPreset.Balanced });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"portraitMode\":true,\"portraitDefault\":true}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReadableDrag: true });
+
+        File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"readableDrag\":false}");
+        Assert.True(PhoneGraphicsSettings.Load(SettingsFile) is { ReadableDrag: false });
+    }
+
+    [Fact]
     public void PortraitDefaultIsClearedOnLoadWhenPortraitModeIsOff()
     {
         File.WriteAllText(SettingsFile, "{\"resolution\":\"low\",\"portraitMode\":false,\"portraitDefault\":true}");

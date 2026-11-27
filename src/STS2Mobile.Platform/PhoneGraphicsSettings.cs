@@ -19,7 +19,8 @@ public sealed record PhoneGraphicsSettings(
     bool PortraitDefault = false,
     bool FlatHand = false,
     bool PerformanceLog = false,
-    bool ReduceEffects = false)
+    bool ReduceEffects = false,
+    bool ReadableDrag = true)
 {
     public const string FileName = "phone-graphics.json";
     private const int Format = 1;
@@ -51,6 +52,9 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>Keeps the game's combat effects (false) or skips the hand cards' while they move (true).</summary>
     public PhoneGraphicsSettings WithReduceEffects(bool enabled) => this with { ReduceEffects = enabled };
+
+    /// <summary>Lifts a dragged card above the finger (true, the default) or keeps the point grabbed at the press (false).</summary>
+    public PhoneGraphicsSettings WithReadableDrag(bool enabled) => this with { ReadableDrag = enabled };
 
     /// <summary>Fraction of the screen's resolution drawn: 3x, 2.5x or 2x pixels per point on a 3x screen.</summary>
     public double ResolutionFactor => FactorOf(Resolution);
@@ -106,7 +110,9 @@ public sealed record PhoneGraphicsSettings(
                 // A file written before the setting existed keeps the effects its preset means (see the helper).
                 root.ContainsKey("reduceEffects")
                     ? Flag(root, "reduceEffects")
-                    : ReducedEffectsOfLegacyFile(resolution, lowerIdleFrameRate, coolDownWhenHot));
+                    : ReducedEffectsOfLegacyFile(resolution, lowerIdleFrameRate, coolDownWhenHot),
+                // Readable drag is the behaviour every earlier build had; only an explicit off turns it off.
+                root.ContainsKey("readableDrag") ? Flag(root, "readableDrag") : true);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
         {
@@ -153,6 +159,7 @@ public sealed record PhoneGraphicsSettings(
             writer.WriteBoolean("flatHand", FlatHand);
             writer.WriteBoolean("performanceLog", PerformanceLog);
             writer.WriteBoolean("reduceEffects", ReduceEffects);
+            writer.WriteBoolean("readableDrag", ReadableDrag);
             writer.WriteEndObject();
         }
         File.Move(partial, path, overwrite: true);
@@ -160,7 +167,7 @@ public sealed record PhoneGraphicsSettings(
 
     /// <summary>A one-line summary for the log.</summary>
     public string Describe(double appliedFactor) => string.Create(CultureInfo.InvariantCulture,
-        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand} perfLog={PerformanceLog} reduceEffects={ReduceEffects}");
+        $"{Preset.ToString().ToLowerInvariant()} resolution={Resolution.ToString().ToLowerInvariant()} applied={appliedFactor:0.###} idle30={LowerIdleFrameRate} cool={CoolDownWhenHot} portrait={PortraitMode} portraitDefault={PortraitMode && PortraitDefault} flatHand={FlatHand} perfLog={PerformanceLog} reduceEffects={ReduceEffects} readableDrag={ReadableDrag}");
 
     private bool Matches(PhoneGraphicsSettings other) =>
         Resolution == other.Resolution && LowerIdleFrameRate == other.LowerIdleFrameRate &&

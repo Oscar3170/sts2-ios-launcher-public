@@ -53,6 +53,14 @@ internal sealed class PhoneTouchCards
     public static bool CardIsBeingDragged { get; private set; }
 
     /// <summary>
+    /// The Graphics "Readable Drag" choice: true (the default) draws an untargeted dragged card with its bottom
+    /// <see cref="TouchCardMath.DragLift"/> above the finger, so the card is never under the finger; false keeps the point
+    /// the player grabbed under the finger, as the native mouse drag does. Read each frame, so the choice applies to the
+    /// next drag; a targeted card parks at the aim position in either mode.
+    /// </summary>
+    public static bool ReadableDrag { get; set; } = true;
+
+    /// <summary>
     /// The emulated pointer still belongs to the finger after release; a parked mouse must not enlarge a neighbour.
     /// Only new real pointer or controller input takes ownership back.
     /// </summary>

@@ -60,6 +60,7 @@ public sealed partial class PhoneGraphics : Node
                 _settings = _settings.WithPortraitMode(false);
             PortraitHandLayout.FlatHand = _settings.FlatHand;
             PortraitHandLayout.ReduceEffects = _settings.ReduceEffects;
+            PhoneTouchCards.ReadableDrag = _settings.ReadableDrag;
             PortraitFrameTiming.SetEnabled(_settings.PerformanceLog);
             _appliedFactor = DevicePower.RenderScale();
             GD.Print("Phone graphics: ", _settings.Describe(_appliedFactor));
@@ -257,6 +258,15 @@ public sealed partial class PhoneGraphics : Node
                     _portraitLayout.ApplyImmediate();
                 },
                 out _, out _, out _, subtitle: "Fan the hand, or lay it out in flat rows.");
+            index = AddRow(content, template, divider, index, "Readable Drag", () => OffOn,
+                () => _settings.ReadableDrag ? 1 : 0,
+                choice =>
+                {
+                    Store(_settings.WithReadableDrag(choice == 1));
+                    PhoneTouchCards.ReadableDrag = _settings.ReadableDrag;
+                },
+                out _, out _, out _,
+                subtitle: "Lift the card above the finger; off keeps the point you grabbed.");
             index = AddRow(content, template, divider, index, "Performance Log", () => OffOn,
                 () => _settings.PerformanceLog ? 1 : 0,
                 choice =>
