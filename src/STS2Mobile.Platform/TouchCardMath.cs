@@ -32,7 +32,7 @@ public static class TouchCardMath
 
     private const float EdgeMargin = 8f;
 
-    /// <summary>The gap a hand card's hover tips keep from the stage top and from the control rail (24 canvas units, about 8.3 pt).</summary>
+    /// <summary>The gap the inspect screen's View Upgrades box keeps from the stage top or the card top (24 canvas units, about 8.3 pt).</summary>
     public const float StageTipMargin = 24f;
 
     private const float UpgradeBoxLeft = 8f, UpgradeBoxWidth = 272f, UpgradeBoxHeight = 64f, UpgradeBoxScale = 0.85f;
