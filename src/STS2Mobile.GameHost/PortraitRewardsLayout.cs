@@ -52,6 +52,10 @@ internal sealed class PortraitRewardsLayout
         public Control? Banner;
         public int RowCount = -1;
         public float ContentHeight;
+        // The tallest block of rows this screen has shown: the window keeps the frame it had for it, so taking a reward closes
+        // its row up inside the panel instead of resizing and re-centring the panel.
+        public float FrameContentHeight;
+        public Vector2 Target;
         public bool Placed;
         public Tween? Fade;
     }
@@ -109,6 +113,31 @@ internal sealed class PortraitRewardsLayout
             if (loot.Fade is { } fade && GodotObject.IsInstanceValid(fade)) fade.Kill();
         _lootScreens.Clear();
         _lootRows.Clear();
+        if (_placeBeforeDrawSubscribed)
+        {
+            RenderingServer.FramePreDraw -= KeepPlacedWindowsBeforeDraw;
+            _placeBeforeDrawSubscribed = false;
+        }
+    }
+
+    private bool _placeBeforeDrawSubscribed;
+
+    /// <summary>
+    /// A loot screen coming back from the card reward replays the game's entrance: its tween slides the window from 100 units
+    /// below the game's place, and its first step runs in the frame it starts, after the process-frame pass that replaces it
+    /// with the fade alone. That one frame drew the panel 85 units low. A placed window is put back at its place before each
+    /// draw (a position is only a transform, drawn at once); the process-frame pass still swaps the game's tween for ours.
+    /// </summary>
+    private void KeepPlacedWindowsBeforeDraw()
+    {
+        foreach (LootScreenState state in _lootScreens.Values)
+        {
+            if (!state.Placed || !GodotObject.IsInstanceValid(state.Window) || !state.Window.IsVisibleInTree()) continue;
+            if (state.Fade is { } ours && GodotObject.IsInstanceValid(ours) && ours.IsRunning() &&
+                RewardsFadeTween(state.Screen.GetType())?.GetValue(state.Screen) == ours)
+                continue;
+            if (state.Window.Position.DistanceSquaredTo(state.Target) > 0.25f) state.Window.Position = state.Target;
+        }
     }
 
     public void RestoreHiddenSkips()
@@ -190,6 +219,11 @@ internal sealed class PortraitRewardsLayout
         if (!_lootScreens.TryGetValue(id, out LootScreenState? state))
             _lootScreens[id] = state = new LootScreenState(
                 screen, window, mask, list, screen.GetNodeOrNull<Control>("ProceedButton"), PortraitBetweenLayout.IsBlitzRun());
+        if (!_placeBeforeDrawSubscribed)
+        {
+            RenderingServer.FramePreDraw += KeepPlacedWindowsBeforeDraw;
+            _placeBeforeDrawSubscribed = true;
+        }
         Capture(window, captureVisible: false);
         Capture(mask, captureVisible: false);
         Capture(list, captureVisible: false);
@@ -229,9 +263,10 @@ internal sealed class PortraitRewardsLayout
         }
 
         float laneTop = PortraitBetweenMath.ActionLaneTop(state.Blitz, canvas.Y, PortraitBands.MinTarget);
+        state.FrameContentHeight = Math.Max(state.FrameContentHeight, state.ContentHeight);
         LootWindowFit fit = PortraitBetweenMath.LootWindow(
             canvas.X, canvas.Y, PortraitBands.HeaderBottom(capHeight), laneTop, NativeLootWidth, NativeLootHeight,
-            state.ContentHeight);
+            state.FrameContentHeight);
         Control window = state.Window;
 
         if (Math.Abs(window.Scale.X - fit.Scale) > 0.0005f)
@@ -257,6 +292,7 @@ internal sealed class PortraitRewardsLayout
         }
 
         var target = new Vector2(fit.X, fit.Y);
+        state.Target = target;
         FieldInfo? fadeField = RewardsFadeTween(state.Screen.GetType());
         Tween? fadeTween = fadeField?.GetValue(state.Screen) as Tween;
         // Only the entrance is taken over. A complete set (the final boss offers none; a terminal set whose last reward was
