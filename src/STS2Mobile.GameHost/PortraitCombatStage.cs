@@ -37,6 +37,14 @@ internal sealed class PortraitCombatStage
     // The Underdocks deck's plank line sits 320 units from the container origin in the authored 1296-tall layer art, i.e.
     // 861 units above the art's bottom. Measured from the art so any Underdocks layer background keeps its own plank line.
     private const float PlankFromBottomFraction = 861f / 1296f;
+    // The act's own pier art. An encounter may bring its own background scene that is that same pier (the Lagavulin
+    // Matriarch and the Soul Fysh do), and it is the art, not the encounter's custom-background flag, that the plank line
+    // belongs to.
+    private const string UnderdocksPierArtPath = "res://images/rooms/underdocks/underdocks_00.png";
+    // The Architect's ending is drawn as a combat room, but its background is the ending picture, not a fight arena: it
+    // has no floor line, so it is framed as a cover of the whole canvas instead of ending at the hand row.
+    private const string ArchitectEndingBackgroundScenePath =
+        "res://scenes/backgrounds/the_architect_event_encounter/the_architect_event_encounter_background.tscn";
     private const string DecimillipedeSegmentTypeName = "DecimillipedeSegment";
     private const string CrusherMonsterTypeName = "Crusher";
     private const string RocketMonsterTypeName = "Rocket";
@@ -1321,9 +1329,12 @@ internal sealed class PortraitCombatStage
         plan.Dominant = dominant;
         plan.Capacity = capacity;
         // The act's narrow pier, not every fight that happens to be in that act: a boss that brings its own arena scene
-        // (the Waterfall Giant is an Underdocks boss with a broad waterfall arena) is framed as a broad floor.
+        // (the Waterfall Giant is an Underdocks boss with a broad waterfall arena) is framed as a broad floor. Whether a
+        // custom scene is that arena or just a copy of the act's pier art is decided from the drawn art in the background
+        // pass (the Lagavulin Matriarch and the Soul Fysh reuse the pier art).
+        plan.Underdocks = IsUnderdocksActor(refl, players, enemies);
         plan.CustomArena = refl.EncounterHasCustomBackground(players, enemies);
-        plan.Pier = IsUnderdocksActor(refl, players, enemies) && !plan.CustomArena;
+        plan.Pier = plan.Underdocks && !plan.CustomArena;
 
         string[] names = PortraitCombatMath.OrderEncounterSlotNames(markers, dominant);
         foreach (string name in names)
@@ -2001,13 +2012,50 @@ internal sealed class PortraitCombatStage
         Vector2 topLeft = toBackground * Vector2.Zero;
         Vector2 bottomRight = toBackground * art.Size;
         float artWidth = Math.Max(1f, bottomRight.X - topLeft.X);
+        float artHeight = Math.Max(1f, bottomRight.Y - topLeft.Y);
+
+        // The Architect's ending is a picture, not a fight arena: cover the whole canvas with the scene's own backdrop,
+        // centred on the composition, so the ending fills the phone with no band of empty room and its subject stays in
+        // frame. A real fight keeps a ground line: its floor art is bottom-anchored below.
+        if (IsEndingScene(bgRoot))
+        {
+            float cover = Math.Max(SafeAreaCanvas.PortraitWidth / artWidth, canvasHeight / artHeight);
+            float artCenterY = (topLeft.Y + bottomRight.Y) * 0.5f;
+            float eventOriginY = canvasHeight * 0.5f - artCenterY * cover;
+            bgContainer.SetMeta("portrait_floor_horizon", eventOriginY + PortraitCombatMath.GroundArtLocalY * cover);
+            bgContainer.SetMeta("portrait_formation_offset", plan.FormationOffset);
+            bgContainer.Scale = new Vector2(cover, cover);
+            bgContainer.OffsetLeft = 0f;
+            bgContainer.OffsetRight = 0f;
+            bgContainer.OffsetTop = eventOriginY - canvasHeight * 0.5f;
+            bgContainer.OffsetBottom = eventOriginY - canvasHeight * 0.5f;
+            plan.FloorAligned = false;
+            plan.Pier = false;
+            plan.CustomArena = true;
+            plan.PierSurface = bands.FrontFeetY;
+            plan.ArtBottom = eventOriginY + bottomRight.Y * cover;
+            plan.HorizonY = eventOriginY + PortraitCombatMath.GroundArtLocalY * cover;
+            plan.FloorHorizon = plan.HorizonY;
+            PublishBackdropFacts(bgRoot, plan);
+            PublishRoomFacts(room, plan);
+            plan.BackgroundApplied = true;
+            GD.Print($"Portrait combat: event backdrop covers the canvas at {cover:F3}, art bottom {plan.ArtBottom:F0}.");
+            return;
+        }
+
+        // A custom background scene may be a copy of the act's own pier art (the Lagavulin Matriarch and the Soul Fysh both
+        // are): it is the same pier, so frame it on the act's plank line instead of a broad floor.
+        if (plan.Underdocks && !plan.Pier && IsUnderdocksPierArt(art))
+        {
+            plan.Pier = true;
+            plan.CustomArena = false;
+        }
 
         float scale;
         float originY;
         // The pier is not a ground plane: its plank line is a fixed part of the art, measured relative to the art's bottom
         // (the authored deck sits 861 of the 1296-unit layer art above it). Underdocks uses this at both portrait shapes;
         // the broad floor would push the deck far above the feet and leave only water on screen.
-        float artHeight = Math.Max(1f, bottomRight.Y - topLeft.Y);
         float plankLocal = bottomRight.Y - artHeight * PlankFromBottomFraction;
         if (plan.Pier && plankLocal > topLeft.Y + 1f && plankLocal < bottomRight.Y - 1f)
         {
@@ -2133,18 +2181,48 @@ internal sealed class PortraitCombatStage
         plan.Seam = seam;
     }
 
+    /// <summary>
+    /// The arena's own artwork: the largest texture the background shapes, not the first one met. A background may hold a
+    /// cloud sheet as well as its base art (the Architect's ending scene has both), and the base art is the one that covers
+    /// the arena; a smaller sheet framed as the floor would draw the scene at the wrong scale and place its subject off the
+    /// screen.
+    /// </summary>
     private static TextureRect? FindArtTextureRect(Node? node, int depth)
     {
+        TextureRect? best = null;
+        float bestArea = 0f;
+        CollectArtTextureRect(node, depth, ref best, ref bestArea);
+        return best;
+    }
+
+    private static void CollectArtTextureRect(Node? node, int depth, ref TextureRect? best, ref float bestArea)
+    {
         if (node == null || depth < 0)
-            return null;
+            return;
         foreach (Node child in node.GetChildren())
         {
             if (child is TextureRect rect && rect.Texture != null && rect.Size.X > 1000f && rect.Size.Y > 300f)
-                return rect;
-            if (FindArtTextureRect(child, depth - 1) is { } found)
-                return found;
+            {
+                float area = rect.Size.X * rect.Size.Y * MathF.Abs(rect.Scale.X * rect.Scale.Y);
+                if (area > bestArea)
+                {
+                    best = rect;
+                    bestArea = area;
+                }
+            }
+            CollectArtTextureRect(child, depth - 1, ref best, ref bestArea);
         }
-        return null;
+    }
+
+    /// <summary>Whether the background is the Architect's ending picture, which is framed as a cover instead of a floor.</summary>
+    private static bool IsEndingScene(Control? bgRoot) =>
+        bgRoot?.SceneFilePath == ArchitectEndingBackgroundScenePath;
+
+    /// <summary>Whether the drawn art is the act's calibrated Underdocks pier.</summary>
+    private static bool IsUnderdocksPierArt(TextureRect art)
+    {
+        string path = art.Texture?.ResourcePath ?? string.Empty;
+        return path == UnderdocksPierArtPath || path.EndsWith("/underdocks/underdocks_00.png", StringComparison.Ordinal);
     }
 
     private static void PublishBackdropFacts(Control? bgRoot, CombatStagePlan plan)
@@ -2387,6 +2465,8 @@ internal sealed class PortraitCombatStage
         /// <summary>A tall-thin 3–4 body roster drawn in the crowded single row instead of the tall table.</summary>
         public bool SingleRow;
         public bool Pier;
+        /// <summary>The fight is in the Underdocks, whose layer-00 art is the narrow pier when the encounter draws it.</summary>
+        public bool Underdocks;
         /// <summary>This encounter brings its own arena scene, so the act's pier is not what the room is drawn on.</summary>
         public bool CustomArena;
         public bool EmbeddedCrab;
