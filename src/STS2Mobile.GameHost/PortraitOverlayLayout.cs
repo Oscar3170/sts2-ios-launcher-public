@@ -492,7 +492,6 @@ internal sealed class PortraitOverlayLayout
     private const float BundleHitboxCentreX = 5.5f;
     private const float BundleHitboxCentreY = -27f;
     private const float BundlePreviewMaxScale = 1.5f;
-    private const float BundleFooterGap = 24f;
     private const float BundleCardFloorScale = 289f / BundleCardWidth;
 
     private const float PotionPopupGap = 12f;
@@ -1152,7 +1151,8 @@ internal sealed class PortraitOverlayLayout
             }
         }
 
-        // The footer: Peek at the left, Skip (or the preview's Cancel and Confirm) right-aligned and grown to a finger.
+        // The footer: Peek at the left, Skip (or the preview's Confirm) right-aligned and grown to a finger. The preview's
+        // Cancel is the game's Back button, placed with every other Back by PortraitNavigationPads (the footer's left).
         if (screen.GetNodeOrNull<Control>("%SkipButton") is { } skip && skip.Visible)
         {
             Vector2 skipSize = GrowChoiceButton(skip, canvas);
@@ -1162,28 +1162,21 @@ internal sealed class PortraitOverlayLayout
         }
         if (screen.GetNodeOrNull<Control>("%PeekButton") is { } peek)
             PlaceCombatPeek(peek, PeekLeft, footerTop, Math.Min(PeekScale, PortraitBands.MinTarget / (PeekSize * screenScale)));
-        float rightEdge = size.X - Local(ChoiceRightMargin);
         if (screen.GetNodeOrNull<Control>("%Confirm") is { } confirm)
-        {
-            Vector2 confirmSize = PlaceBundleButton(confirm, rightEdge, footerTop, footerHeight);
-            rightEdge -= confirmSize.X + Local(BundleFooterGap);
-        }
-        if (screen.GetNodeOrNull<Control>("%Cancel") is { } cancel)
-            PlaceBundleButton(cancel, rightEdge, footerTop, footerHeight);
+            PlaceBundleButton(confirm, size.X - Local(ChoiceRightMargin), footerTop, footerHeight);
     }
 
     /// <summary>
-    /// A preview's Confirm or Cancel: its desktop picture stays, placed in the portrait footer row, with a touch area of 44
-    /// points added around it where the picture is smaller. Its place is captured first for the landscape restore. Returns the
-    /// control's own width (the touch area can reach past it).
+    /// The preview's Confirm: its desktop picture stays, placed in the portrait footer row, with a touch area of 44 points
+    /// added around it where the picture is smaller. Its place is captured first for the landscape restore.
     /// </summary>
-    private Vector2 PlaceBundleButton(Control button, float right, float footerTop, float footerHeight)
+    private void PlaceBundleButton(Control button, float right, float footerTop, float footerHeight)
     {
         ulong id = button.GetInstanceId();
         if (!_bundleButtonSizes.TryGetValue(id, out Vector2 native))
         {
             native = button.Size;
-            if (native.X <= 1f || native.Y <= 1f) return native;
+            if (native.X <= 1f || native.Y <= 1f) return;
             _bundleButtonSizes[id] = native;
         }
         CaptureChoice(button);
@@ -1203,7 +1196,6 @@ internal sealed class PortraitOverlayLayout
             button.OffsetBottom = top + native.Y;
         }
         GrowGridConfirm(button);
-        return native;
     }
 
     // ---- Potion popup -------------------------------------------------------------------------------------------------------
