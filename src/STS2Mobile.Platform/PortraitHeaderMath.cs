@@ -23,7 +23,7 @@ public readonly record struct PopupPlacement(float Scale, float X, float Y)
 
 /// <summary>
 /// Pure geometry for the portrait run header: the cracked-stone panel over the safe cap and the top bar, the potion row
-/// that scrolls beside the map and deck buttons, the relic band under it and the potion popup that opens below both.
+/// that scrolls beside the map and deck buttons, the relic band under it and the potion popup that opens under its slot.
 /// The band heights themselves live in the launcher's <c>PortraitBands</c>; they are passed in so this stays a plain
 /// calculator. All numbers are canvas units (1080 across, 2.88 to a point on an iPhone 11 Pro).
 /// </summary>
@@ -128,16 +128,25 @@ public static class PortraitHeaderMath
     }
 
     /// <summary>
-    /// A potion's popup: below the relic band (<paramref name="inventoryBottom"/>), centred on the visible part of its holder
-    /// (<paramref name="anchorX"/>), inside the safe frame, drawn as large as the Use and Discard buttons need
-    /// (<paramref name="buttonScale"/>, capped at <paramref name="maxScale"/>) but never larger than the room below the band.
+    /// How far the top row's right edge is pulled in for the modifier button: its 44 point touch area grows to the right of
+    /// the 48 unit picture (never into the boss icon), so the whole extra width plus <paramref name="gap"/> is reserved before
+    /// the settings button.
+    /// </summary>
+    public static float ModifierClusterReserve(float buttonWidth, float touchTarget, float gap) =>
+        Math.Max(0f, touchTarget - buttonWidth) + gap;
+
+    /// <summary>
+    /// A potion's popup where the game's own <c>NPotionPopup._Ready</c> puts it: its top left corner is the holder's top left
+    /// plus half the holder's width less half the popup's drawn width, and one and a half holder heights down, which leaves
+    /// half a holder between the slot and the popup. It is centred on the holder, inside the safe frame, drawn as large as
+    /// the Use and Discard buttons need (<paramref name="buttonScale"/>, capped at <paramref name="maxScale"/>) but never
+    /// larger than the screen allows. It may cover the relic band below the header; portrait does not lift it past the band.
     /// </summary>
     public static PopupPlacement PotionPopup(float safeLeft, float safeTop, float safeRight, float safeBottom,
-        float anchorX, float inventoryBottom, float popupWidth, float popupHeight, float buttonScale, float maxScale,
-        float gap)
+        float anchorX, float anchorTop, float popupWidth, float popupHeight, float buttonScale, float maxScale)
     {
         if (popupWidth <= 0f || popupHeight <= 0f || safeRight - safeLeft <= 1f) return new PopupPlacement(0f, anchorX, safeTop);
-        float y = Math.Max(safeTop, inventoryBottom + gap);
+        float y = Math.Max(safeTop, anchorTop);
         float room = safeBottom - y;
         if (room <= 1f) return new PopupPlacement(0f, anchorX, y);
         float scale = Math.Min(Math.Clamp(buttonScale, 1f, Math.Max(1f, maxScale)),

@@ -14,10 +14,14 @@ internal sealed class PortraitRunHeader(Action queueApply)
 
     private const string StoneHeaderName = "PhoneStoneHeader";
     private const string ExpandSpacerName = "PortraitExpandSpacer";
+    private const string ModifierButtonName = "PhoneModifierButton";
     private const string TopBarTypeName = "MegaCrit.Sts2.Core.Nodes.CommonUi.NTopBar";
     private const string RelicInventoryTypeName = "MegaCrit.Sts2.Core.Nodes.Relics.NRelicInventory";
     private const string PotionTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotion";
     private const string PotionPopupTypeName = "MegaCrit.Sts2.Core.Nodes.Potions.NPotionPopup";
+    private const string HoverTipSetTypeName = "MegaCrit.Sts2.Core.Nodes.HoverTips.NHoverTipSet";
+    private const string HoverTipInterfaceName = "MegaCrit.Sts2.Core.HoverTips.IHoverTip";
+    private const string HoverTipAlignmentTypeName = "MegaCrit.Sts2.Core.HoverTips.HoverTipAlignment";
     private const float TopBarRowHeight = PortraitBands.TopBarRowHeight;
     // The right margin the game's scene gives the top bar's boss icon.
     private const int BossIconMarginRight = 4;
@@ -49,6 +53,15 @@ internal sealed class PortraitRunHeader(Action queueApply)
     private const float TopBarButtonWidth = PortraitBands.MinTarget;
     private const float TopBarRowInset = PortraitBands.TopBarRowInset;
     private const float TopBarTouchRise = PortraitBands.MinTarget - (TopBarRowHeight - TopBarRowInset);
+    // The one modifier button: the first chip's 44 unit icon in a 48 unit box, a count badge when there is more than one
+    // modifier, and a 44 point touch area. It sits after the boss icon; the row's right edge makes room for that area so it
+    // never reaches the settings button.
+    private const float ModifierButtonWidth = 48f;
+    private const float ModifierIconSize = 44f;
+    private const float ModifierIconTopInset = 18f;
+    private const float ModifierTouchGap = 4f;
+    private const float ModifierTipGap = 12f;
+    private const int ModifierBadgeFontSize = 26;
     // Health, gold and floor numbers at 38 units (13 points; the game's 32 is 11) and their icons 48 wide (were
     // 40), as much as the row's width allows with three digit health.
     private const int TopBarNumberFontSize = 38;
@@ -78,6 +91,17 @@ internal sealed class PortraitRunHeader(Action queueApply)
     private ulong _blitzContainerId;
     private ulong _topBarHpId;
     private ulong _pauseButtonId;
+    private ulong _modifierButtonId;
+    private ulong _modifierRowId;
+    private ulong _modifierTipSetId;
+    private float _modifierTipTop;
+    // The game's tip set and hover-tip types, reached by name (the launcher compiles against the stub).
+    private bool _hoverTipsResolved;
+    private bool _hoverTipsFailed;
+    private MethodInfo? _hoverTipCreate;
+    private MethodInfo? _hoverTipRemove;
+    private Type? _hoverTipListType;
+    private object? _hoverTipAlignmentNone;
     // The scroll offsets the holders' touch areas were last matched to (see RefreshHeaderHolderInput).
     private int _potionScrollSeen = -1;
     private readonly Dictionary<ulong, int> _relicScrollSeen = new();
@@ -105,12 +129,15 @@ internal sealed class PortraitRunHeader(Action queueApply)
         _tree = tree;
         RenderingServer.FramePreDraw += OnHeaderPreDraw;
         _headerSwipe.Attach(tree);
+        tree.Root.WindowInput += OnHeaderWindowInput;
     }
 
     public void Detach()
     {
         RenderingServer.FramePreDraw -= OnHeaderPreDraw;
         _headerSwipe.Detach();
+        if (_tree != null && GodotObject.IsInstanceValid(_tree.Root)) _tree.Root.WindowInput -= OnHeaderWindowInput;
+        CloseModifierTips();
         _tree = null;
     }
 
@@ -176,6 +203,10 @@ internal sealed class PortraitRunHeader(Action queueApply)
                         }
                     }
                     if (control.GetNodeOrNull<HBoxContainer>(MapDeckRowName) is { } mapDeckRow) mapDeckRow.QueueFree();
+                    CloseModifierTips();
+                    if (control.GetNodeOrNull<Control>(ModifierButtonName) is { } modifierButton) modifierButton.QueueFree();
+                    _modifierButtonId = 0;
+                    _modifierTipTop = 0f;
                     // The potion tray back into the top bar's row, after the gold, where the game's scene has it.
                     Control? potionRow = control.GetNodeOrNull<ScrollContainer>(PotionRowScrollName)
                         ?.GetNodeOrNull<Control>(PotionStripName)?.GetNodeOrNull<Control>(PotionRowName)
@@ -288,8 +319,8 @@ internal sealed class PortraitRunHeader(Action queueApply)
     {
         foreach (Node child in node.GetChildren())
         {
-            // A potion's popup is a child of its holder but is drawn and placed below the relic band: its Use and Discard
-            // are the screen's buttons, not the scrolling row's, and keep every touch.
+            // A potion's popup is a child of its holder but is drawn past the scrolling row at the game's place under the
+            // slot (over the relic band): its Use and Discard are the screen's buttons, not the row's, and keep every touch.
             if (child.GetType().FullName == PotionPopupTypeName)
             {
                 ResetHolderInput(child);
@@ -393,6 +424,7 @@ internal sealed class PortraitRunHeader(Action queueApply)
     {
         WireTopBarSignals(topBar);
         LayoutStoneHeader(topBar, capHeight, canvas);
+        _modifierTipTop = PortraitBands.HeaderBottom(capHeight);
 
         // The row's boxes start above the row, in the safe cap, so what they hold is 44 points tall to a finger. Each
         // picture is kept in the row itself by a top margin or by sitting at the bottom of its box. A phone with no top
@@ -538,8 +570,11 @@ internal sealed class PortraitRunHeader(Action queueApply)
 
                 if (roomIcons.GetNodeOrNull<Control>("RoomIconResizer") is { } roomIconResizer)
                 {
-                    Capture(roomIconResizer, captureVisible: true);
-                    roomIconResizer.Visible = false;
+                    // The room icon keeps its native picture, tip and focus; it only joins the top row, lifted by the same
+                    // margin rule as the boss icon so its 44 unit art sits level with it. The game still decides whether the
+                    // RoomIcons container itself shows (Blitz hides it), so only the resizer's margin is portrait's.
+                    Capture(roomIconResizer, captureVisible: false);
+                    roomIconResizer.AddThemeConstantOverride("margin_top", -4 + riseInt);
                 }
                 if (topBar.GetNodeOrNull<Control>("%BossIcon") is { } bossIcon)
                 {
@@ -570,11 +605,9 @@ internal sealed class PortraitRunHeader(Action queueApply)
                 }
             }
 
-            if (topBar.GetNodeOrNull<Control>("%Modifiers") is { } modifiers)
-            {
-                Capture(modifiers, captureVisible: true);
-                modifiers.Visible = false;
-            }
+            Control? nativeModifiers = topBar.GetNodeOrNull<Control>("%Modifiers");
+            float modifierReserve = LayoutModifierButton(leftBox, nativeModifiers, riseInt);
+            leftBox.OffsetRight = -(rightWidth + 18f + modifierReserve);
         }
 
         LayoutMapDeckRow(topBar, capHeight, canvas);
@@ -602,6 +635,253 @@ internal sealed class PortraitRunHeader(Action queueApply)
             PortraitControlSnapshot snap = Capture(goldPopup, captureVisible: false);
             goldPopup.OffsetTop = snap.InitialOffsetTop + capHeight;
             goldPopup.OffsetBottom = snap.InitialOffsetBottom + capHeight;
+        }
+    }
+
+    /// <summary>
+    /// One button for every modifier a custom or daily run carries. It shows the first native chip's icon in the native order
+    /// after the boss icon, with a count when there is more than one, and a 44 point touch area (the top row grows it
+    /// downward where the row is shorter than that). The native chip row is hidden here. Nothing is reparented: the chips
+    /// stay in place for landscape, and the button is a launcher-owned node removed again on leaving portrait.
+    /// Returns how far the row's right edge must be pulled in so the touch area stops short of the settings button.
+    /// </summary>
+    private float LayoutModifierButton(HBoxContainer leftBox, Control? nativeModifiers, int rise)
+    {
+        _modifierRowId = nativeModifiers?.GetInstanceId() ?? 0;
+        List<Control> chips = ModifierChips(nativeModifiers);
+        if (nativeModifiers != null)
+        {
+            // The native chip row is too wide for a phone: portrait hides it and shows one launcher-owned button with the
+            // first chip's icon and a count. The chips stay in place, so a landscape run keeps the game's row; its native
+            // visibility rule is "there are modifiers".
+            Capture(nativeModifiers, captureVisible: true).RecordInitialVisibility(chips.Count > 0);
+            nativeModifiers.Visible = false;
+        }
+        Control? button = leftBox.GetNodeOrNull<Control>(ModifierButtonName);
+        if (chips.Count == 0)
+        {
+            CloseModifierTips();
+            if (button != null) button.QueueFree();
+            _modifierButtonId = 0;
+            return 0f;
+        }
+
+        if (button == null)
+        {
+            button = CreateModifierButton();
+            leftBox.AddChild(button);
+        }
+        Control? roomIcons = leftBox.GetNodeOrNull<Control>("RoomIcons");
+        int after = (roomIcons?.GetIndex() ?? (nativeModifiers?.GetIndex() ?? leftBox.GetChildCount() - 1)) + 1;
+        if (button.GetIndex() != after)
+            leftBox.MoveChild(button, Math.Clamp(after, 0, leftBox.GetChildCount() - 1));
+        _modifierButtonId = button.GetInstanceId();
+
+        if (button.GetNodeOrNull<Control>("Icon") is TextureRect picture)
+        {
+            picture.Texture = ModifierChipIcon(chips[0]);
+            picture.Position = new Vector2((ModifierButtonWidth - ModifierIconSize) / 2f, rise + ModifierIconTopInset);
+            picture.Size = new Vector2(ModifierIconSize, ModifierIconSize);
+            picture.Visible = picture.Texture != null;
+        }
+        if (button.GetNodeOrNull<Label>("Count") is { } badge)
+        {
+            badge.Text = chips.Count.ToString();
+            badge.Visible = chips.Count > 1;
+            badge.Position = new Vector2(ModifierButtonWidth - 26f, rise + ModifierIconTopInset + 20f);
+            badge.Size = new Vector2(26f, 26f);
+        }
+
+        float rowHeight = PortraitBands.TopBarRowHeight - PortraitBands.TopBarRowInset + rise;
+        // The touch area grows to the right of the 48 unit picture, not into the boss icon: the row's right edge is pulled
+        // in by the whole extra width (plus a little air) so the area stops short of the settings button.
+        float side = Math.Max(0f, PortraitBands.MinTarget - ModifierButtonWidth);
+        float drop = Math.Max(0f, PortraitBands.MinTarget - rowHeight);
+        PhoneHitArea.Grow(button, 0f, 0f, side, drop);
+        return PortraitHeaderMath.ModifierClusterReserve(ModifierButtonWidth, PortraitBands.MinTarget, ModifierTouchGap);
+    }
+
+    private static List<Control> ModifierChips(Control? row)
+    {
+        var chips = new List<Control>();
+        if (row == null) return chips;
+        foreach (Node child in row.GetChildren())
+        {
+            if (child is Control chip && !chip.IsQueuedForDeletion() && chip.GetType().Name == "NTopBarModifier")
+                chips.Add(chip);
+        }
+        return chips;
+    }
+
+    private static Texture2D? ModifierChipIcon(Control chip)
+    {
+        if (chip.GetNodeOrNull<TextureRect>("Icon") is { } icon) return icon.Texture;
+        const BindingFlags all = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        return chip.GetType().GetField("_icon", all)?.GetValue(chip) is TextureRect iconField ? iconField.Texture : null;
+    }
+
+    private static Control CreateModifierButton()
+    {
+        var button = new Control
+        {
+            Name = ModifierButtonName,
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            FocusMode = Control.FocusModeEnum.None,
+            CustomMinimumSize = new Vector2(ModifierButtonWidth, 0f),
+        };
+        button.AddChild(new TextureRect
+        {
+            Name = "Icon",
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+        });
+        var badge = new Label
+        {
+            Name = "Count",
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+        };
+        badge.AddThemeFontSizeOverride("font_size", ModifierBadgeFontSize);
+        badge.AddThemeColorOverride("font_color", new Color(0.772549f, 0.854902f, 0.807843f, 1f));
+        badge.AddThemeColorOverride("font_outline_color", new Color(0.0980392f, 0.159454f, 0.188565f, 1f));
+        badge.AddThemeConstantOverride("outline_size", 6);
+        button.AddChild(badge);
+        button.GuiInput += input => ModifierButtonInput(input, button);
+        return button;
+    }
+
+    private void ModifierButtonInput(InputEvent input, Control button)
+    {
+        if (!SafeAreaCanvas.IsPortrait) return;
+        if (input is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left }) return;
+        ToggleModifierTips(button);
+        button.AcceptEvent();
+    }
+
+    /// <summary>Opens the run's modifier tips, or closes them when a tap lands on the button while they are open.</summary>
+    private void ToggleModifierTips(Control button)
+    {
+        if (ModifierTipsOpen())
+        {
+            CloseModifierTips();
+            return;
+        }
+        if (!ResolveHoverTips() || _hoverTipCreate == null || _hoverTipListType == null || _hoverTipAlignmentNone == null)
+            return;
+        if (GodotObject.InstanceFromId(_modifierRowId) is not Control row || !GodotObject.IsInstanceValid(row)) return;
+        var tips = (System.Collections.IList?)Activator.CreateInstance(_hoverTipListType);
+        if (tips == null) return;
+        const BindingFlags all = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        foreach (Control chip in ModifierChips(row))
+        {
+            // The chip built the game's own HoverTip (name and description) in _Ready; show that same tip here.
+            if (chip.GetType().GetField("_hoverTip", all)?.GetValue(chip) is { } tip) tips.Add(tip);
+        }
+        if (tips.Count == 0) return;
+        try
+        {
+            if (_hoverTipCreate.Invoke(null, [button, tips, _hoverTipAlignmentNone]) is not Control set ||
+                !GodotObject.IsInstanceValid(set)) return;
+            _modifierTipSetId = set.GetInstanceId();
+            // The game shows a chip's tips under the chip; a stack of every modifier goes under the stone header instead,
+            // where it has the whole screen to itself. PhoneHoverTips' fit keeps the column inside the canvas.
+            float x = button.GetGlobalRect().GetCenter().X;
+            float y = Math.Max(_modifierTipTop, button.GetGlobalRect().Position.Y) + ModifierTipGap;
+            set.GlobalPosition = new Vector2(x, y);
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr("Portrait header: the modifier tips could not be shown: ", error.Message);
+        }
+    }
+
+    private bool ModifierTipsOpen()
+    {
+        if (_modifierTipSetId == 0) return false;
+        if (GodotObject.InstanceFromId(_modifierTipSetId) is Control set && GodotObject.IsInstanceValid(set) &&
+            !set.IsQueuedForDeletion() && set.IsInsideTree()) return true;
+        _modifierTipSetId = 0;
+        return false;
+    }
+
+    private void CloseModifierTips()
+    {
+        if (!ModifierTipsOpen()) return;
+        _modifierTipSetId = 0;
+        if (_modifierButtonId == 0 || _hoverTipRemove == null ||
+            GodotObject.InstanceFromId(_modifierButtonId) is not Control button || !GodotObject.IsInstanceValid(button)) return;
+        try
+        {
+            _hoverTipRemove.Invoke(null, [button]);
+        }
+        catch (Exception error)
+        {
+            GD.PrintErr("Portrait header: the modifier tips could not be closed: ", error.Message);
+        }
+    }
+
+    /// <summary>A press anywhere but the button closes the open tips; the button's own tap toggles them.</summary>
+    private void OnHeaderWindowInput(InputEvent input)
+    {
+        if (_modifierTipSetId == 0 || _tree == null || !GodotObject.IsInstanceValid(_tree.Root)) return;
+        if (input is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } &&
+            input is not InputEventScreenTouch { Pressed: true, Index: 0 }) return;
+        Vector2 point = _tree.Root.GetFinalTransform().AffineInverse() * EventPosition(input);
+        if (ModifierButtonAt(point)) return;
+        CloseModifierTips();
+    }
+
+    private static Vector2 EventPosition(InputEvent input) => input switch
+    {
+        InputEventMouseButton button => button.Position,
+        InputEventScreenTouch touch => touch.Position,
+        _ => Vector2.Zero,
+    };
+
+    private bool ModifierButtonAt(Vector2 point)
+    {
+        if (_modifierButtonId == 0 || GodotObject.InstanceFromId(_modifierButtonId) is not Control button ||
+            !GodotObject.IsInstanceValid(button)) return false;
+        Rect2 area = button.GetGlobalRect();
+        if (PhoneHitArea.Of(button) is { } pad) area = area.Merge(pad.GetGlobalRect());
+        return area.Grow(4f).HasPoint(point);
+    }
+
+    /// <summary>
+    /// The game's tip set and hover-tip types are reached by name: the launcher compiles against the stub, which has neither.
+    /// The chips' own <c>HoverTip</c> values are reused, so the names and descriptions stay the game's localized text.
+    /// </summary>
+    private bool ResolveHoverTips()
+    {
+        if (_hoverTipsResolved) return !_hoverTipsFailed;
+        _hoverTipsResolved = true;
+        try
+        {
+            Assembly game = typeof(NClickableControl).Assembly;
+            Type? setType = game.GetType(HoverTipSetTypeName);
+            Type? tipType = game.GetType(HoverTipInterfaceName);
+            Type? alignmentType = game.GetType(HoverTipAlignmentTypeName);
+            if (setType == null || tipType == null || alignmentType == null)
+                throw new MissingMemberException("the game's hover tip types");
+            Type enumerable = typeof(IEnumerable<>).MakeGenericType(tipType);
+            const BindingFlags all = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            _hoverTipCreate = setType.GetMethods(all).FirstOrDefault(method => method.Name == "CreateAndShow"
+                && method.GetParameters() is { Length: 3 } parameters
+                && parameters[0].ParameterType == typeof(Control)
+                && parameters[1].ParameterType == enumerable);
+            _hoverTipRemove = setType.GetMethod("Remove", all, null, [typeof(Control)], null);
+            _hoverTipListType = typeof(List<>).MakeGenericType(tipType);
+            _hoverTipAlignmentNone = Enum.Parse(alignmentType, "None");
+            if (_hoverTipCreate == null || _hoverTipRemove == null) throw new MissingMethodException("NHoverTipSet.CreateAndShow/Remove");
+            return true;
+        }
+        catch (Exception error)
+        {
+            _hoverTipsFailed = true;
+            GD.PrintErr("Portrait header: the game's modifier tips are unavailable: ", error.Message);
+            return false;
         }
     }
 
@@ -843,6 +1123,8 @@ internal sealed class PortraitRunHeader(Action queueApply)
         if (!_wiredTopBars.Add(id)) return;
         if (topBar.GetNodeOrNull<Control>("%PotionContainer/MarginContainer/PotionHolders") is { } holdersBox)
             holdersBox.ChildOrderChanged += RequestApply;
+        if (topBar.GetNodeOrNull<Control>("%Modifiers") is { } modifiersRow)
+            modifiersRow.ChildOrderChanged += RequestApply;
         if (topBar.GetNodeOrNull<Control>("%TimerContainer") is { } timer)
         {
             timer.VisibilityChanged += () =>

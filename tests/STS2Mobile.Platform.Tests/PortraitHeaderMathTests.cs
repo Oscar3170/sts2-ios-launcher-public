@@ -96,52 +96,69 @@ public class PortraitHeaderMathTests
     }
 
     [Fact]
-    public void PopupDropsBelowTheRelicBandAndGrowsTheButtonsTo44Points()
+    public void PopupSitsUnderThePotionAtTheNativeOffsetAndGrowsButtonsTo44Points()
     {
-        // The game's popup is 259 x 239 with 86 unit buttons; 127 / 86 is the scale that makes them 44 points.
+        // The game's popup is 259 x 239 with 86 unit buttons; 127 / 86 is the scale that makes them 44 points. Native
+        // placement is 1.5 holder heights below the holder's top: 159 units for a 106 unit slot, leaving 53 under it.
+        const float holderTop = 258f, holderHeight = Slot, holderCentre = 90f;
+        float nativeTop = holderTop + holderHeight * 1.5f;
         PopupPlacement placement = PortraitHeaderMath.PotionPopup(
             safeLeft: 10f, safeTop: Cap, safeRight: 1070f, safeBottom: 2340f,
-            anchorX: 90f, inventoryBottom: Cap + TopBar + Band, popupWidth: 259f, popupHeight: 239f,
-            buttonScale: 127f / 86f, maxScale: 1.6f, gap: 24f);
+            anchorX: holderCentre, anchorTop: nativeTop, popupWidth: 259f, popupHeight: 239f,
+            buttonScale: 127f / 86f, maxScale: 1.6f);
         Assert.True(placement.Visible);
-        Assert.Equal(Cap + TopBar + Band + 24f, placement.Y, 3);
+        Assert.Equal(nativeTop, placement.Y, 3);
         Assert.Equal(127f, 86f * placement.Scale, 2);
         // Centred on the holder, pushed in from the left edge.
         Assert.Equal(10f, placement.X, 3);
         Assert.True(placement.X + placement.DrawnWidth(259f) <= 1070f);
+        // The popup is in the header's band, not below the relic band.
+        Assert.True(placement.Y < Cap + TopBar + Band);
     }
 
     [Fact]
     public void PopupCentresOnAHolderWithRoomAroundIt()
     {
         // The buttons never shrink below the game's own height, so the smallest popup is the native size.
-        PopupPlacement placement = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 2340f, 540f, 612f, 259f, 239f, 1f, 1.6f, 24f);
+        PopupPlacement placement = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 2340f, 540f, 417f, 259f, 239f, 1f, 1.6f);
         Assert.Equal(1f, placement.Scale, 3);
         Assert.Equal(540f - 259f / 2f, placement.X, 3);
+        Assert.Equal(417f, placement.Y, 3);
     }
 
     [Fact]
     public void PopupShrinksRatherThanLeavingTheScreen()
     {
-        // On a short canvas the room below the band decides the scale: 300 units of room for a 239 unit popup.
-        PopupPlacement placement = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 912f, 540f, 588f, 259f, 239f, 1.5f, 1.6f, 24f);
+        // On a short canvas the room below the slot decides the scale: 300 units of room for a 239 unit popup.
+        PopupPlacement placement = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 912f, 540f, 612f, 259f, 239f, 1.5f, 1.6f);
         Assert.Equal(300f / 239f, placement.Scale, 3);
         Assert.Equal(612f, placement.Y, 3);
         Assert.True(placement.Y + placement.DrawnHeight(239f) <= 912f);
     }
 
     [Fact]
-    public void PopupIsNotPlacedWhenNoRoomIsLeftBelowTheBand()
+    public void PopupIsNotPlacedWhenNoRoomIsLeftBelowTheSlot()
     {
-        // The safe frame ends at the band: the popup is left to the game rather than drawn over the header.
-        PopupPlacement placement = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 670f, 540f, 650f, 259f, 239f, 1.5f, 1.6f, 24f);
+        // The safe frame ends at the slot: the popup is left to the game rather than drawn over the header.
+        PopupPlacement placement = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 670f, 540f, 670f, 259f, 239f, 1.5f, 1.6f);
         Assert.False(placement.Visible);
     }
 
     [Fact]
     public void PopupNeverRisesAboveTheSafeArea()
     {
-        PopupPlacement atTop = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 2340f, 540f, 100f, 259f, 239f, 1.5f, 1.6f, 24f);
+        PopupPlacement atTop = PortraitHeaderMath.PotionPopup(10f, Cap, 1070f, 2340f, 540f, 100f, 259f, 239f, 1.5f, 1.6f);
         Assert.Equal(Cap, atTop.Y, 3);
+    }
+
+    [Fact]
+    public void ModifierTouchAreaReserveKeepsTheButtonClearOfSettings()
+    {
+        // The 48 unit icon's 127 unit target grows 79 units to the right; with 4 units of air the row's right edge is pulled
+        // in 83 units so the target's right edge stops 4 units short of the settings button, and its left edge stays on the
+        // picture (clear of the boss icon).
+        Assert.Equal(83f, PortraitHeaderMath.ModifierClusterReserve(48f, 127f, 4f), 3);
+        // No negative reserve when the target is narrower than the button.
+        Assert.Equal(4f, PortraitHeaderMath.ModifierClusterReserve(200f, 127f, 4f), 3);
     }
 }
