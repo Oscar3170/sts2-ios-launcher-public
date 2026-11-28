@@ -24,4 +24,10 @@
          Without it QuickMatch keeps to lobby chat. -->
     <EmbeddedResource WithCulture="false" Include="$(MSBuildThisFileDirectory)../../.tools/builtin-mods/QuickMatchRelay.cfg" LogicalName="QuickMatchRelay.cfg" Condition="Exists('$(MSBuildThisFileDirectory)../../.tools/builtin-mods/QuickMatchRelay.cfg')" />
   </ItemGroup>
+  <!-- The portrait main menu's generated water extension: the app's own art (not a game file), packed into the host assembly
+       so it travels with the interpreted game host instead of the Godot main pack. Its shader is code in
+       PortraitMainMenuLayout, as the other host shaders are. -->
+  <ItemGroup>
+    <EmbeddedResource WithCulture="false" Include="Assets/main_menu_water.png" LogicalName="STS2Mobile.MainMenu.Water" />
+  </ItemGroup>
 </Project>

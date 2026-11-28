@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
@@ -9,17 +11,24 @@ using STS2Mobile.Platform;
 namespace STS2Mobile.GameHost;
 
 /// <summary>
-/// The main menu in portrait. The native live background keeps the game's zoom and its counter-scaled animated logo; the text
-/// buttons become a wide column of 44 point rows drawn in the game's own lettering, outline and hover carets (measured around
-/// the real text instead of the desktop rect); the continue button's run details are drawn above it at phone size; and the
-/// profile, release notes, version and mod status controls move into the safe band at readable sizes. Every control edited here
-/// is captured first, so turning Portrait Mode off restores the game's layout live.
+/// The main menu in portrait. The live background keeps the game's animated Spine stage and the animated logo, framed on the
+/// registered 2304 unit master: the tower stands beside the title and the generated water extension covers the city's lower
+/// edge down to the canvas's bottom, under the buttons. The text buttons become a wide column of 44 point rows drawn in the
+/// game's own lettering, outline and hover carets (measured around the real text instead of the desktop rect); the continue
+/// button's run details are drawn above it at phone size; and the profile, release notes, version and mod status controls move
+/// into the safe band at readable sizes. The Quit row is hidden in both orientations (the game's quit does nothing on iOS) and
+/// the focus chain closes over the rows that remain. Every control edited here is captured first, so turning Portrait Mode off
+/// restores the game's layout live.
 /// </summary>
 internal sealed class PortraitMainMenuLayout
 {
+    private const string MenuBackgroundPath = "%MainMenuBg";
     private const string ButtonsName = "MainMenuTextButtons";
-    private const string BgPath = "%MainMenuBg/BgContainer";
-    private const string LogoHolderName = "Control";
+    private const string QuitName = "QuitButton";
+    private const string BackgroundPath = MenuBackgroundPath + "/BgContainer";
+    private const string LogoHolderPath = BackgroundPath + "/Control";
+    private const string LogoPath = LogoHolderPath + "/Logo";
+    private const string WaterNodeName = "PhoneMainMenuWater";
     private const string RunInfoPath = "%ContinueRunInfo";
     private const string ReticleLeftPath = "%ButtonReticleLeft";
     private const string ReticleRightPath = "%ButtonReticleRight";
@@ -38,11 +47,46 @@ internal sealed class PortraitMainMenuLayout
     private const string InitPositionField = "_initPosition";
     private const string VisTweenField = "_visTween";
     private const string IsShownField = "_isShown";
-    // The game's own menu background size in portrait: the live Spines are zoomed about the screen's middle and the logo is
-    // counter-scaled so it keeps its desktop size where the game animates it.
-    private const float BgScale = 2.05f;
-    private const float LogoInsetX = 98.5f;
-    private const float LogoOffsetY = -226f;
+    // The registered master's live stage and generated water sit under every menu control: the stage behind the water, both
+    // behind the menu (negative z, relative to the menu background).
+    private const int NativeStageZ = -9;
+    private const int WaterZ = -8;
+    private const string WaterImageResource = "STS2Mobile.MainMenu.Water";
+    // The water extension's surface: the texture's straight RGB is the water and its alpha is the registered matte. Coverage
+    // comes from the original UV (so the waves never eat into the native bank); displacement and glints only start below the
+    // whole join, so the native reflections stay still where they meet the generated water.
+    private const string WaterShaderCode = """
+        shader_type canvas_item;
+        render_mode unshaded, blend_mix;
+
+        uniform float surface_motion : hint_range(0.0, 1.0) = 1.0;
+
+        void fragment() {
+            vec2 p = UV;
+            float coverage = texture(TEXTURE, p).a;
+            float motion = smoothstep(0.125, 0.37, p.y) * surface_motion;
+            float t = TAU * TIME / 120.0;
+            float long_wave = sin(p.y * 66.0 + p.x * 11.0 - 5.0 * t);
+            float cross_wave = sin(p.y * 113.0 - p.x * 9.0 + 9.0 * t);
+            float depth = mix(0.7, 1.2, p.y);
+            vec2 displacement = vec2(
+                7.3 * long_wave + 2.8 * cross_wave,
+                1.65 * cross_wave + 0.85 * sin(p.y * 31.0 + p.x * 25.0 - 4.0 * t)
+            ) * TEXTURE_PIXEL_SIZE * depth * motion;
+            vec2 water_uv = clamp(p + displacement, TEXTURE_PIXEL_SIZE * 0.5, vec2(1.0) - TEXTURE_PIXEL_SIZE * 0.5);
+            vec3 paint = texture(TEXTURE, water_uv).rgb;
+
+            float crest = smoothstep(0.68, 0.97, sin(p.y * 191.0 + 1.7 * long_wave + p.x * 16.0 - 13.0 * t));
+            float broken = smoothstep(0.22, 0.83,
+                0.61 * sin(p.x * 91.0 - p.y * 15.0 + 3.0 * t) + 0.39 * sin(p.x * 33.0 + p.y * 21.0 - 7.0 * t));
+            float glint = crest * broken * motion * mix(1.0, 0.55, p.y);
+            paint += vec3(0.012, 0.022, 0.031) * glint;
+            COLOR = vec4(paint, coverage);
+        }
+        """;
+    private static Texture2D? _waterTexture;
+    private static Shader? _waterShader;
+    private static bool _waterAssetsUnavailable;
     // The game's reticles: a 40 unit caret 6 units off the text, travelling 28 units out, on the 32 unit desktop label.
     private const float NativeCaretSize = 40f;
     private const float NativeCaretGap = 6f;
@@ -63,10 +107,20 @@ internal sealed class PortraitMainMenuLayout
     {
         public ulong ColumnId;
         public int VisibleCount = -1;
+        public List<ulong> FocusChain = new();
         public Vector2 Canvas;
         public float CapHeight = -1f;
         public bool ProfileContentChanged;
         public int ModStatusOriginalIndex = -1;
+        public ulong StageId;
+        public int StageZ;
+        public bool StageZCaptured;
+        public ulong LogoId;
+        public Vector2 LogoScale;
+        public Vector2 LogoPosition;
+        public bool LogoCaptured;
+        public bool LogoPending;
+        public int LogoAttempts;
         public bool Logged;
     }
 
@@ -123,15 +177,29 @@ internal sealed class PortraitMainMenuLayout
     private readonly Dictionary<ulong, MenuState> _menus = new();
     private readonly Dictionary<ulong, LabelStyle> _labelStyles = new();
     private readonly Dictionary<ulong, TextStyle> _textStyles = new();
+    private readonly Dictionary<ulong, Rect2> _logoBounds = new();
     private readonly HashSet<ulong> _wiredButtons = new();
     private readonly HashSet<ulong> _wiredMenuLabels = new();
     private readonly HashSet<ulong> _wiredProfileRows = new();
+
+    /// <summary>
+    /// The launcher's fixes that do not depend on the orientation: the game's Quit row does nothing on iOS, so it is hidden
+    /// and the focus chain closes over the rows that remain. Runs where the main menu is discovered, in portrait and in
+    /// landscape, so a menu that appears in either orientation loses the row before a finger or a controller reaches it.
+    /// </summary>
+    public void ApplyPlatform(NMainMenu menu)
+    {
+        if (!GodotObject.IsInstanceValid(menu)) return;
+        if (menu.GetNodeOrNull<Control>(ButtonsName + "/" + QuitName) is { Visible: true } quit) quit.Hide();
+        if (menu.GetNodeOrNull<Control>(ButtonsName) is { } column) WireFocusChain(column);
+    }
 
     public void Apply(NMainMenu menu, float capHeight, Vector2 canvas)
     {
         ulong id = menu.GetInstanceId();
         if (_menus.TryGetValue(id, out MenuState? state) && state.ColumnId != 0 && state.CapHeight == capHeight &&
-            state.Canvas.IsEqualApprox(canvas) && ColumnStillMatches(state) && !state.ProfileContentChanged)
+            state.Canvas.IsEqualApprox(canvas) && ColumnStillMatches(state) && !state.ProfileContentChanged &&
+            !state.LogoPending)
             return;
         Layout(menu, capHeight, canvas);
     }
@@ -150,7 +218,7 @@ internal sealed class PortraitMainMenuLayout
             if (GodotObject.InstanceFromId(id) is not NMainMenu menu || !GodotObject.IsInstanceValid(menu) || !menu.IsVisibleInTree())
                 continue;
             if (state.CapHeight != capHeight || !state.Canvas.IsEqualApprox(canvas) || !ColumnStillMatches(state) ||
-                state.ProfileContentChanged)
+                state.ProfileContentChanged || state.LogoPending)
                 Layout(menu, capHeight, canvas);
         }
     }
@@ -166,6 +234,15 @@ internal sealed class PortraitMainMenuLayout
                 if (state.ModStatusOriginalIndex >= 0 && menu.GetNodeOrNull<Label>(ModStatusPath) is { } modded &&
                     GodotObject.IsInstanceValid(modded))
                     menu.MoveChild(modded, Math.Min(state.ModStatusOriginalIndex, menu.GetChildCount() - 1));
+                RemoveWater(menu);
+                if (state.StageZCaptured && GodotObject.InstanceFromId(state.StageId) is Control stage &&
+                    GodotObject.IsInstanceValid(stage))
+                    stage.ZIndex = state.StageZ;
+                if (state.LogoCaptured && GodotObject.InstanceFromId(state.LogoId) is Node2D logo && GodotObject.IsInstanceValid(logo))
+                {
+                    logo.Scale = state.LogoScale;
+                    logo.Position = state.LogoPosition;
+                }
             }
         foreach ((ulong id, PortraitControlSnapshot snapshot) in _snapshots)
             if (GodotObject.InstanceFromId(id) is Control control && GodotObject.IsInstanceValid(control))
@@ -211,6 +288,8 @@ internal sealed class PortraitMainMenuLayout
             if (!GodotObject.IsInstanceIdValid(id)) _labelStyles.Remove(id);
         foreach (ulong id in new List<ulong>(_textStyles.Keys))
             if (!GodotObject.IsInstanceIdValid(id)) _textStyles.Remove(id);
+        foreach (ulong id in new List<ulong>(_logoBounds.Keys))
+            if (!GodotObject.IsInstanceIdValid(id)) _logoBounds.Remove(id);
         foreach (ulong id in new List<ulong>(_menus.Keys))
             if (!GodotObject.IsInstanceIdValid(id)) _menus.Remove(id);
         _wiredButtons.RemoveWhere(id => !GodotObject.IsInstanceIdValid(id));
@@ -224,9 +303,11 @@ internal sealed class PortraitMainMenuLayout
         if (!_menus.TryGetValue(id, out MenuState? state)) _menus[id] = state = new MenuState();
         state.CapHeight = capHeight;
         state.Canvas = canvas;
-        LayoutBackground(menu);
-        state.ColumnId = LayoutButtons(menu, capHeight, canvas);
-        state.VisibleCount = VisibleButtonCount(state.ColumnId);
+        state.LogoPending = false;
+        // The Quit row must be gone before the column is counted, whichever pass reached this layout.
+        ApplyPlatform(menu);
+        LayoutBackground(menu, capHeight, canvas, state);
+        LayoutButtons(menu, capHeight, canvas, state);
         LayoutRunInfo(menu, state.ColumnId);
         LayoutUtilities(menu, capHeight, canvas, state);
         state.ProfileContentChanged = false;
@@ -234,31 +315,178 @@ internal sealed class PortraitMainMenuLayout
         {
             state.Logged = true;
             GD.Print($"Portrait main menu: canvas {canvas.X:F0}x{canvas.Y:F0} cap={capHeight:F0} buttons={state.VisibleCount} " +
-                     $"portrait={SafeAreaCanvas.IsPortrait}");
+                     $"background={(state.StageZCaptured ? "master" : "unframed")} portrait={SafeAreaCanvas.IsPortrait}");
         }
     }
 
     // ---- background -------------------------------------------------------------------------------------------------------
 
-    private void LayoutBackground(NMainMenu menu)
+    /// <summary>
+    /// Frames the game's live background on the registered master: the 2560 x 1200 Spine stage is placed and scaled by the
+    /// camera (the tower beside the title), the generated water extension is laid from the master's water row to the canvas's
+    /// bottom, and the animated logo moves to the reference's left title position, clear of the tower. Nothing is reparented:
+    /// the native Spine nodes and their animations stay where the game built them, and the logo's own hide/show tween works on
+    /// the moved node.
+    /// </summary>
+    private void LayoutBackground(NMainMenu menu, float capHeight, Vector2 canvas, MenuState state)
     {
-        if (menu.GetNodeOrNull<Control>(BgPath) is not { } bgContainer) return;
-        Capture(bgContainer, captureVisible: false);
-        bgContainer.Scale = new Vector2(BgScale, BgScale);
-        if (bgContainer.GetNodeOrNull<Control>(LogoHolderName) is not { } logoHolder) return;
-        Capture(logoHolder, captureVisible: false);
-        logoHolder.Scale = new Vector2(1f / BgScale, 1f / BgScale);
-        logoHolder.OffsetLeft = LogoInsetX;
-        logoHolder.OffsetRight = LogoInsetX;
-        logoHolder.OffsetTop = LogoOffsetY;
-        logoHolder.OffsetBottom = LogoOffsetY;
+        if (menu.GetNodeOrNull<Control>(MenuBackgroundPath) is not { } background) return;
+        if (menu.GetNodeOrNull<Control>(BackgroundPath) is not { } stage) return;
+        if (menu.GetNodeOrNull<Control>(LogoHolderPath) is not { } holder) return;
+        if (menu.GetNodeOrNull<Node2D>(LogoPath) is not { } logo) return;
+        if (WaterAssets() is not { } assets) return;
+
+        MainMenuFraming framing = PortraitMainMenuMath.Backdrop(canvas.X, canvas.Y);
+        MainMenuRect stageRect = PortraitMainMenuMath.BackdropNativeStage(framing);
+        Capture(stage, captureVisible: false);
+        if (!state.StageZCaptured)
+        {
+            state.StageZCaptured = true;
+            state.StageId = stage.GetInstanceId();
+            state.StageZ = stage.ZIndex;
+        }
+        // The stage keeps its own 2560 x 1200 size (its Spine children are placed in that space); the camera's scale is the
+        // node's scale, so the drawn box is the registered stage's rect.
+        stage.AnchorLeft = stage.AnchorTop = stage.AnchorRight = stage.AnchorBottom = 0f;
+        stage.OffsetLeft = stageRect.X;
+        stage.OffsetTop = stageRect.Y;
+        stage.OffsetRight = stageRect.X + PortraitMainMenuMath.BackdropNativeWidth;
+        stage.OffsetBottom = stageRect.Y + PortraitMainMenuMath.BackdropNativeHeight;
+        stage.PivotOffset = Vector2.Zero;
+        stage.Scale = new Vector2(framing.Scale, framing.Scale);
+        stage.ZIndex = NativeStageZ;
+
+        LayoutLogo(canvas, capHeight, framing, stageRect, holder, logo, state);
+        LayoutWater(background, framing, assets.Texture, assets.Shader);
+    }
+
+    /// <summary>
+    /// The game's animated title at the reference's left position, scaled from a posed skeleton bound (captured once, so a
+    /// re-layout during the animation does not resize it) and narrowed when the framed tower leaves less room than the
+    /// reference. The logo stays inside its own holder, which is moved to the stage's origin: the child's transform is
+    /// expressed in the stage's unscaled units, so the camera scale applies to the title exactly once.
+    /// </summary>
+    private void LayoutLogo(Vector2 canvas, float capHeight, MainMenuFraming framing, MainMenuRect stageRect, Control holder,
+        Node2D logo, MenuState state)
+    {
+        Rect2 bounds = LogoBounds(logo);
+        if (bounds.Size.X <= 1f || bounds.Size.Y <= 1f)
+        {
+            // The Spine skeleton poses on its first processed frames: retry a little, then leave the game's own title alone.
+            state.LogoPending = ++state.LogoAttempts <= 60;
+            if (state.LogoAttempts == 61)
+                GD.PushWarning("Portrait main menu: the animated title never posed; keeping the game's own logo.");
+            return;
+        }
+        state.LogoPending = false;
+        MainMenuLogoPlacement placement = PortraitMainMenuMath.BackdropLogo(canvas.X, canvas.Y, capHeight, framing);
+        float drawnScale = placement.Width / bounds.Size.X;
+        float localScale = drawnScale / framing.Scale;
+        // The posed skeleton bounds the title was placed from, for the desktop check to measure the drawn title against.
+        logo.SetMeta("phone_main_menu_logo_bounds", bounds);
+        Capture(holder, captureVisible: false);
+        holder.AnchorLeft = holder.AnchorTop = holder.AnchorRight = holder.AnchorBottom = 0f;
+        holder.OffsetLeft = holder.OffsetTop = holder.OffsetRight = holder.OffsetBottom = 0f;
+        holder.PivotOffset = Vector2.Zero;
+        holder.Scale = Vector2.One;
+        if (!state.LogoCaptured)
+        {
+            state.LogoCaptured = true;
+            state.LogoId = logo.GetInstanceId();
+            state.LogoScale = logo.Scale;
+            state.LogoPosition = logo.Position;
+        }
+        logo.Scale = new Vector2(localScale, localScale);
+        logo.Position = new Vector2(
+            (placement.Left - stageRect.X) / framing.Scale - bounds.Position.X * localScale,
+            (placement.Top - stageRect.Y) / framing.Scale - bounds.Position.Y * localScale);
+    }
+
+    private void LayoutWater(Control background, MainMenuFraming framing, Texture2D texture, Shader shader)
+    {
+        TextureRect? water = background.GetNodeOrNull<TextureRect>(WaterNodeName);
+        if (water == null)
+        {
+            water = new TextureRect
+            {
+                Name = WaterNodeName,
+                Texture = texture,
+                Material = new ShaderMaterial { Shader = shader },
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.Scale,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                TextureFilter = CanvasItem.TextureFilterEnum.Linear,
+                TextureRepeat = CanvasItem.TextureRepeatEnum.Disabled,
+                ZIndex = WaterZ,
+            };
+            background.AddChild(water);
+        }
+        MainMenuRect rect = PortraitMainMenuMath.BackdropWater(framing);
+        water.Position = new Vector2(rect.X, rect.Y);
+        water.Size = new Vector2(rect.Width, rect.Height);
+        water.Show();
+    }
+
+    /// <summary>The water image travels inside the game host's assembly; without it the game's own background is kept.</summary>
+    private static (Texture2D Texture, Shader Shader)? WaterAssets()
+    {
+        if (_waterTexture is { } texture && _waterShader is { } shader) return (texture, shader);
+        if (_waterAssetsUnavailable) return null;
+        try
+        {
+            var assembly = typeof(PortraitMainMenuLayout).Assembly;
+            using Stream imageStream = assembly.GetManifestResourceStream(WaterImageResource)
+                ?? throw new InvalidDataException("the main menu water image is not embedded");
+            byte[] pixels = new byte[checked((int)imageStream.Length)];
+            imageStream.ReadExactly(pixels);
+            using var image = new Image();
+            if (image.LoadPngFromBuffer(pixels) != Error.Ok
+                || image.GetWidth() != (int)PortraitMainMenuMath.WaterTextureWidth
+                || image.GetHeight() != (int)PortraitMainMenuMath.WaterTextureHeight
+                || image.GetFormat() != Image.Format.Rgba8)
+                throw new InvalidDataException("the main menu water image has an unexpected size or format");
+            Texture2D loadedTexture = ImageTexture.CreateFromImage(image);
+            Shader loadedShader = new Shader { Code = WaterShaderCode };
+            _waterTexture = loadedTexture;
+            _waterShader = loadedShader;
+            return (loadedTexture, loadedShader);
+        }
+        catch (Exception error)
+        {
+            _waterAssetsUnavailable = true;
+            GD.PushError($"Portrait main menu water unavailable; keeping the game's background ({error.Message}).");
+            return null;
+        }
+    }
+
+    private Rect2 LogoBounds(Node2D logo)
+    {
+        ulong id = logo.GetInstanceId();
+        if (_logoBounds.TryGetValue(id, out Rect2 cached)) return cached;
+        Rect2 bounds = default;
+        if (logo.HasMethod("get_skeleton") && logo.Call("get_skeleton").AsGodotObject() is { } skeleton &&
+            skeleton.HasMethod("get_bounds"))
+            bounds = skeleton.Call("get_bounds").AsRect2();
+        if (bounds.Size.X > 1f && bounds.Size.Y > 1f) _logoBounds[id] = bounds;
+        return bounds;
+    }
+
+    private static void RemoveWater(NMainMenu menu)
+    {
+        if (menu.GetNodeOrNull<Control>(MenuBackgroundPath)?.GetNodeOrNull<TextureRect>(WaterNodeName) is not { } water) return;
+        // Take it out of the tree now: the landscape frame must not draw the water over the game's own background.
+        water.GetParent()?.RemoveChild(water);
+        water.QueueFree();
     }
 
     // ---- the button column ------------------------------------------------------------------------------------------------
 
-    private ulong LayoutButtons(NMainMenu menu, float capHeight, Vector2 canvas)
+    private void LayoutButtons(NMainMenu menu, float capHeight, Vector2 canvas, MenuState state)
     {
-        if (menu.GetNodeOrNull<Control>(ButtonsName) is not { } column) return 0;
+        state.ColumnId = 0;
+        state.VisibleCount = -1;
+        state.FocusChain = new List<ulong>();
+        if (menu.GetNodeOrNull<Control>(ButtonsName) is not { } column) return;
         MainMenuColumn layout = PortraitMainMenuMath.Column(VisibleButtonCount(column), canvas.Y, capHeight);
         Capture(column, captureVisible: false);
         column.AnchorLeft = 0.5f;
@@ -280,7 +508,37 @@ internal sealed class PortraitMainMenuLayout
             if (button.GetChildCount() > 0 && button.GetChild(0) is Label label) StyleMenuLabel(label);
             WireCarets(menu, button);
         }
-        return column.GetInstanceId();
+        state.ColumnId = column.GetInstanceId();
+        state.VisibleCount = VisibleButtonCount(column);
+        state.FocusChain = WireFocusChain(column);
+    }
+
+    /// <summary>
+    /// The controller's up/down chain over the rows a player can actually focus: the hidden Quit row and a disabled row are
+    /// not in it, so the row above links straight to the row below and the first and last rows stay put instead of jumping to
+    /// a control outside the column. The chain is rebuilt when a row's visibility or focus mode changes.
+    /// </summary>
+    private static List<ulong> WireFocusChain(Control column)
+    {
+        List<Control> chain = FocusableRows(column);
+        for (int i = 0; i < chain.Count; i++)
+        {
+            NodePath up = chain[i == 0 ? 0 : i - 1].GetPath();
+            NodePath down = chain[i == chain.Count - 1 ? i : i + 1].GetPath();
+            if (chain[i].FocusNeighborTop != up) chain[i].FocusNeighborTop = up;
+            if (chain[i].FocusNeighborBottom != down) chain[i].FocusNeighborBottom = down;
+        }
+        return chain.Select(button => button.GetInstanceId()).ToList();
+    }
+
+    /// <summary>The rows a controller can focus right now, in the column's own order (the hidden Quit row is not one).</summary>
+    private static List<Control> FocusableRows(Control column)
+    {
+        var rows = new List<Control>();
+        for (int i = 0; i < column.GetChildCount(); i++)
+            if (column.GetChild(i) is Control button && button.Visible && button.FocusMode != Control.FocusModeEnum.None)
+                rows.Add(button);
+        return rows;
     }
 
     /// <summary>
@@ -584,10 +842,16 @@ internal sealed class PortraitMainMenuLayout
         return count;
     }
 
+    /// <summary>The rows a controller can focus right now, in the column's own order.</summary>
+    private static List<ulong> FocusableChain(Control column) =>
+        FocusableRows(column).Select(button => button.GetInstanceId()).ToList();
+
     private bool ColumnStillMatches(MenuState state)
     {
         Control? column = state.ColumnId != 0 ? GodotObject.InstanceFromId(state.ColumnId) as Control : null;
-        return column != null && GodotObject.IsInstanceValid(column) && VisibleButtonCount(column) == state.VisibleCount;
+        if (column == null || !GodotObject.IsInstanceValid(column) || VisibleButtonCount(column) != state.VisibleCount)
+            return false;
+        return FocusableChain(column).SequenceEqual(state.FocusChain);
     }
 
     // ---- shared -----------------------------------------------------------------------------------------------------------

@@ -42,6 +42,8 @@ src/STS2Mobile.FullGame/icon.png.import
 *.jpeg
 # The launcher's own app icon; Godot reads the generated icon.png from it.
 !src/STS2Mobile.FullGame/branding/AppIcon.png
+# The portrait main menu's generated water extension: the app's own art, not a byte copy of a game file.
+!src/STS2Mobile.GameHost/Assets/main_menu_water.png
 *.heic
 *.pdf
 *.mov

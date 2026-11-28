@@ -200,6 +200,10 @@ internal sealed class PortraitLayout
         bool portrait = SafeAreaCanvas.IsPortrait;
         if (!portrait)
         {
+            // The launcher's platform fixes (no Quit row on iOS, its focus chain) run in landscape too; the game's own layout
+            // is otherwise untouched.
+            foreach (Node node in Traverse(_tree.Root))
+                if (node is NMainMenu platformMenu) _mainMenu.ApplyPlatform(platformMenu);
             // Landscape that was never laid out in portrait (or has been put back since) is left to the game.
             if (_needsRestore) RestoreLandscape(_tree.Root);
             return;
@@ -212,7 +216,11 @@ internal sealed class PortraitLayout
 
         foreach (Node node in Traverse(_tree.Root))
         {
-            if (node is NMainMenu mainMenu) _mainMenu.Apply(mainMenu, capHeight, canvas);
+            if (node is NMainMenu mainMenu)
+            {
+                _mainMenu.ApplyPlatform(mainMenu);
+                _mainMenu.Apply(mainMenu, capHeight, canvas);
+            }
             else if (node is NSettingsScreen settings) _settings.ApplyNode(settings, capHeight);
             else if (node is Control control)
             {

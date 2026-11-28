@@ -61,6 +61,11 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>
+    <!-- The launcher's embedded host resources: the desktop host compiles GameHost's sources into its own assembly, so the
+         same logical name is embedded here (the launcher's project embeds it in src/STS2Mobile.GameHost). -->
+    <ItemGroup>
+        <EmbeddedResource WithCulture="false" Include="$(GameHostSource)/Assets/main_menu_water.png" LogicalName="STS2Mobile.MainMenu.Water" />
+    </ItemGroup>
     <Target Name="VerifyGameReferences" BeforeTargets="ResolveReferences">
         <Error Condition="'$(Sts2DataDir)' == '' or !Exists('$(Sts2DataDir)/sts2.dll')"
                Text="sts2.dll not found. Set Sts2DataDir to the game's data_sts2_* folder (scripts/desktop-test/build.sh does)." />
