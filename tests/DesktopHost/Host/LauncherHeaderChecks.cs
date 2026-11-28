@@ -12,10 +12,10 @@ using MegaCrit.Sts2.Core.Nodes.Orbs;
 using MegaCrit.Sts2.Core.Nodes.Potions;
 using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens;
-using MegaCrit.Sts2.Core.Nodes.TopBar;
 using MegaCrit.Sts2.Core.Runs;
 using STS2Mobile.GameHost;
 using STS2Mobile.Platform;
+using NTopBarRoomIcon = MegaCrit.sts2.Core.Nodes.TopBar.NTopBarRoomIcon;
 
 namespace STS2Mobile.DesktopHost.Harness;
 
