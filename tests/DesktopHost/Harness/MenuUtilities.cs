@@ -46,17 +46,6 @@ internal sealed partial class TestDriver
         await mouse.HoverAsync(PortraitSafeRect().GetCenter());
         await WaitUntilAsync(() => !details.IsVisibleInTree(), "native mod details hide on leave", ShortWait);
 
-        var quit = menu.GetNode<Control>("MainMenuTextButtons/QuitButton");
-        Rect2 sharedArea = quit.GetGlobalRect().Intersection(modded.GetGlobalRect());
-        if (IsPortraitHost() && sharedArea.HasArea())
-        {
-            await _pointer.TapAsync(sharedArea.GetCenter());
-            await WaitUntilAsync(() => VisibleScreen("NVerticalPopup") is not null, "Quit still owns the overlapping hit area", ShortWait);
-            await TapMenuAsync(VisibleScreen("NVerticalPopup")!.GetNode<Control>("NoButton"), "menu_utility_quit_cancel");
-            await WaitUntilAsync(() => VisibleScreen("NVerticalPopup") is null, "native quit popup closed", ShortWait);
-            _report.Pass("menu_mod_status_does_not_block_quit");
-        }
-
         await TapMenuAsync(profile, "menu_profile_open");
         await WaitUntilAsync(() => VisibleScreen("NProfileScreen") is not null, "native profile picker", ShortWait);
         await TapMenuAsync(VisibleScreen("NProfileScreen")!.GetNode<Control>("BackButton"), "menu_profile_back");

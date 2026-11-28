@@ -12,12 +12,12 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The <c>menus</c> scenario: the native touch path from the main menu through the quit confirmation, the four Settings tabs,
-/// the singleplayer mode picker, Blitz/Dread setup, character select with its ascension control, and Embark into a run.
+/// The <c>menus</c> scenario: the native touch path from the main menu (with the Quit row hidden) through the four Settings
+/// tabs, the singleplayer mode picker, Blitz/Dread setup, character select with its ascension control, and Embark into a run.
 /// <para>
 /// The flow, the taps and the step names are the same throughout the scenario. Every screen's geometry answer is a partial:
 /// the launcher answers with its own layout numbers (LauncherMenuChecks.cs, 127 units = 44 points, reference numbers
-/// x0.643). The T5 gate runs on the main menu, the quit popup and each Settings tab.
+/// x0.643). The T5 gate runs on the main menu and each Settings tab.
 /// </para>
 /// </summary>
 internal sealed partial class TestDriver
@@ -149,14 +149,9 @@ internal sealed partial class TestDriver
         await WaitSecondsAsync(0.5);
         CheckTouchTargets("t5_main_menu", "main menu", menu, NativeBackAllow);
 
-        await TapMenuUntilAsync(menu.GetNode<Control>("MainMenuTextButtons/QuitButton"), "menu_quit",
-            () => VisibleScreen("NVerticalPopup") is not null, "native quit confirmation", ShortWait);
-        Control popup = VisibleScreen("NVerticalPopup")!;
-        CheckQuitPopupLayout(menu, popup);
-        CheckTouchTargets("t5_quit_popup", "quit confirmation", popup, NativeBackAllow);
-        await CaptureAsync("menu_quit_confirm");
-        await TapMenuAsync(popup.GetNode<Control>("NoButton"), "menu_quit_cancel");
-        await WaitUntilAsync(() => VisibleScreen("NVerticalPopup") is null, "quit cancellation", ShortWait);
+        Control quit = menu.GetNode<Control>("MainMenuTextButtons/QuitButton");
+        _report.Check("menu_quit_hidden", !quit.IsVisibleInTree(),
+            $"The game's Quit does nothing on iOS; the row must be hidden (visible={quit.IsVisibleInTree()} rect={quit.GetGlobalRect()})");
 
         await TapMenuUntilAsync(menu.GetNode<Control>("MainMenuTextButtons/SettingsButton"), "menu_settings",
             () => VisibleScreen("NSettingsScreen") is not null, "settings opened by touch", MediumWait);
@@ -302,9 +297,6 @@ internal sealed partial class TestDriver
     }
 
     // ---- host answers for the menus flow -------------------------------------------------------------
-
-    /// <summary>The quit popup's own plate and buttons.</summary>
-    private partial void CheckQuitPopupLayout(NMainMenu menu, Control popup);
 
     /// <summary>The singleplayer mode cards: the host keeps them inside its frame in two rows.</summary>
     private partial void CheckModeCardsLayout(Control modes, Control[] cards);

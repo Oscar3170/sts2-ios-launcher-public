@@ -8,10 +8,11 @@ using MegaCrit.Sts2.Core.Saves;
 namespace STS2Mobile.DesktopHost.Harness;
 
 /// <summary>
-/// The <c>menu-hover</c> scenario: the main menu's native hover on Continue, Settings and Quit with a real mouse pointer, the
-/// mod-config label's outline, and the saved run's Continue details. The fixture (a real save in the isolated test profile),
-/// the pointer moves and the step names are shared; the host asserts its own hover geometry in
-/// <c>CheckModConfigOutlineAsync</c> / <c>CheckMenuButtonHover</c> (native carets and 1.607x Continue details).
+/// The <c>menu-hover</c> scenario: the main menu's live portrait background (the framed tower beside the animated title and
+/// the generated water down to the canvas's bottom), the native hover on Continue and Settings with a real mouse pointer, the
+/// hidden Quit row, the mod-config label's outline, and the saved run's Continue details. The fixture (a real save in the
+/// isolated test profile), the pointer moves and the step names are shared; the host asserts its own backdrop, Quit and hover
+/// geometry in <c>LauncherMenuChecks.cs</c> (master framing, water rect, native carets and 1.607x Continue details).
 /// </summary>
 internal sealed partial class TestDriver
 {
@@ -32,9 +33,15 @@ internal sealed partial class TestDriver
         }
         if (!menu.GetNode<Control>("MainMenuTextButtons/ContinueButton").Visible)
             throw new InvalidOperationException("Saved-run fixture did not expose Continue; do not test a hidden control.");
+        await CheckMenuBackdropAsync(menu);
+        Control quit = menu.GetNode<Control>("MainMenuTextButtons/QuitButton");
+        _report.Check("menu_hover_QuitButton_hidden", !quit.IsVisibleInTree(),
+            $"The game's Quit does nothing on iOS; the row must not be shown (visible={quit.IsVisibleInTree()} rect={quit.GetGlobalRect()})");
+        CheckMenuColumnRespace(menu);
+        CheckMenuFocusChain(menu);
         var mouse = new VirtualPointer(_tree, PointerMode.Mouse);
         await CheckModConfigOutlineAsync(menu);
-        foreach (string name in new[] { "ContinueButton", "SettingsButton", "QuitButton" })
+        foreach (string name in new[] { "ContinueButton", "SettingsButton" })
         {
             Control button = menu.GetNode<Control>("MainMenuTextButtons/" + name);
             await HoverMenuButtonAsync(mouse, menu, button);
@@ -43,6 +50,7 @@ internal sealed partial class TestDriver
         }
         CheckTouchTargets("t5_main_menu_hover", "main menu", menu, NativeBackAllow);
         _report.Pass("menu_native_hover_checked");
+        await CheckMenuBackdropRoundTripAsync(menu);
     }
 
     /// <summary>
@@ -72,6 +80,21 @@ internal sealed partial class TestDriver
         // The caret tween is 0.25 s Back/Out and the label's hover scale runs with it.
         await WaitSecondsAsync(0.2);
     }
+
+    // Host answer: in portrait the live stage is framed on the registered master (tower beside the title), the generated
+    // water covers from its row to the canvas's bottom under the buttons, and successive drawn frames differ; in landscape
+    // there is no water node and the stage is the game's own.
+    private partial Task CheckMenuBackdropAsync(NMainMenu menu);
+
+    // Host answer: portrait only - the visible rows fill the column with no empty slot where Quit was.
+    private partial void CheckMenuColumnRespace(NMainMenu menu);
+
+    // Host answer: controller focus skips the hidden Quit row and links the visible rows to each other, in both orientations.
+    private partial void CheckMenuFocusChain(NMainMenu menu);
+
+    // Host answer: portrait only - leaving portrait restores the game's own menu (no water, native stage), and coming back
+    // frames it again on the same master.
+    private partial Task CheckMenuBackdropRoundTripAsync(NMainMenu menu);
 
     // Host answer: the mod-config row's label copies the Settings label's font and black outline in portrait.
     private partial Task CheckModConfigOutlineAsync(NMainMenu menu);

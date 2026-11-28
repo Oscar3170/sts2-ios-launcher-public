@@ -14,6 +14,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen;
 using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
+using STS2Mobile.DesktopHost;
 using STS2Mobile.GameHost;
 using STS2Mobile.Platform;
 
@@ -51,30 +52,356 @@ internal sealed partial class TestDriver
 
     // ---- menus ---------------------------------------------------------------------------------------
 
-    private partial void CheckQuitPopupLayout(NMainMenu menu, Control popup)
+    // ---- the live menu backdrop ----------------------------------------------------------------------
+    //
+    // The requirement's own framing, duplicated from the art review's geometry rather than read back from the launcher: a
+    // 2304 square master, the live 2560 x 1200 stage at (157, 23), a camera that fills the canvas height and centres the
+    // tower (x = 1451), generated water from row 1038 to the master's bottom, and the title at the phone reference's
+    // (390 x 924) 16 / 126 / 259 units with a 10 unit gap to the tower's x = 1678 silhouette.
+
+    private const string MenuWaterNodeName = "PhoneMainMenuWater";
+    private const float MenuMasterSize = 2304f;
+    private const float MenuNativeLeft = 157f, MenuNativeTop = 23f, MenuNativeWidth = 2560f, MenuNativeHeight = 1200f;
+    private const float MenuCameraCentreX = 1451f, MenuWaterTop = 1038f, MenuTowerLeft = 1678f;
+    private const float MenuWaterTextureWidth = 2304f, MenuWaterTextureHeight = 1266f;
+    private const float MenuLogoReferenceWidth = 390f, MenuLogoReferenceHeight = 924f;
+    private const float MenuLogoLeft = 16f, MenuLogoTop = 126f, MenuLogoWidth = 259f, MenuLogoTowerGap = 10f;
+
+    private static (float Scale, float Left) MenuFraming(Vector2 canvas)
+    {
+        float scale = canvas.Y / MenuMasterSize;
+        float visible = Math.Min(canvas.X / scale, MenuMasterSize);
+        float left = Mathf.Clamp(MenuCameraCentreX - visible * 0.5f, 0f, MenuMasterSize - visible);
+        return (scale, -left * scale);
+    }
+
+    private static Rect2 MenuStageRect(Vector2 canvas)
+    {
+        (float scale, float left) = MenuFraming(canvas);
+        return new Rect2(left + MenuNativeLeft * scale, MenuNativeTop * scale, MenuNativeWidth * scale, MenuNativeHeight * scale);
+    }
+
+    private static Rect2 MenuWaterRect(Vector2 canvas)
+    {
+        (float scale, float left) = MenuFraming(canvas);
+        return new Rect2(left, MenuWaterTop * scale, MenuWaterTextureWidth * scale, MenuWaterTextureHeight * scale);
+    }
+
+    private static (Rect2 Logo, float TowerLeft) MenuLogoRect(Vector2 canvas, float cap)
+    {
+        (float scale, float left) = MenuFraming(canvas);
+        float titleLeft = canvas.X * MenuLogoLeft / MenuLogoReferenceWidth;
+        float titleTop = Math.Max(canvas.Y * MenuLogoTop / MenuLogoReferenceHeight, cap + titleLeft);
+        float preferred = canvas.X * MenuLogoWidth / MenuLogoReferenceWidth;
+        float towerLeft = left + MenuTowerLeft * scale;
+        float width = Math.Min(preferred, towerLeft - canvas.X * MenuLogoTowerGap / MenuLogoReferenceWidth - titleLeft);
+        return (new Rect2(titleLeft, titleTop, width, 0f), towerLeft);
+    }
+
+    private static Rect2 MenuNodeDrawnRect(CanvasItem item, Rect2 local)
+    {
+        Transform2D transform = item.GetGlobalTransformWithCanvas();
+        Vector2 a = transform * local.Position;
+        Vector2 b = transform * local.End;
+        return new Rect2(new Vector2(MathF.Min(a.X, b.X), MathF.Min(a.Y, b.Y)), (b - a).Abs());
+    }
+
+    /// <summary>The portrait canvas the launcher lays out on: the visible rect, with its minimum height as in PortraitLayout.</summary>
+    private Vector2 MenuCanvas()
+    {
+        Vector2 size = GetViewportSize();
+        return new Vector2(size.X, Math.Max(size.Y, SafeAreaCanvas.MinPortraitHeight));
+    }
+
+    /// <summary>The live stage and water are framed exactly as the registered master asks, and the water reaches the bottom.</summary>
+    private bool MenuPortraitFramed(NMainMenu menu, out string detail)
+    {
+        Vector2 canvas = MenuCanvas();
+        var background = menu.GetNodeOrNull<Control>("%MainMenuBg");
+        Control? stage = background?.GetNodeOrNull<Control>("BgContainer");
+        TextureRect? water = background?.GetNodeOrNull<TextureRect>(MenuWaterNodeName);
+        Rect2 expectedStage = MenuStageRect(canvas);
+        Rect2 expectedWater = MenuWaterRect(canvas);
+        Rect2 stageRect = stage is null ? default : LauncherDrawnRect(stage);
+        Rect2 waterRect = water is null ? default : LauncherDrawnRect(water);
+        bool framed = stage is not null && water is not null && water.IsVisibleInTree()
+            && Mathf.Abs(stageRect.Position.X - expectedStage.Position.X) <= 2f
+            && Mathf.Abs(stageRect.Position.Y - expectedStage.Position.Y) <= 2f
+            && Mathf.Abs(stageRect.Size.X - expectedStage.Size.X) <= 2f
+            && Mathf.Abs(stageRect.Size.Y - expectedStage.Size.Y) <= 2f
+            && Mathf.Abs(waterRect.Position.Y - expectedWater.Position.Y) <= 2f
+            && Mathf.Abs(waterRect.End.Y - canvas.Y) <= 2f
+            && waterRect.Position.X <= 0f && waterRect.End.X >= canvas.X - 0.5f;
+        detail = $"stage={stageRect} expectedStage={expectedStage} water={waterRect} expectedWaterTop={expectedWater.Position.Y:F1} canvas={canvas}";
+        return framed;
+    }
+
+    /// <summary>
+    /// The game's own menu in landscape: no generated water node, and the stage, its title holder and the title back at the
+    /// scene's anchors, pivot, z and scale (the framing writes all four in portrait).
+    /// </summary>
+    private static bool MenuLandscapeNative(NMainMenu menu, out string detail)
+    {
+        var background = menu.GetNodeOrNull<Control>("%MainMenuBg");
+        Control? stage = background?.GetNodeOrNull<Control>("BgContainer");
+        Control? holder = background?.GetNodeOrNull<Control>("BgContainer/Control");
+        Node2D? logo = background?.GetNodeOrNull<Node2D>("BgContainer/Control/Logo");
+        bool waterGone = background?.GetNodeOrNull<Node>(MenuWaterNodeName) is null;
+        // The native scene anchors the stage at the middle with its 1280 x 600 pivot and draws it at 1.01 or 1.04 (the
+        // game's own window-ratio rule); the title holder sits at the stage's middle and the logo at its own -1120,-582.
+        bool stageNative = stage is { } s && Mathf.Abs(s.AnchorLeft - 0.5f) < 0.001f && Mathf.Abs(s.AnchorTop - 0.5f) < 0.001f
+            && s.PivotOffset.IsEqualApprox(new Vector2(1280f, 600f)) && s.ZIndex == 0
+            && Mathf.Abs(s.Scale.X - 1.01f) < 0.031f;
+        bool holderNative = holder is { } h && Mathf.Abs(h.AnchorLeft - 0.5f) < 0.001f && h.Scale.IsEqualApprox(Vector2.One);
+        bool logoNative = logo is { } l && l.Scale.IsEqualApprox(new Vector2(0.45f, 0.45f));
+        detail = $"water={(waterGone ? "none" : "present")} stage anchors={stage?.AnchorLeft}/{stage?.AnchorTop} " +
+                 $"pivot={stage?.PivotOffset} scale={stage?.Scale} z={stage?.ZIndex} holderAnchors={holder?.AnchorLeft} " +
+                 $"holderScale={holder?.Scale} logoScale={logo?.Scale} logoPos={logo?.Position}";
+        return waterGone && stageNative && holderNative && logoNative;
+    }
+
+    private static float MenuSpineTrackTime(NMainMenu menu)
+    {
+        Node2D? spine = menu.GetNodeOrNull<Node2D>("%MainMenuBg/BgContainer/Fg");
+        if (spine is null) return -1f;
+        GodotObject? state = spine.Call("get_animation_state").AsGodotObject();
+        if (state is null) return -1f;
+        GodotObject? track = state.Call("get_current", 0).AsGodotObject();
+        if (track is null || !track.HasMethod("get_track_time")) return -1f;
+        return track.Call("get_track_time").AsSingle();
+    }
+
+    /// <summary>
+    /// Samples two drawn frames 1.2 s apart at the same 36 x 36 points of two regions: the live art above the water and beside
+    /// the menu's widgets (sky, stars and the spire), and a strip of generated water left of the button text. Returns how many
+    /// samples changed in each.
+    /// </summary>
+    private async Task<(int Art, int Water)> MenuFrameChangesAsync(Vector2 canvas)
+    {
+        await WaitFramesAsync(2);
+        using Image first = _screenshots.ReadRenderedFrame("menu_backdrop_frame_a");
+        await WaitSecondsAsync(1.2);
+        await WaitFramesAsync(2);
+        using Image second = _screenshots.ReadRenderedFrame("menu_backdrop_frame_b");
+        return (MenuChangedSamples(first, second, canvas, 0.50f, 0.14f, 0.48f, 0.21f),
+            MenuChangedSamples(first, second, canvas, 0.03f, 0.60f, 0.13f, 0.26f));
+    }
+
+    private static int MenuChangedSamples(Image first, Image second, Vector2 canvas, float left, float top, float width, float height)
+    {
+        float sx = first.GetWidth() / canvas.X, sy = first.GetHeight() / canvas.Y;
+        int changed = 0;
+        for (int y = 0; y < 36; y++)
+        for (int x = 0; x < 36; x++)
+        {
+            var point = new Vector2(canvas.X * (left + width * x / 35f), canvas.Y * (top + height * y / 35f));
+            int px = Mathf.Clamp((int)(point.X * sx), 0, first.GetWidth() - 1);
+            int py = Mathf.Clamp((int)(point.Y * sy), 0, first.GetHeight() - 1);
+            Color a = first.GetPixel(px, py), b = second.GetPixel(px, py);
+            if (Mathf.Abs(a.R - b.R) > 2f / 255f || Mathf.Abs(a.G - b.G) > 2f / 255f || Mathf.Abs(a.B - b.B) > 2f / 255f)
+                changed++;
+        }
+        return changed;
+    }
+
+    /// <summary>
+    /// Portrait: the live stage framed on the registered master (the tower stands beside the title), the generated water from
+    /// the water row to the canvas's bottom with the buttons drawn over it, and successive drawn frames differing. Landscape:
+    /// no water node and the game's own stage back.
+    /// </summary>
+    private partial async Task CheckMenuBackdropAsync(NMainMenu menu)
+    {
+        if (!SafeAreaCanvas.IsPortrait)
+        {
+            _report.Check("menu_backdrop_landscape_native", MenuLandscapeNative(menu, out string landscape), landscape);
+            return;
+        }
+        Vector2 canvas = MenuCanvas();
+        var background = menu.GetNode<Control>("%MainMenuBg");
+        Control? stage = background.GetNodeOrNull<Control>("BgContainer");
+        TextureRect? water = background.GetNodeOrNull<TextureRect>(MenuWaterNodeName);
+        Rect2 expectedStage = MenuStageRect(canvas);
+        Rect2 expectedWater = MenuWaterRect(canvas);
+        Rect2 stageRect = stage is null ? default : LauncherDrawnRect(stage);
+        Rect2 waterRect = water is null ? default : LauncherDrawnRect(water);
+        // The live stage is the master's 2560 x 1200 box at the camera's scale, wide enough to cover the canvas (its Spine
+        // art draws above the box's own top edge), and its lower edge reaches past the water's first row (art under the seam).
+        _report.Check("menu_backdrop_native_stage_framed",
+            stage is not null
+            && Mathf.Abs(stageRect.Position.X - expectedStage.Position.X) <= 2f
+            && Mathf.Abs(stageRect.Position.Y - expectedStage.Position.Y) <= 2f
+            && Mathf.Abs(stageRect.Size.X - expectedStage.Size.X) <= 2f
+            && Mathf.Abs(stageRect.Size.Y - expectedStage.Size.Y) <= 2f
+            && stageRect.Position.X <= 0f && stageRect.End.X >= canvas.X - 0.5f
+            && stageRect.End.Y > expectedWater.Position.Y,
+            $"stage={stageRect} expected={expectedStage} canvas={canvas}");
+
+        // The generated water: its own 2304 x 1266 texture, from the master's water row to the canvas's bottom, behind every
+        // control (relative z below the stage and the menu) and out of the input path.
+        Vector2 texture = water?.Texture?.GetSize() ?? Vector2.Zero;
+        _report.Check("menu_backdrop_water_covers_bottom",
+            water is not null && water.IsVisibleInTree()
+            && texture.IsEqualApprox(new Vector2(MenuWaterTextureWidth, MenuWaterTextureHeight))
+            && Mathf.Abs(waterRect.Position.Y - expectedWater.Position.Y) <= 2f
+            && Mathf.Abs(waterRect.End.Y - canvas.Y) <= 2f
+            && waterRect.Position.X <= 0f && waterRect.End.X >= canvas.X - 0.5f
+            && waterRect.Size.Y >= canvas.Y - expectedWater.Position.Y - 2f
+            && water.ZIndex < 0 && stage is not null && stage.ZIndex < water.ZIndex
+            && water.MouseFilter == Control.MouseFilterEnum.Ignore
+            && water.GetParent() == background,
+            $"water={waterRect} top={expectedWater.Position.Y:F1} texture={texture} z={water?.ZIndex} stageZ={stage?.ZIndex} " +
+            $"filter={water?.MouseFilter}");
+
+        // The title: the reference's left position and width, below the safe cap, ending before the framed tower's silhouette.
+        Node2D? logo = background.GetNodeOrNull<Node2D>("BgContainer/Control/Logo");
+        Rect2 bounds = logo is not null && logo.HasMeta("phone_main_menu_logo_bounds")
+            ? logo.GetMeta("phone_main_menu_logo_bounds").AsRect2() : default;
+        Rect2 logoRect = logo is null || bounds.Size.X <= 1f ? default : MenuNodeDrawnRect(logo, bounds);
+        (Rect2 expectedLogo, float towerLeft) = MenuLogoRect(canvas, PortraitLayout.ComputeCapHeight(_tree.Root));
+        _report.Check("menu_backdrop_title_beside_tower",
+            logo is not null && bounds.Size.X > 1f
+            && Mathf.Abs(logoRect.Position.X - expectedLogo.Position.X) <= 3f
+            && Mathf.Abs(logoRect.Position.Y - expectedLogo.Position.Y) <= 3f
+            && Mathf.Abs(logoRect.Size.X - expectedLogo.Size.X) <= 3f
+            && towerLeft > canvas.X * 0.60f && towerLeft < canvas.X * 0.90f
+            && logoRect.End.X <= towerLeft - canvas.X * 0.02f
+            && PortraitSafeRect().Grow(1f).Encloses(logoRect),
+            $"logo={logoRect} expectedLeft/top/width={expectedLogo.Position.X:F1}/{expectedLogo.Position.Y:F1}/{expectedLogo.Size.X:F1} " +
+            $"towerLeft={towerLeft:F1} bounds={bounds}");
+
+        // The buttons are drawn over the water: the column sits after the background and above the water's z, the lowest
+        // row lies on the water, and every row is inside the canvas.
+        Control column = menu.GetNode<Control>("%MainMenuTextButtons");
+        Control[] rows = column.GetChildren().OfType<Control>().Where(row => row.IsVisibleInTree() && !row.IsQueuedForDeletion()).ToArray();
+        Rect2 lowest = rows.Length == 0 ? default : LauncherDrawnRect(rows[^1]);
+        _report.Check("menu_backdrop_buttons_over_water",
+            rows.Length > 0 && water is not null
+            && column.ZIndex > water.ZIndex
+            && background.GetIndex() < column.GetIndex()
+            && rows.All(row =>
+            {
+                Rect2 box = LauncherDrawnRect(row);
+                return box.Size.X > 2f && box.Position.X >= -0.5f && box.End.X <= canvas.X + 0.5f && box.End.Y <= canvas.Y;
+            })
+            && waterRect.HasPoint(lowest.GetCenter()) && lowest.Position.Y > expectedWater.Position.Y,
+            $"column={column.GetGlobalRect()} rows={rows.Length} lowest={lowest} water={waterRect} z={water?.ZIndex} " +
+            $"columnZ={column.ZIndex} backgroundIndex={background.GetIndex()} columnIndex={column.GetIndex()}");
+
+        float trackStart = MenuSpineTrackTime(menu);
+        (int artChanged, int waterChanged) = await MenuFrameChangesAsync(canvas);
+        float trackEnd = MenuSpineTrackTime(menu);
+        // A menu animation that loops inside the window is still live: the track's time either moved on or wrapped back.
+        bool trackAdvanced = trackStart < 0f || MathF.Abs(trackEnd - trackStart) > 0.25f;
+        _report.Check("menu_backdrop_live_animation", artChanged >= 6 && trackAdvanced,
+            $"changedSamples={artChanged}/1296 in the art region; native foreground track {trackStart:F2} -> {trackEnd:F2}");
+        _report.Check("menu_backdrop_water_animates", waterChanged >= 40,
+            $"changedSamples={waterChanged}/1296 in the generated water strip");
+        await CaptureAsync("menu_backdrop_portrait");
+    }
+
+    /// <summary>
+    /// Controller focus over the menu rows in either orientation: the hidden Quit row is never a neighbour, each visible
+    /// focusable row links up and down to its visible neighbour, and the first and last rows stay on themselves.
+    /// </summary>
+    private partial void CheckMenuFocusChain(NMainMenu menu)
+    {
+        Control column = menu.GetNode<Control>("%MainMenuTextButtons");
+        Control[] focusable = column.GetChildren().OfType<Control>()
+            .Where(row => row.IsVisibleInTree() && row.FocusMode != Control.FocusModeEnum.None).ToArray();
+        var problems = new List<string>();
+        for (int i = 0; i < focusable.Length; i++)
+        {
+            Control row = focusable[i];
+            Control? up = row.FindValidFocusNeighbor(Side.Top);
+            Control? down = row.FindValidFocusNeighbor(Side.Bottom);
+            Control expectedUp = focusable[i == 0 ? 0 : i - 1];
+            Control expectedDown = focusable[i == focusable.Length - 1 ? i : i + 1];
+            if (up != expectedUp) problems.Add($"{row.Name}.up={up?.Name ?? "none"} expected={expectedUp.Name}");
+            if (down != expectedDown) problems.Add($"{row.Name}.down={down?.Name ?? "none"} expected={expectedDown.Name}");
+            if (up?.Name == "QuitButton" || down?.Name == "QuitButton") problems.Add($"{row.Name} links to Quit");
+        }
+        _report.Check("menu_focus_skips_quit", focusable.Length > 1 && problems.Count == 0,
+            problems.Count == 0
+                ? $"rows={focusable.Length} chain={string.Join(" > ", focusable.Select(row => row.Name))}"
+                : string.Join("; ", problems));
+    }
+
+    /// <summary>Portrait only: the visible rows fill the column, so hiding Quit leaves no empty row-sized slot.</summary>
+    private partial void CheckMenuColumnRespace(NMainMenu menu)
     {
         if (!SafeAreaCanvas.IsPortrait) return;
-        Rect2 safe = PortraitSafeRect();
-        Rect2 plate = popup.GetGlobalRect();
-        Control noButton = popup.GetNode<Control>("NoButton");
-        Control yesButton = popup.GetNode<Control>("YesButton");
-        Rect2 no = noButton.GetGlobalRect();
-        Rect2 yes = yesButton.GetGlobalRect();
-        Rect2 noTarget = HostTouchTargetBox(noButton), yesTarget = HostTouchTargetBox(yesButton);
-        // The plate is drawn 1.9157x and the buttons only 1.745x, so the buttons are padded to the 44 point target; judge what
-        // a finger can reach (drawn rect merged with the pad), and that both targets are on screen and do not overlap. The
-        // plate's own drawn box is what must stay inside the frame; it is not required to be pixel-centred (its scale limit
-        // comes from the width).
-        // An off-centre popup is a visual defect even when every target fits, so the drawn plate must sit on the canvas centre
-        // (the scale limit leaves a little slack on each side); the tolerance is 8 u, not the 2 u used for exact centring.
-        _report.Check("menu_quit_portrait_popup", safe.Encloses(plate)
-            && Mathf.Abs(plate.GetCenter().X - safe.GetCenter().X) <= 8f
-            && noTarget.Size.Y >= PortraitBands.MinTarget - 0.5f
-            && yesTarget.Size.Y >= PortraitBands.MinTarget - 0.5f
-            && safe.Encloses(noTarget) && safe.Encloses(yesTarget)
-            && !yes.Intersects(no),
-            $"plate={plate} centreDeltaX={plate.GetCenter().X - safe.GetCenter().X:F1} no={no} target={noTarget} " +
-            $"yes={yes} target={yesTarget} safe={safe}");
+        Control column = menu.GetNode<Control>("%MainMenuTextButtons");
+        Control[] rows = column.GetChildren().OfType<Control>().Where(row => row.IsVisibleInTree() && !row.IsQueuedForDeletion()).ToArray();
+        if (rows.Length < 2)
+        {
+            _report.Fail("menu_column_reflows_without_quit", $"only {rows.Length} visible rows");
+            return;
+        }
+        Rect2 columnRect = LauncherDrawnRect(column);
+        Rect2 first = LauncherDrawnRect(rows[0]), last = LauncherDrawnRect(rows[^1]);
+        float[] gaps = rows.Zip(rows.Skip(1),
+            (above, below) => LauncherDrawnRect(below).Position.Y - LauncherDrawnRect(above).End.Y).ToArray();
+        bool quitHidden = menu.GetNodeOrNull<Control>("MainMenuTextButtons/QuitButton") is not { } quit || !quit.IsVisibleInTree();
+        _report.Check("menu_column_reflows_without_quit",
+            quitHidden && Mathf.Abs(first.Position.Y - columnRect.Position.Y) <= 1f
+            && Mathf.Abs(last.End.Y - columnRect.End.Y) <= 1f
+            && gaps.All(gap => Mathf.Abs(gap - gaps[0]) <= 0.5f) && gaps[0] >= 0f,
+            $"rows={rows.Length} column={columnRect} first={first} last={last} " +
+            $"gaps={string.Join(",", gaps.Select(gap => gap.ToString("F1")))} quitHidden={quitHidden}");
+    }
+
+    /// <summary>
+    /// Portrait only: leaving portrait while the menu is open puts the game's own stage and logo back and removes the water;
+    /// coming back frames the same master again. Every drawn frame of the switch is sampled: no landscape frame may hold the
+    /// water or the portrait stage framing (a queue_free'd node would still draw for that frame).
+    /// </summary>
+    private partial async Task CheckMenuBackdropRoundTripAsync(NMainMenu menu)
+    {
+        if (!SafeAreaCanvas.IsPortrait) return;
+        if (LauncherHostWiring.Active is not { } wiring)
+        {
+            _report.Skip("menu_backdrop_rotation_round_trip", "the launcher host wiring is not attached");
+            return;
+        }
+        var leaks = new List<string>();
+        void SampleDrawn()
+        {
+            if (SafeAreaCanvas.IsPortrait || !GodotObject.IsInstanceValid(menu)) return;
+            var background = menu.GetNodeOrNull<Control>("%MainMenuBg");
+            if (background?.GetNodeOrNull<TextureRect>(MenuWaterNodeName) is { } water && water.IsVisibleInTree())
+                leaks.Add("water drawn on a landscape frame");
+            if (background?.GetNodeOrNull<Control>("BgContainer") is { } stage && Mathf.Abs(stage.AnchorLeft) < 0.001f)
+                leaks.Add("portrait stage framing drawn on a landscape frame");
+        }
+
+        RenderingServer.FramePostDraw += SampleDrawn;
+        try
+        {
+            wiring.ApplyOrientation(false);
+            await WaitFramesAsync(4);
+            string landscape = "";
+            bool native = !SafeAreaCanvas.IsPortrait && MenuLandscapeNative(menu, out landscape);
+            _report.Check("menu_backdrop_landscape_after_switch", native, landscape);
+            await CaptureAsync("menu_backdrop_landscape");
+
+            wiring.ApplyOrientation(true);
+            bool framed = false;
+            string detail = "";
+            bool returned = await WaitOrFalseAsync(() =>
+            {
+                framed = SafeAreaCanvas.IsPortrait && MenuPortraitFramed(menu, out detail);
+                return framed;
+            }, MediumWait);
+            _report.Check("menu_backdrop_portrait_after_switch", returned && framed, detail);
+            await WaitFramesAsync(2);
+        }
+        finally
+        {
+            RenderingServer.FramePostDraw -= SampleDrawn;
+        }
+        _report.Check("menu_backdrop_landscape_never_draws_portrait_layers", leaks.Count == 0,
+            leaks.Count == 0 ? "no drawn landscape frame held the water or the portrait stage" : string.Join("; ", leaks.Distinct()));
+        await CaptureAsync("menu_backdrop_portrait_again");
     }
 
     private partial void CheckModeCardsLayout(Control modes, Control[] cards)
@@ -446,6 +773,12 @@ internal sealed partial class TestDriver
         // Contract decision 1: the mod status is a 44 point target in the reflowed utility corner.
         _report.Check("menu_mod_status_touch_target", HostTouchTargetBox(modded).Size.Y >= minimum - 0.5f,
             $"target={HostTouchTargetBox(modded)} drawn={status}");
+        // The status stays in its corner: with the Quit row gone it must not sit over (and take input from) any menu row.
+        var rowRects = menu.GetNode<Control>("%MainMenuTextButtons").GetChildren().OfType<Control>()
+            .Where(c => c.IsVisibleInTree()).Select(LauncherDrawnRect).ToArray();
+        _report.Check("menu_mod_status_clear_of_buttons",
+            rowRects.Length > 0 && rowRects.All(row => !row.Intersects(status)),
+            $"status={status} rows={string.Join("; ", rowRects)}");
     }
 
     private partial void CheckMenuProfileHover(Control profile, Control profileRow)
