@@ -720,7 +720,7 @@ internal sealed class PortraitRunHeader(Action queueApply)
         return chip.GetType().GetField("_icon", all)?.GetValue(chip) is TextureRect iconField ? iconField.Texture : null;
     }
 
-    private static Control CreateModifierButton()
+    private Control CreateModifierButton()
     {
         var button = new Control
         {
