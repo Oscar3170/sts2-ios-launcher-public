@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Godot;
+using HarmonyLib;
 using MegaCrit.Sts2.Core.Nodes;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.CommonUi;
@@ -443,6 +444,93 @@ internal sealed partial class TestDriver
                 && clipper.GetGlobalRect().Grow(1f).Encloses(new Rect2(page.GlobalPosition, Vector2.One))
                 && visible.HasArea() && PortraitSafeRect().Grow(1f).Encloses(visible),
             $"clipper={clipper.GetGlobalRect()} tabs={tabManager.GetGlobalRect()} page={page.GetGlobalRect()} visible={visible}");
+    }
+
+    /// <summary>
+    /// The rows area may scroll; its range has to end with its rows. The game sizes a page taller than the rows area as its
+    /// rows plus 40% of that area (<c>NSettingsPanel.RefreshSize</c>), so a controller can bring its last row to the middle,
+    /// and a page within 50 units of fitting gets the same padding. The launcher draws the portrait page 1.55 times larger
+    /// and the scroll view measures the page's own height, so that padding becomes that fraction of the rows area of
+    /// scrollable empty space below the last setting. The phone rows are what make the Graphics tab overflow on a phone; on
+    /// this host its portrait page is padded at 720x1280, and the General tab at both portrait sizes. Put the page's own
+    /// target at its limit, let the native scroll settle, and require its last visible row to end on the clip inside the
+    /// game's own 20 + 30 unit padding, rounding included, instead of half a screen above it. Landscape is the game's own
+    /// page and its own padding, which is the control.
+    /// </summary>
+    private partial async Task CheckSettingsScrollEndAsync(Control settings, string tab, Control page)
+    {
+        string slug = tab.ToLowerInvariant();
+        string step = "settings_" + slug + "_scroll_end";
+        if (!SafeAreaCanvas.IsPortrait)
+        {
+            // Landscape keeps the game's own pages and their own scroll padding (General and Input overflow natively); only
+            // the Graphics page, the one the launcher adds rows to on the phone, is this host's to measure as the control.
+            if (tab != "Graphics") return;
+        }
+        else if (tab == "Input")
+        {
+            // NInputSettingsPanel.RefreshSize sizes that page itself (asynchronously, after its own visibility change); the
+            // launcher's rows layout does not own its height.
+            _report.Skip(step, "the Input page sizes itself after it is shown; the launcher's rows layout does not own it");
+            return;
+        }
+        if (settings.GetNodeOrNull<Control>("ScrollContainer") is not { } scroll ||
+            settings.GetNodeOrNull<Control>("ScrollContainer/Mask/Clipper") is not { } clip ||
+            page.GetNodeOrNull<Control>("VBoxContainer") is not { } rows)
+        {
+            _report.Fail(step, "the settings screen has no rows view, clip or page container");
+            return;
+        }
+        var limitProperty = AccessTools.Property(typeof(NScrollableContainer), "ScrollLimitBottom");
+        var targetField = AccessTools.Field(typeof(NScrollableContainer), "_targetDragPosY");
+        var paddingField = AccessTools.Field(typeof(NScrollableContainer), "_paddingTop");
+        if (limitProperty is null || targetField is null || paddingField is null ||
+            limitProperty.GetValue(scroll) is not float limit || targetField.GetValue(scroll) is not float target ||
+            paddingField.GetValue(scroll) is not float paddingTop)
+        {
+            _report.Skip(step, "the game's NScrollableContainer no longer exposes its scroll limit and target");
+            return;
+        }
+        // The page's last visible row and the clip it scrolls in, in the same canvas coordinates. The portrait reflow's
+        // spacer is the empty tail that makes the page as tall as its drawn rows; it is not a row.
+        float RowsBottom()
+        {
+            float bottom = float.NegativeInfinity;
+            foreach (Node child in rows.GetChildren())
+            {
+                if (child is not Control row || !row.IsVisibleInTree() || row.Name == "PortraitScaleSpacer") continue;
+                bottom = MathF.Max(bottom, row.GetGlobalRect().End.Y);
+            }
+            return bottom;
+        }
+        float clipBottom = clip.GetGlobalRect().End.Y;
+        float rowsBottom = RowsBottom();
+        if (!float.IsFinite(rowsBottom))
+        {
+            _report.Fail(step, "the page has no visible row");
+            return;
+        }
+        // Decide "the rows fit" at the page's resting top, whatever the scroll is doing now: the rows move with the page,
+        // and a tab switch inside the page may already have lifted them.
+        float lifted = page.Position.Y - paddingTop;
+        bool fits = rowsBottom - lifted <= clipBottom + 1f;
+        // The native clamp is [min(limit, 0), max(limit, 0)] and a tab switch starts the target at 0.
+        float maxScroll = MathF.Max(target - MathF.Min(limit, 0f), 0f);
+        targetField.SetValue(scroll, MathF.Min(limit, 0f));
+        await WaitSecondsAsync(0.65);
+        float rowsNow = RowsBottom();
+        float moved = rowsBottom - rowsNow;
+        float gap = clipBottom - rowsNow;
+        targetField.SetValue(scroll, target);
+        await WaitSecondsAsync(0.35);
+        // The game's bottom padding under the last row is 30 units (20 above it): a stopped page ends 39-50 units above the
+        // clip. 60 allows that and rounding, not a third of the rows area.
+        const float margin = 60f;
+        bool stopped = MathF.Abs(gap) <= margin;
+        bool travelled = MathF.Abs(moved - maxScroll) <= 4f;
+        _report.Check(step, fits ? maxScroll <= margin : stopped && travelled,
+            $"limit={limit:F0} (max scroll {maxScroll:F0}) moved {moved:F0}; last row {gap:F0} above the clip bottom " +
+            $"{clipBottom:F0} at {rowsNow:F0} (rest {rowsBottom:F0}, lifted {lifted:F0}); clip {clip.GetGlobalRect()}");
     }
 
     // ---- pause ---------------------------------------------------------------------------------------

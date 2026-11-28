@@ -143,4 +143,9 @@ internal sealed partial class TestDriver
     // Host answer: one Settings tab's page, after the native tab switch (the launcher checks the tabs and rows sit under
     // its measured cap).
     private partial void CheckSettingsTabLayout(Control settings, string tab, Control page);
+
+    // Host answer: where the page's own scroll view stops, against the drawn bottom of its last visible row. The phone
+    // rows are not on this host, so the Graphics tab keeps the desktop rows (it fits in portrait) and the General tab
+    // exercises the same page sizing; landscape keeps the game's own page.
+    private partial Task CheckSettingsScrollEndAsync(Control settings, string tab, Control page);
 }

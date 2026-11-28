@@ -172,6 +172,7 @@ internal sealed partial class TestDriver
             await CaptureAsync("menu_settings_" + tab.ToLowerInvariant());
             System.IO.File.WriteAllLines(System.IO.Path.Combine(_options.OutputDirectory, "geometry_" + tab + ".txt"),
                 FindAll<Control>(page).Select(c => $"{c.GetPath()} {c.GetType().Name} size={c.Size} min={c.GetCombinedMinimumSize()} scale={c.Scale} global={c.GetGlobalRect()}"));
+            await CheckSettingsScrollEndAsync(settings, tab, page);
         }
         await TapMenuAsync(settings.GetNode<Control>("BackButton"), "settings_back");
         await WaitUntilAsync(() => menu.GetNode<Control>("MainMenuTextButtons").IsVisibleInTree(), "settings back returns to menu", MediumWait);
