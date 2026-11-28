@@ -442,7 +442,7 @@ internal sealed partial class TestDriver
             Label? countBadge = modifierButton?.GetNodeOrNull<Label>("Count");
             Rect2 touch = modifierButton is null ? default : HostTouchTargetBox(modifierButton);
             int buttons = FindAll<Control>(topBar)
-                .Count(node => node.Name == ModifierButtonName && !node.IsQueuedForDeletion());
+                .Count(node => node.Name.ToString() == ModifierButtonName && !node.IsQueuedForDeletion());
             bool badge = chips.Length > 1
                 ? countBadge is { Visible: true } && countBadge.Text.Trim() == chips.Length.ToString()
                 : countBadge is null || !countBadge.Visible;
