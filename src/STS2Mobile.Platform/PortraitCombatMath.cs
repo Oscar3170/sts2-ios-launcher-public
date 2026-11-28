@@ -1231,6 +1231,122 @@ public static class PortraitCombatMath
         return new PortraitDominantStage(slots, bossWidth, SafeAreaCanvas.PortraitWidth * lane * DominantLaneFill);
     }
 
+    /// <summary>
+    /// Whether the encounter authored every summon slot on a depth rank clear of its boss's own line. The encounter scenes
+    /// place a creature's feet on its marker, so a slot whose marker stands at least <paramref name="minimumRankGap"/>
+    /// above or below the boss's marker is a summon authored on a separate rank: it shares the fight with the boss (the
+    /// Fabricator's bots, the Living Fog's bombs, whose markers stand 130-460 units off the boss). A slot on the boss's own
+    /// line (the Phrog Parasite's wrigglers, all within 20 units) belongs to a fight where the boss leaves before its
+    /// summons arrive, so those lanes may keep the whole ground band. Either sign counts: the scene's vertical direction is
+    /// the encounter's authored depth order, and all slots on one side of the boss means one shared rank.
+    /// </summary>
+    public static bool SummonsAuthoredOnOwnRank(
+        System.Collections.Generic.IReadOnlyList<PortraitSlotMarker> markers,
+        string bossSlot,
+        float minimumRankGap = 100f)
+    {
+        if (bossSlot.Length == 0 || markers.Count < 2)
+            return false;
+        float bossY = float.NaN;
+        for (int i = 0; i < markers.Count; i++)
+        {
+            if (string.Equals(markers[i].Name, bossSlot, StringComparison.Ordinal))
+                bossY = markers[i].Y;
+        }
+        if (!float.IsFinite(bossY))
+            return false;
+        bool any = false;
+        int side = 0;
+        for (int i = 0; i < markers.Count; i++)
+        {
+            if (string.Equals(markers[i].Name, bossSlot, StringComparison.Ordinal))
+                continue;
+            any = true;
+            float offset = markers[i].Y - bossY;
+            if (MathF.Abs(offset) < minimumRankGap)
+                return false;
+            int markerSide = offset < 0f ? -1 : 1;
+            if (side == 0)
+                side = markerSide;
+            else if (side != markerSide)
+                return false;
+        }
+        return any;
+    }
+
+    /// <summary>The boss column keeps this share of the boss's ordinary reserved-boss fit.</summary>
+    public const float SummonBossFitShare = 0.86f;
+
+    /// <summary>Air between one summon cell's body frame and its neighbour, and between the block and the boss column.</summary>
+    public const float SummonCellGap = 8f;
+
+    /// <summary>Air between the allies' bodies and the first summon cell.</summary>
+    public const float SummonAllyGap = 24f;
+
+    /// <summary>A summon cell's body never stands taller than this, so the rank above it keeps its own HUD clear.</summary>
+    public const float SummonMaxCellBody = 140f;
+
+    /// <summary>Room kept for at least this much of each summon column before the boss column takes its share.</summary>
+    private const float SummonMinCellWidth = 100f;
+
+    /// <summary>
+    /// A live summoner's stage: the boss's slot and column, the summon cell's body width and height cap, and the cell
+    /// block's edges.
+    /// </summary>
+    public readonly record struct PortraitSummonStage(
+        PortraitCreatureSlot[] Slots, float BossWidth, float CellWidth, float CellBodyCap,
+        float CellLeft, float CellRight, float BossLeft);
+
+    /// <summary>
+    /// The stage for a boss that keeps fighting beside its summons (the Fabricator's bots, the Living Fog's bombs). The
+    /// boss keeps a column at the right end of the canvas at <see cref="SummonBossFitShare"/> of its ordinary reserved-boss
+    /// fit; the Capacity−1 reserved cells fill a block just right of the allies, two on the front foot line and the rest in
+    /// one raised rank, each column a body wide. Four cells therefore stand in the native-like 2×2 (two on the floor, two
+    /// behind and above), never in the boss's column; the raised rank's bar hangs above the front rank's intent row thanks
+    /// to <paramref name="rowTail"/>. The short canvas caps the cell body so the raised rank's body still starts under the
+    /// stage top, where the tall canvas has room for the full cell.
+    /// </summary>
+    public static PortraitSummonStage ComputeSummonStage(
+        int capacity,
+        PortraitCombatBands bands,
+        float allyRight,
+        float ordinaryBossWidth,
+        float rowTail)
+    {
+        int count = Math.Max(1, capacity);
+        int lanes = Math.Max(1, count - 1);
+        float right = EnemyStageRight;
+        float maxBossWidth = Math.Max(150f, right - allyRight - SummonAllyGap - 2f * SummonMinCellWidth);
+        float bossWidth = MathF.Round(Math.Clamp(ordinaryBossWidth * SummonBossFitShare, 150f, maxBossWidth));
+        float bossLeft = right - bossWidth;
+        float blockLeft = MathF.Round(Math.Clamp(allyRight + SummonAllyGap, 12f,
+            Math.Max(12f, bossLeft - 2f * SummonMinCellWidth)));
+        float cellRight = Math.Max(blockLeft + 2f * SummonMinCellWidth, bossLeft - SummonCellGap);
+        int rows = lanes <= 2 ? 1 : 2;
+        int columns = (lanes + rows - 1) / rows;
+        float pitch = (cellRight - blockLeft) / columns;
+        float cellWidth = MathF.Max(20f, pitch - SummonCellGap);
+        float stageRoom = bands.FrontFeetY - bands.StageTopY;
+        float underStageTop = MathF.Max(60f, (stageRoom - rowTail) * 0.5f);
+        float bodyCap = MathF.Min(MathF.Min(cellWidth, SummonMaxCellBody), underStageTop);
+        float rowStep = bodyCap + rowTail;
+        var slots = new PortraitCreatureSlot[count];
+        slots[0] = new PortraitCreatureSlot(bossLeft + bossWidth * 0.5f, bands.FrontFeetY, 0.94f, 0);
+        for (int i = 1; i < count; i++)
+        {
+            int lane = i - 1;
+            int row = lane / columns;
+            int column = lane % columns;
+            slots[i] = new PortraitCreatureSlot(
+                blockLeft + (column + 0.5f) * pitch,
+                bands.FrontFeetY - row * rowStep,
+                row == 0 ? 0.94f : 0.86f,
+                row == 0 ? 1 : 0);
+        }
+        return new PortraitSummonStage(slots, bossWidth, cellWidth, bodyCap,
+            blockLeft, cellRight, bossLeft);
+    }
+
     /// <summary>Where a lone player stands (its feet), in canvas units from the left edge.</summary>
     public const float LonePlayerX = 180f;
 

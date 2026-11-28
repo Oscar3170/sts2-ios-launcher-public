@@ -149,7 +149,7 @@ internal sealed class PortraitCreatureHud
                 cState.LastIntentCount = intentCount;
                 cState.LastIntentScale = intentScale;
                 cState.LastIntentWidth = intentWidth;
-                LayoutCombatIntents(creature, intents, creatureScale, intentScale);
+                LayoutCombatIntents(creature, intents, creatureScale, intentScale, maxBarWidth);
             }
         }
 
@@ -479,9 +479,12 @@ internal sealed class PortraitCreatureHud
     /// <summary>
     /// The intents above a creature's head, at one size on the canvas whatever the body's scale: a row of several that
     /// would pass a side of the canvas is moved back in through its pivot (a pivot d units right of the centre moves the
-    /// scaled row d * (scale - 1) left). Run only when the row changed (see last intent count/scale on the state).
+    /// scaled row d * (scale - 1) left). A row wider than the creature's own HUD column (<paramref name="maxCanvasWidth"/>,
+    /// the health display's cap) is scaled down to it, so a row of icons never reaches a neighbour's HUD or body. Run only
+    /// when the row changed (see last intent count/scale on the state).
     /// </summary>
-    private static void LayoutCombatIntents(Control creature, Control intents, float creatureScale, float intentScale)
+    private static void LayoutCombatIntents(Control creature, Control intents, float creatureScale, float intentScale,
+        float maxCanvasWidth)
     {
         float pivotX = intents.Size.X * 0.5f;
         int shown = 0;
@@ -490,9 +493,18 @@ internal sealed class PortraitCreatureHud
             if (intent is Control { Visible: true } && !intent.IsQueuedForDeletion())
                 shown++;
         }
+        float nativeRowWidth = shown * 64f - Math.Max(0, shown - 1) * 10f;
+        if (shown > 0 && maxCanvasWidth > 1f && nativeRowWidth > 1f && creatureScale > 0.05f)
+        {
+            // The row on the canvas is nativeRowWidth * creatureScale * intentScale; keep it inside the creature's HUD
+            // column. Single icons usually already fit; a two-icon row in a narrow summon cell is the case this serves.
+            float rowScale = maxCanvasWidth / (nativeRowWidth * creatureScale);
+            if (rowScale < intentScale)
+                intentScale = rowScale;
+        }
         if (shown > 1 && intentScale > 1.05f)
         {
-            float rowHalf = (shown * 64f - (shown - 1) * 10f) * IntentCanvasScale * 0.5f;
+            float rowHalf = nativeRowWidth * creatureScale * intentScale * 0.5f;
             float center = creature.GlobalPosition.X + (intents.Position.X + intents.Size.X * 0.5f) * creatureScale;
             float clamped = LeftEdgeOnCanvas(center, rowHalf * 2f) + rowHalf;
             pivotX += (center - clamped) / (creatureScale * (intentScale - 1f));

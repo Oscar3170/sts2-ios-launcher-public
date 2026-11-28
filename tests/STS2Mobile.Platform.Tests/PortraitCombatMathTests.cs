@@ -1153,6 +1153,100 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
+    public void OnlyEncountersThatAuthoredTheirSummonsOnTheirOwnRankGetTheSummonColumn()
+    {
+        // The extracted encounter scenes' markers (x, y from the .tscn): the Fabricator's bots and the Living Fog's bombs
+        // stand 130-460 units off their boss, so they share the fight; the Phrog Parasite's wrigglers are authored on its
+        // own line and only appear after it dies.
+        PortraitCombatMath.PortraitSlotMarker[] fabricator =
+        {
+            new("bot1", 1085f, 575f, 0f), new("fabricator", 1483f, 713f, 450f * 331f),
+            new("bot2", 1285f, 261f, 0f), new("bot3", 1645f, 256f, 0f), new("bot4", 1875f, 581f, 0f),
+        };
+        Assert.True(PortraitCombatMath.SummonsAuthoredOnOwnRank(fabricator, "fabricator"));
+
+        PortraitCombatMath.PortraitSlotMarker[] livingFog =
+        {
+            new("bomb1", 1085f, 575f, 0f), new("bomb2", 1262f, 361f, 0f), new("bomb3", 1491f, 285f, 0f),
+            new("bomb4", 1723f, 372f, 0f), new("livingFog", 1481f, 729f, 450f * 331f), new("bomb5", 1875f, 581f, 0f),
+        };
+        Assert.True(PortraitCombatMath.SummonsAuthoredOnOwnRank(livingFog, "livingFog"));
+
+        PortraitCombatMath.PortraitSlotMarker[] phrog =
+        {
+            new("phrog", 1366f, 694f, 300f * 300f), new("wriggler1", 1049f, 684f, 0f),
+            new("wriggler2", 1270f, 705f, 0f), new("wriggler3", 1511f, 713f, 0f), new("wriggler4", 1736f, 689f, 0f),
+        };
+        Assert.False(PortraitCombatMath.SummonsAuthoredOnOwnRank(phrog, "phrog"));
+        // A slot on the boss's line, a missing boss marker, or no markers at all is not a share-the-fight scene.
+        Assert.False(PortraitCombatMath.SummonsAuthoredOnOwnRank(fabricator, "bot9"));
+        Assert.False(PortraitCombatMath.SummonsAuthoredOnOwnRank(fabricator, ""));
+        Assert.False(PortraitCombatMath.SummonsAuthoredOnOwnRank(Array.Empty<PortraitCombatMath.PortraitSlotMarker>(), "fabricator"));
+        // The owned rank is a depth rank: the same scene authored the other way up classifies the same way.
+        Assert.True(PortraitCombatMath.SummonsAuthoredOnOwnRank(
+            fabricator.Select(m => m with { Y = 1450f - m.Y }).ToArray(), "fabricator"));
+    }
+
+    [Fact]
+    public void SummonStageKeepsABossColumnAndTwoRanksOfCellsBesideTheAlly()
+    {
+        // The Fabricator: four reserved bot slots on a rank of their own. The boss keeps 86% of its ordinary reserved-boss
+        // fit in a column at the right end of the canvas; the four cells fill the rest of the band in a 2x2, two on the
+        // front line and two raised, with the raised rank's body still under the stage top on the short canvas.
+        const float rowTail = 160f;
+        const float allyRight = 315f;
+        foreach (float canvasHeight in new[] { 2340f, 1920f })
+        {
+            bool compact = canvasHeight < 2000f;
+            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
+            Assert.Equal(compact, bands.Compact);
+            float ordinaryBossWidth = compact ? 464f : 502f;
+            PortraitCombatMath.PortraitSummonStage stage =
+                PortraitCombatMath.ComputeSummonStage(5, bands, allyRight, ordinaryBossWidth, rowTail);
+            Assert.Equal(5, stage.Slots.Length);
+
+            // The boss's column keeps at least 85% of its ordinary fit and ends at the canvas's right stage edge, its feet
+            // on the front line.
+            Assert.InRange(stage.BossWidth / ordinaryBossWidth, 0.85f, 0.90f);
+            Assert.Equal(PortraitCombatMath.EnemyStageRight, stage.BossLeft + stage.BossWidth, 0.6f);
+            Assert.Equal(stage.BossLeft + stage.BossWidth * 0.5f, stage.Slots[0].CanvasX, 0.6f);
+            Assert.Equal(bands.FrontFeetY, stage.Slots[0].CanvasFeetY);
+            Assert.Equal(0, stage.Slots[0].RowDepth);
+
+            // Every cell fits between the ally and the boss column; neither its body nor its shared HUD column can reach
+            // the boss.
+            for (int i = 1; i < stage.Slots.Length; i++)
+            {
+                Assert.True(stage.Slots[i].CanvasX + stage.CellWidth * 0.5f <= stage.BossLeft - 0.5f,
+                    $"cell {i} right={stage.Slots[i].CanvasX + stage.CellWidth * 0.5f} bossLeft={stage.BossLeft}");
+                Assert.True(stage.Slots[i].CanvasX - stage.CellWidth * 0.5f >= stage.CellLeft - 0.01f);
+                Assert.True(stage.Slots[i].CanvasX - stage.CellWidth * 0.5f >= allyRight);
+            }
+            Assert.True(stage.CellWidth >= 120f, $"cell width={stage.CellWidth}");
+            Assert.True(stage.CellBodyCap >= 90f, $"cell body cap={stage.CellBodyCap}");
+
+            // Two ranks: the front pair on the foot line and the back pair one row step above, with the raised body still
+            // starting under the stage top on both shapes.
+            var feet = stage.Slots.Skip(1).Select(s => s.CanvasFeetY).Distinct().OrderBy(y => y).ToArray();
+            Assert.Equal(2, feet.Length);
+            Assert.Equal(bands.FrontFeetY, feet[1], 0.5f);
+            Assert.Equal(bands.FrontFeetY - (stage.CellBodyCap + rowTail), feet[0], 0.5f);
+            Assert.True(feet[0] - stage.CellBodyCap >= bands.StageTopY - 0.75f,
+                $"raised body top={feet[0] - stage.CellBodyCap} stageTop={bands.StageTopY}");
+            Assert.Equal(0, stage.Slots[3].RowDepth);
+            Assert.Equal(1, stage.Slots[1].RowDepth);
+        }
+
+        // The Living Fog's five bomb slots use three cells in the front rank and two in the raised one on the tall canvas.
+        PortraitCombatBands tall = PortraitCombatMath.ComputeCombatBands(2340f, stageTopY: 612f);
+        PortraitCombatMath.PortraitSummonStage fog =
+            PortraitCombatMath.ComputeSummonStage(6, tall, allyRight, 502f, rowTail);
+        Assert.Equal(6, fog.Slots.Length);
+        Assert.Equal(2, fog.Slots.Skip(1).Select(s => s.CanvasFeetY).Distinct().Count());
+        Assert.Equal(3, fog.Slots.Count(s => s.RowDepth == 1));
+    }
+
+    [Fact]
     public void TallThinRostersOfThreeOrFourChooseTheSingleRow()
     {
         // The Phantasmal Gardeners (208 by 380, four of them): the 2x2 cell is 313 wide but only 200 tall above

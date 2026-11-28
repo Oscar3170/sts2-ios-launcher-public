@@ -16,6 +16,11 @@ internal sealed class PortraitCombatStage
     private const float EnemyHudBoxHeight = 41.23f;
     private const float EggIntentRise = 54.4f;
     private const float OviIntentRise = 64f;
+    // A boss that keeps fighting beside its summons (the Fabricator's bots) owns a column at the right of the canvas and
+    // its reserved cells a block beside the allies: two on the floor, the rest in one raised rank. This is the air the
+    // raised rank needs above the front rank: its own bar under its feet (44.2) plus the front rank's intent row (92.8)
+    // and 23 units of clearance, a margin over the stage's own 104.8-unit intent band.
+    private const float SummonRowTail = 160f;
     private const float LoneEnemyLeft = 360f;
     private const float SurroundedPlayerHalf = 160f;
     private const float SurroundedSideGap = 100f;
@@ -340,8 +345,43 @@ internal sealed class PortraitCombatStage
         float gap = plan.Capacity <= 2 ? 110f : PortraitCombatMath.PlayerEnemyGap;
         float enemyLeft = PortraitCombatMath.EnemyStageLeft(playersRight, alliesRight, LoneEnemyLeft, gap);
 
+        if (plan.SummonBlock && !plan.SummonComputed)
+        {
+            // The boss's ordinary fit is what the reserved-boss stage would give it on its dominant frame. The block keeps
+            // 86% of that width for the boss's column; the cells take the rest of the canvas between the allies and it.
+            Control? bossNode = null;
+            foreach (Control enemy in currentEnemies)
+            {
+                if (!plan.SlotByCreature.TryGetValue(enemy.GetInstanceId(), out int slotIndex) ||
+                    slotIndex != plan.BossSlot)
+                    continue;
+                bossNode = enemy;
+                break;
+            }
+            if (bossNode == null && currentEnemies.Count > 0)
+                bossNode = currentEnemies[0];
+            if (bossNode != null)
+            {
+                float roomScale = plan.BodyScaleFrozen ? plan.FrozenBodyScale : plan.SharedBodyScale;
+                float ordinaryFit = CellFit(bossNode, plan.DominantStage.BossWidth, 900f, refl, bands);
+                if (roomScale > 0.01f)
+                    ordinaryFit = Math.Min(ordinaryFit, roomScale);
+                float ordinaryWidth = refl.GetCreatureFootprintSize(bossNode).X * ordinaryFit;
+                PortraitCombatMath.PortraitSummonStage summon = PortraitCombatMath.ComputeSummonStage(
+                    plan.Capacity, bands, Math.Max(playersRight, alliesRight), ordinaryWidth, SummonRowTail);
+                plan.EnemySlots = summon.Slots;
+                plan.SummonBossWidth = summon.BossWidth;
+                plan.SummonCellWidth = summon.CellWidth;
+                plan.SummonCellLeft = summon.CellLeft;
+                plan.SummonCellRight = summon.CellRight;
+                plan.SummonBossLeft = summon.BossLeft;
+                plan.SummonCellHeight = summon.CellBodyCap + (bands.Compact ? 0f : IntentBandHeight);
+                plan.SummonComputed = true;
+            }
+        }
+
         if (!bands.Compact && plan.Capacity == 6 && plan.TallFormation.Length == 0 && !plan.OviFight &&
-            !plan.EmbeddedCrab && !plan.Segmented)
+            !plan.EmbeddedCrab && !plan.Segmented && !plan.SummonBlock)
         {
             // Six bodies on the tall stage: three columns right of the hero (a smaller gap, since the group is dense), a
             // front and a back rat per column. Built once with the real enemy-left, then frozen like every other slot.
@@ -563,7 +603,12 @@ internal sealed class PortraitCombatStage
                      $"reserved={plan.ReservedBoss} row={plan.SingleRow} " +
                      $"backBoss={plan.BackBoss} stagger={plan.Staggered} chain={plan.Segmented} target={plan.BodyTargetScale:F3} " +
                      $"shared={plan.SharedBodyScale:F3} locked={plan.SharedLocked} left={plan.CrowdLeft:F0} " +
-                     $"cells=[{string.Join(",", cellWidths)}]");
+                     $"cells=[{string.Join(",", cellWidths)}]" +
+                     (plan.SummonBlock
+                         ? $" summonBlock=true boss={plan.SummonBossWidth:F0} cell={plan.SummonCellWidth:F0} " +
+                           $"cap={plan.SummonCellHeight:F0} band={plan.SummonCellLeft:F0}-{plan.SummonCellRight:F0} " +
+                           $"bossLeft={plan.SummonBossLeft:F0}"
+                         : ""));
             plan.StageLogged = true;
         }
 
@@ -699,11 +744,15 @@ internal sealed class PortraitCombatStage
             {
                 // The dominant frame on the front line, capped by the frozen room scale: the boss fills its
                 // 0.55W/0.43W frame and the reserved lanes fit their own bodies when their summons arrive, without the
-                // later body resizing the room or moving a peer.
-                if (slotIndex == plan.BossSlot)
-                    maxW = plan.DominantStage.BossWidth;
-                else
-                    maxW = plan.DominantStage.LaneWidth;
+                // later body resizing the room or moving a peer. A summon block already carries each cell's own frame
+                // (EnemySlotLimits), so only the lane-frame replacement is skipped there.
+                if (!plan.SummonBlock)
+                {
+                    if (slotIndex == plan.BossSlot)
+                        maxW = plan.DominantStage.BossWidth;
+                    else
+                        maxW = plan.DominantStage.LaneWidth;
+                }
                 float roomScale = plan.BodyScaleFrozen ? plan.FrozenBodyScale : plan.SharedBodyScale;
                 float fit = CellFit(enemy, maxW, maxH, refl, bands);
                 if (roomScale > 0.01f)
@@ -1321,10 +1370,12 @@ internal sealed class PortraitCombatStage
         bool dominant = !plan.Segmented && !plan.EmbeddedCrab && capacity > 2 && capacity == enemies.Count &&
                         DominantByArea(enemies, refl);
         // The one exception is a boss whose encounter reserves its summons' slots and starts with that boss alone: the Phrog
-        // Parasite and its four wrigglers (also the Fabricator's bots and the Living Fog's bombs). It keeps the
-        // dominant frame at both shapes — without the boss lift — with its feet on the front line, and the reserved slots
-        // keep their lanes there from room start, so a summon appears where it was reserved and nothing reshuffles. The
-        // Ovicopter is not this case: its reserved slots are eggs with their own row and its own back rank.
+        // Parasite and its four wrigglers (also the Fabricator's bots and the Living Fog's bombs). A boss that leaves before
+        // its summons arrive (the Phrog) keeps its dominant frame with its feet on the front line and the reserved slots keep
+        // their lanes there from room start. A boss that keeps fighting beside its summons (the Fabricator, the Living Fog:
+        // the encounter authored their slots on a rank of their own) instead owns a column at the right of the canvas and the
+        // reserved cells a block beside the allies, so a summon is never drawn over the boss or in its HUD. The Ovicopter is
+        // not this case: its reserved slots are eggs with their own row and its own back rank.
         plan.ReservedBoss = !dominant && !plan.Segmented && !plan.EmbeddedCrab && capacity > 2 &&
                             capacity > enemies.Count && enemies.Count == 1 && DominantByArea(enemies, refl) &&
                             BossOwnsFirstSlot(markers, enemies, refl) && !HasOvicopter(markers, enemies, refl);
@@ -1357,12 +1408,18 @@ internal sealed class PortraitCombatStage
         plan.BossSlot = LargestEnemySlot(plan, refl, enemies);
         if (plan.ReservedBoss && plan.BossSlot == 0)
         {
-            // The dominant stage without its boss lift: the boss keeps its authored frame (0.55W on the tall
-            // canvas, 0.43W centred at 0.76 on the short one) with its feet on the front foot line, and the reserved slots
-            // keep Capacity−1 equal lanes on that same ground band. The room scale freezes as usual, so a wriggler that
-            // appears later fits its own lane without moving anything.
+            // The dominant frame without its boss lift is the fallback for an encounter whose summons replace the boss (the
+            // Phrog Parasite): 0.55W on the tall canvas (0.43W centred at 0.76 on the short one) with its feet on the front
+            // line, and the reserved slots on that ground band. A summon block keeps the record only as the frame it takes
+            // the boss's ordinary fit from and lays its own slots.
             plan.DominantStage = PortraitCombatMath.ComputeDominantStage(capacity, bands);
-            plan.EnemySlots = plan.DominantStage.Slots;
+            // An encounter that authored its summon slots on a rank of their own is a boss its summons fight beside: its
+            // bosses keep a column at the right and its cells a block beside the allies, filled once the allies are placed
+            // (like the crowded row) and then frozen with the plan.
+            string bossSlot = refl.GetSlotName(enemies[0]) ?? "";
+            plan.SummonBlock = PortraitCombatMath.SummonsAuthoredOnOwnRank(markers, bossSlot);
+            if (!plan.SummonBlock)
+                plan.EnemySlots = plan.DominantStage.Slots;
         }
         else
         {
@@ -1893,6 +1950,15 @@ internal sealed class PortraitCombatStage
     {
         if (plan.Dominant)
         {
+            if (plan.SummonBlock)
+            {
+                // The boss's column holds its ordinary fit; each reserved cell holds one summon in its own frame. CellFit
+                // subtracts the intent band from the cell height on the tall canvas; the short canvas fits the body by width
+                // and its cap already leaves the raised rank under the stage top.
+                return index == plan.BossSlot
+                    ? (plan.SummonBossWidth, 900f, plan.SummonBossLeft, PortraitCombatMath.EnemyStageRight)
+                    : (plan.SummonCellWidth, plan.SummonCellHeight, plan.SummonCellLeft, plan.SummonCellRight);
+            }
             float lane = SafeAreaCanvas.PortraitWidth * 0.635f / Math.Max(1, plan.Capacity - 1);
             if (index == 0)
                 return (SafeAreaCanvas.PortraitWidth * 0.55f, 900f, StageSideMargin, SafeAreaCanvas.PortraitWidth - StageSideMargin);
@@ -1914,6 +1980,8 @@ internal sealed class PortraitCombatStage
     {
         if (plan.Dominant)
         {
+            if (plan.SummonBlock)
+                return index == plan.BossSlot ? plan.SummonBossWidth : plan.SummonCellWidth;
             float lane = SafeAreaCanvas.PortraitWidth * 0.635f / Math.Max(1, plan.Capacity - 1);
             return index == 0 ? 480f : lane * 0.80f;
         }
@@ -1961,7 +2029,10 @@ internal sealed class PortraitCombatStage
             cap = Math.Min(cap, MathF.Abs(EnemySlotX(plan, j) - x) - 14f);
             break;
         }
-        return Math.Max(MinHealthBarWidth * 0.7f, cap);
+        // A summon block's cells can be narrower than the usual 150-unit bar floor: the floor there is the cell's own
+        // width, so each cell's bar stays inside its column instead of drawing two bars over each other.
+        float floor = plan.SummonBlock ? 12f : MinHealthBarWidth * 0.7f;
+        return Math.Max(floor, cap);
     }
 
     /// <summary>
@@ -2492,6 +2563,19 @@ internal sealed class PortraitCombatStage
         /// </summary>
         public bool ReservedBoss;
         public PortraitCombatMath.PortraitDominantStage DominantStage;
+        /// <summary>
+        /// A reserved boss whose summon slots the encounter authored on their own depth rank (the Fabricator's bots, the
+        /// Living Fog's bombs): the boss keeps a column at the right of the canvas and the reserved cells a block just
+        /// right of the allies, two on the floor and two raised. <see cref="DominantStage"/> is only the fallback frame.
+        /// </summary>
+        public bool SummonBlock;
+        public bool SummonComputed;
+        public float SummonBossWidth;
+        public float SummonCellWidth;
+        public float SummonCellHeight;
+        public float SummonCellLeft;
+        public float SummonCellRight;
+        public float SummonBossLeft;
         /// <summary>A tall-thin 3–4 body roster drawn in the crowded single row instead of the tall table.</summary>
         public bool SingleRow;
         public bool Pier;
