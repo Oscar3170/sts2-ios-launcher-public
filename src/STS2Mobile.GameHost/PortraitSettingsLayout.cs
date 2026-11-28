@@ -121,9 +121,18 @@ internal sealed class PortraitSettingsLayout
 
     private enum DragKind : byte { None, Scroll, List }
 
+    /// <summary>One page's rows container and the callback that asks for a refit when its rows change size.</summary>
+    private sealed class PageWatch
+    {
+        public ulong Content;
+        public Callable Changed;
+    }
+
     private readonly Dictionary<ulong, PortraitControlSnapshot> _snapshots = new();
     private readonly Dictionary<ulong, ScreenState> _screens = new();
     private readonly Dictionary<ulong, DropdownState> _dropdowns = new();
+    private readonly Dictionary<ulong, PageWatch> _pageWatches = new();
+    private readonly HashSet<ulong> _fitPending = new();
     private readonly HashSet<ulong> _panels = new();
     private readonly HashSet<ulong> _feedback = new();
     private readonly HashSet<ulong> _prepared = new();
@@ -369,6 +378,13 @@ internal sealed class PortraitSettingsLayout
     /// last row (the phone rows are also what make the Graphics tab taller than that area). The spacer already makes the
     /// panel's minimum size the rows' drawn height, so the panel is sized to that instead and the scroll ends with the rows.
     /// </para>
+    /// <para>
+    /// A row's minimum height is only final once its container has given it the page's width: before that, a wrapping
+    /// subtitle label measures as one word per line, and a page and spacer built from that minimum are screens taller than
+    /// the rows they draw (the phone's Graphics tab scrolled far past its last row). So every pass also subscribes to the
+    /// rows container's minimum-size changes and re-fits when the settled minimum arrives; that watch also puts the page
+    /// back after a viewport resize caused the game's panels to re-add their padding, whichever handler ran last.
+    /// </para>
     /// </summary>
     private void UpdateScrollRoom(NSettingsScreen settings)
     {
@@ -376,24 +392,81 @@ internal sealed class PortraitSettingsLayout
         foreach (Node child in clipper.GetChildren())
         {
             if (child is not NSettingsPanel panel || IsInputPanel(panel) || !panel.IsNodeReady()) continue;
-            if (panel.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } content) continue;
-            Control? spacer = content.GetNodeOrNull<Control>(SpacerName);
-            if (spacer == null)
-            {
-                spacer = new Control { Name = SpacerName, MouseFilter = Control.MouseFilterEnum.Ignore, FocusMode = Control.FocusModeEnum.None };
-                content.AddChild(spacer);
-            }
-            content.MoveChild(spacer, content.GetChildCount() - 1);
-            spacer.Visible = true;
-            float rows = RowsHeight(content, spacer);
-            float room = MathF.Ceiling(rows * (Scale - 1f));
-            if (Math.Abs(spacer.CustomMinimumSize.Y - room) > 0.5f) spacer.CustomMinimumSize = new Vector2(0f, room);
-            panel.Call(NSettingsPanel.MethodName.RefreshSize);
-            // The native call has just read the content's minimum size, so the spacer is counted: take that height for the
-            // page and drop the native viewport padding, which draws nothing here.
-            float drawnRows = content.GetMinimumSize().Y;
-            if (panel.Size.Y > drawnRows + 0.5f) panel.Size = new Vector2(panel.Size.X, drawnRows);
+            FitPanel(panel);
         }
+    }
+
+    /// <summary>
+    /// Sizes one page to its drawn rows and queues another pass when this pass changed it: the first pass after a layout may
+    /// still be reading the rows' pre-width minimum, and the deferred pass runs after this frame's container sort.
+    /// </summary>
+    private void FitPanel(NSettingsPanel panel)
+    {
+        if (!SafeAreaCanvas.IsPortrait || !GodotObject.IsInstanceValid(panel) || !panel.IsNodeReady()) return;
+        if (panel.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } content) return;
+        WatchPage(panel, content);
+        Control? spacer = content.GetNodeOrNull<Control>(SpacerName);
+        if (spacer == null)
+        {
+            spacer = new Control { Name = SpacerName, MouseFilter = Control.MouseFilterEnum.Ignore, FocusMode = Control.FocusModeEnum.None };
+            content.AddChild(spacer);
+        }
+        if (spacer.GetIndex() != content.GetChildCount() - 1) content.MoveChild(spacer, content.GetChildCount() - 1);
+        spacer.Visible = true;
+        bool changed = false;
+        float rows = RowsHeight(content, spacer);
+        float room = MathF.Ceiling(rows * (Scale - 1f));
+        if (Math.Abs(spacer.CustomMinimumSize.Y - room) > 0.5f)
+        {
+            spacer.CustomMinimumSize = new Vector2(0f, room);
+            changed = true;
+        }
+        // With the spacer set, the content's minimum height is the page's: the rows as drawn at this scale, without the
+        // game's controller padding under them.
+        float page = content.GetMinimumSize().Y;
+        if (Math.Abs(panel.Size.Y - page) > 0.5f)
+        {
+            panel.Size = new Vector2(panel.Size.X, page);
+            changed = true;
+        }
+        if (changed) QueueFit(panel);
+    }
+
+    /// <summary>Refits a page once this frame's containers have sorted and their rows report their settled minimum.</summary>
+    private void QueueFit(NSettingsPanel panel)
+    {
+        ulong id = panel.GetInstanceId();
+        if (!_fitPending.Add(id)) return;
+        Callable.From(() =>
+        {
+            _fitPending.Remove(id);
+            if (GodotObject.InstanceFromId(id) is NSettingsPanel live && GodotObject.IsInstanceValid(live)) FitPanel(live);
+        }).CallDeferred();
+    }
+
+    /// <summary>Connects a page's rows container once: a width or row change that settles its minimum asks for a refit.</summary>
+    private void WatchPage(NSettingsPanel panel, VBoxContainer content)
+    {
+        ulong id = panel.GetInstanceId();
+        if (_pageWatches.ContainsKey(id)) return;
+        var changed = Callable.From(() =>
+        {
+            if (GodotObject.InstanceFromId(id) is NSettingsPanel live && GodotObject.IsInstanceValid(live)) QueueFit(live);
+        });
+        content.Connect(Control.SignalName.MinimumSizeChanged, changed);
+        _pageWatches[id] = new PageWatch { Content = content.GetInstanceId(), Changed = changed };
+    }
+
+    private void UnwatchPages()
+    {
+        foreach (PageWatch watch in _pageWatches.Values)
+        {
+            if (GodotObject.InstanceFromId(watch.Content) is not Control content || !GodotObject.IsInstanceValid(content)) continue;
+            if (content.IsConnected(Control.SignalName.MinimumSizeChanged, watch.Changed))
+                content.Disconnect(Control.SignalName.MinimumSizeChanged, watch.Changed);
+        }
+        _pageWatches.Clear();
+        _fitPending.Clear();
     }
 
     /// <summary>The rows' height in the page's own units: every visible row and divider, and the gaps between them.</summary>
@@ -975,6 +1048,7 @@ internal sealed class PortraitSettingsLayout
 
     private void RefreshPanels()
     {
+        UnwatchPages();
         foreach (ulong id in _panels)
         {
             if (GodotObject.InstanceFromId(id) is not NSettingsPanel panel || !GodotObject.IsInstanceValid(panel)) continue;
@@ -1005,6 +1079,11 @@ internal sealed class PortraitSettingsLayout
         foreach (ulong id in _feedback.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _feedback.Remove(id);
         foreach (ulong id in _prepared.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _prepared.Remove(id);
         foreach (ulong id in _dropdowns.Keys.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _dropdowns.Remove(id);
+        foreach (ulong id in _pageWatches.Keys.ToList())
+            if (!GodotObject.IsInstanceIdValid(id) ||
+                !GodotObject.IsInstanceIdValid(_pageWatches[id].Content))
+                _pageWatches.Remove(id);
+        foreach (ulong id in _fitPending.Where(k => !GodotObject.IsInstanceIdValid(k)).ToList()) _fitPending.Remove(id);
         foreach ((ulong id, ScreenState state) in _screens)
         {
             state.Sliders.RemoveAll(k => !GodotObject.IsInstanceIdValid(k));
