@@ -48,6 +48,10 @@ public sealed partial class PhoneGraphics : Node
     private NSettingsPanel? _activeGraphicsPanel;
     private Control? _portraitDefaultRow;
     private Control? _portraitDefaultDivider;
+    private readonly HashSet<ulong> _graphicsPanels = new();
+    private readonly HashSet<ulong> _fitPending = new();
+    private readonly HashSet<ulong> _watchedRows = new();
+    private readonly List<(ulong Id, Callable Hook)> _rowHooks = new();
 
     public override void _Ready()
     {
@@ -84,6 +88,7 @@ public sealed partial class PhoneGraphics : Node
 
     public override void _ExitTree()
     {
+        ReleaseRowWatches();
         _portraitLayout.Detach();
         _touchCards.Detach();
         _touchScroll.Detach();
@@ -238,6 +243,7 @@ public sealed partial class PhoneGraphics : Node
             int index = divider.GetIndex() + 1;
             _rows.RemoveAll(row => !IsInstanceValid(row));
             _activeGraphicsPanel = panel;
+            _graphicsPanels.Add(panel.GetInstanceId());
             index = AddRow(content, template, divider, index, "Portrait Mode", () => OffOn,
                 () => _settings.PortraitMode ? 1 : 0,
                 choice =>
@@ -313,6 +319,8 @@ public sealed partial class PhoneGraphics : Node
             // The panel sizes its scroll area and builds controller navigation in its own _Ready. FitPanelToRows refreshes
             // that size after the rows above exist (in portrait the scaled page is PortraitSettingsLayout's to size).
             FitPanelToRows(panel);
+            // The first fit measures rows that have not had their width yet; the deferred pass runs after this frame's sort.
+            if (!SafeAreaCanvas.IsPortrait) QueueFit(panel);
             panel.Call(NSettingsPanel.MethodName.UpdateNavigation);
         }
         catch (Exception error)
@@ -341,26 +349,78 @@ public sealed partial class PhoneGraphics : Node
     /// space below the last setting: size the page to its visible rows instead. Portrait is different: the page is drawn
     /// 1.55 times larger there and <see cref="PortraitSettingsLayout"/> sizes it (with the spacer its drawn rows need), so
     /// this leaves the page alone.
+    /// <para>
+    /// A row's minimum is only final once its container has given it a width: a wrapping subtitle measured before that
+    /// reports one word per line, so the page fitted right after the rows are added can be screens taller than the rows it
+    /// draws. A fit that changed the page therefore asks for one deferred pass (after this frame's container sort), and the
+    /// rows container's minimum-size changes ask for the same; both stop when the page stops changing.
+    /// </para>
     /// </summary>
-    private static void FitPanelToRows(NSettingsPanel panel)
+    private void FitPanelToRows(NSettingsPanel panel)
     {
         if (SafeAreaCanvas.IsPortrait) return;
         if (!GodotObject.IsInstanceValid(panel)) return;
-        panel.Call(NSettingsPanel.MethodName.RefreshSize);
         if (panel.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } content) return;
+        WatchRows(panel, content);
+        // Size the page here rather than calling the game's RefreshSize: that re-adds its 40% padding every call, and this
+        // fit would then change the page again on every deferred pass.
         float rows = content.GetMinimumSize().Y;
-        if (panel.Size.Y > rows + 0.5f) panel.Size = new Vector2(panel.Size.X, rows);
+        if (Math.Abs(panel.Size.Y - rows) <= 0.5f) return;
+        panel.Size = new Vector2(panel.Size.X, rows);
+        QueueFit(panel);
+    }
+
+    /// <summary>Refits a page once this frame's containers have sorted and its rows report their settled minimum.</summary>
+    private void QueueFit(NSettingsPanel panel)
+    {
+        ulong id = panel.GetInstanceId();
+        if (!_fitPending.Add(id)) return;
+        Callable.From(() =>
+        {
+            _fitPending.Remove(id);
+            if (GodotObject.InstanceFromId(id) is NSettingsPanel live && GodotObject.IsInstanceValid(live)) FitPanelToRows(live);
+        }).CallDeferred();
+    }
+
+    /// <summary>Connects a page's rows container once: a width or row change that settles its minimum asks for a refit.</summary>
+    private void WatchRows(NSettingsPanel panel, VBoxContainer content)
+    {
+        ulong contentId = content.GetInstanceId();
+        if (!_watchedRows.Add(contentId)) return;
+        ulong panelId = panel.GetInstanceId();
+        var hook = Callable.From(() =>
+        {
+            if (GodotObject.InstanceFromId(panelId) is NSettingsPanel live && GodotObject.IsInstanceValid(live)) QueueFit(live);
+        });
+        content.Connect(Control.SignalName.MinimumSizeChanged, hook);
+        _rowHooks.Add((contentId, hook));
+    }
+
+    private void ReleaseRowWatches()
+    {
+        foreach ((ulong id, Callable hook) in _rowHooks)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control content || !GodotObject.IsInstanceValid(content)) continue;
+            if (content.IsConnected(Control.SignalName.MinimumSizeChanged, hook))
+                content.Disconnect(Control.SignalName.MinimumSizeChanged, hook);
+        }
+        _rowHooks.Clear();
+        _watchedRows.Clear();
+        _fitPending.Clear();
     }
 
     /// <summary>
     /// The window turned: the game has just resized every page to the new rows area (padding included), and the deferred fit
     /// runs after that work, not in this signal's own handler order (the game's panels connect to it after this node does).
     /// </summary>
-    private void OnRootSizeChanged() => Callable.From(FitActiveGraphicsPanel).CallDeferred();
+    private void OnRootSizeChanged() => Callable.From(FitGraphicsPanels).CallDeferred();
 
-    private void FitActiveGraphicsPanel()
+    private void FitGraphicsPanels()
     {
-        if (_activeGraphicsPanel != null) FitPanelToRows(_activeGraphicsPanel);
+        if (SafeAreaCanvas.IsPortrait) return;
+        foreach (ulong id in _graphicsPanels)
+            if (GodotObject.InstanceFromId(id) is NSettingsPanel panel && GodotObject.IsInstanceValid(panel))
+                FitPanelToRows(panel);
     }
 
     private int AddRow(VBoxContainer content, Control template, Control divider, int index, string title, Func<string[]> choices,

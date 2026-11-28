@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Godot;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Nodes.Screens.Settings;
@@ -26,8 +27,11 @@ internal static class PhoneGraphicsRows
          "AspectRatio", "Line10", "WindowResizing", "Line14", "VSync", "Line13"];
 
     private static SceneTree? _tree;
-    private static NSettingsPanel? _activePanel;
-    private static readonly System.Collections.Generic.HashSet<ulong> Filled = new();
+    private static readonly HashSet<ulong> Filled = new();
+    private static readonly HashSet<ulong> Panels = new();
+    private static readonly HashSet<ulong> WatchedRows = new();
+    private static readonly HashSet<ulong> FitPending = new();
+    private static readonly List<(ulong Id, Callable Hook)> RowHooks = new();
 
     public static void Install(SceneTree tree)
     {
@@ -44,7 +48,7 @@ internal static class PhoneGraphicsRows
 
     private static void Adopt(Node root)
     {
-        var pending = new System.Collections.Generic.Stack<Node>();
+        var pending = new Stack<Node>();
         pending.Push(root);
         while (pending.Count > 0)
         {
@@ -68,11 +72,12 @@ internal static class PhoneGraphicsRows
 
     public static void Detach()
     {
+        ReleaseRowWatches();
         if (_tree == null) return;
         if (GodotObject.IsInstanceValid(_tree.Root)) _tree.Root.SizeChanged -= OnRootSizeChanged;
         _tree.NodeAdded -= OnNodeAdded;
         _tree = null;
-        _activePanel = null;
+        Panels.Clear();
     }
 
     /// <summary>Whether this page carries the fixture's rows (the phone's Graphics page).</summary>
@@ -115,7 +120,7 @@ internal static class PhoneGraphicsRows
             var template = content.GetNode<Control>("Msaa");
             var divider = content.GetNode<Control>("Line6");
             int index = divider.GetIndex() + 1;
-            _activePanel = panel;
+            Panels.Add(panel.GetInstanceId());
             index = AddRow(content, template, divider, index, "Portrait Mode", ["Off", "On"], 1,
                 subtitle: "Landscape is locked initially. Toggle to play in Portrait.");
             index = AddRow(content, template, divider, index, "Set Portrait as Default", ["Off", "On"], 0,
@@ -135,6 +140,7 @@ internal static class PhoneGraphicsRows
             AddRow(content, template, divider, index, "Reduce Effects", ["Off", "On"], 0,
                 subtitle: "Skip hand card glow and shadows while they move (portrait). No gameplay change.");
             FitPanelToRows(panel);
+            if (!SafeAreaCanvas.IsPortrait) QueueFit(panel);
             GD.Print($"[phone rows] added the phone's Graphics rows to {screen.GetPath()} ({content.GetChildCount()} children)");
         }
         catch (Exception error)
@@ -208,22 +214,68 @@ internal static class PhoneGraphicsRows
         return index + 2;
     }
 
-    /// <summary>Mirrors <c>PhoneGraphics.FitPanelToRows</c>: landscape's page is its rows; portrait's is ours to size.</summary>
+    /// <summary>
+    /// Mirrors <c>PhoneGraphics.FitPanelToRows</c>: landscape's page is its rows, refitted when the rows settle; portrait's
+    /// page is <c>PortraitSettingsLayout</c>'s to size.
+    /// </summary>
     private static void FitPanelToRows(NSettingsPanel panel)
     {
         if (SafeAreaCanvas.IsPortrait) return;
         if (!GodotObject.IsInstanceValid(panel)) return;
-        panel.Call(NSettingsPanel.MethodName.RefreshSize);
         if (panel.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } content) return;
+        WatchRows(panel, content);
+        // Mirrors the owner: size here, not through the game's RefreshSize, which re-adds padding on every pass.
         float rows = content.GetMinimumSize().Y;
-        if (panel.Size.Y > rows + 0.5f) panel.Size = new Vector2(panel.Size.X, rows);
+        if (Math.Abs(panel.Size.Y - rows) <= 0.5f) return;
+        panel.Size = new Vector2(panel.Size.X, rows);
+        QueueFit(panel);
+    }
+
+    private static void QueueFit(NSettingsPanel panel)
+    {
+        ulong id = panel.GetInstanceId();
+        if (!FitPending.Add(id)) return;
+        Callable.From(() =>
+        {
+            FitPending.Remove(id);
+            if (GodotObject.InstanceFromId(id) is NSettingsPanel live && GodotObject.IsInstanceValid(live)) FitPanelToRows(live);
+        }).CallDeferred();
+    }
+
+    private static void WatchRows(NSettingsPanel panel, VBoxContainer content)
+    {
+        ulong contentId = content.GetInstanceId();
+        if (!WatchedRows.Add(contentId)) return;
+        ulong panelId = panel.GetInstanceId();
+        var hook = Callable.From(() =>
+        {
+            if (GodotObject.InstanceFromId(panelId) is NSettingsPanel live && GodotObject.IsInstanceValid(live)) QueueFit(live);
+        });
+        content.Connect(Control.SignalName.MinimumSizeChanged, hook);
+        RowHooks.Add((contentId, hook));
+    }
+
+    private static void ReleaseRowWatches()
+    {
+        foreach ((ulong id, Callable hook) in RowHooks)
+        {
+            if (GodotObject.InstanceFromId(id) is not Control content || !GodotObject.IsInstanceValid(content)) continue;
+            if (content.IsConnected(Control.SignalName.MinimumSizeChanged, hook))
+                content.Disconnect(Control.SignalName.MinimumSizeChanged, hook);
+        }
+        RowHooks.Clear();
+        WatchedRows.Clear();
+        FitPending.Clear();
     }
 
     /// <summary>Mirrors <c>PhoneGraphics.OnRootSizeChanged</c>: after the game's panels have resized, fit ours again.</summary>
-    private static void OnRootSizeChanged() => Callable.From(FitActive).CallDeferred();
+    private static void OnRootSizeChanged() => Callable.From(FitPanels).CallDeferred();
 
-    private static void FitActive()
+    private static void FitPanels()
     {
-        if (_activePanel != null && GodotObject.IsInstanceValid(_activePanel)) FitPanelToRows(_activePanel);
+        if (SafeAreaCanvas.IsPortrait) return;
+        foreach (ulong id in Panels)
+            if (GodotObject.InstanceFromId(id) is NSettingsPanel panel && GodotObject.IsInstanceValid(panel))
+                FitPanelToRows(panel);
     }
 }
