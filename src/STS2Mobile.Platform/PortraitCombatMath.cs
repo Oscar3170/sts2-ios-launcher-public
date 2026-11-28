@@ -1286,27 +1286,126 @@ public static class PortraitCombatMath
     /// <summary>A summon cell's body never stands taller than this, so the rank above it keeps its own HUD clear.</summary>
     public const float SummonMaxCellBody = 140f;
 
+    /// <summary>How far a native-like arc's low flank bots stand above the front foot line (native raises its side bots).</summary>
+    public const float SummonArcFlankRise = 56f;
+
+    /// <summary>
+    /// How far each raised arc bot sits from the boss's centre, as a share of the boss's column width. The pair clears the
+    /// boss's intent row by x, like native's bot2/bot3 left and right of the boss's centre above its top.
+    /// </summary>
+    public const float SummonArcHighSpread = 0.40f;
+
     /// <summary>Room kept for at least this much of each summon column before the boss column takes its share.</summary>
     private const float SummonMinCellWidth = 100f;
 
     /// <summary>
-    /// A live summoner's stage: the boss's slot and column, the summon cell's body width and height cap, and the cell
-    /// block's edges.
+    /// A live summoner's stage: the boss's slot and frame, the summon cells' body width and height cap, the cell band's
+    /// edges, and whether the tall-canvas arc was used instead of the 2x2 block.
     /// </summary>
     public readonly record struct PortraitSummonStage(
         PortraitCreatureSlot[] Slots, float BossWidth, float CellWidth, float CellBodyCap,
-        float CellLeft, float CellRight, float BossLeft);
+        float CellLeft, float CellRight, float BossLeft, float BossRight, bool Arc);
 
     /// <summary>
-    /// The stage for a boss that keeps fighting beside its summons (the Fabricator's bots, the Living Fog's bombs). The
-    /// boss keeps a column at the right end of the canvas at <see cref="SummonBossFitShare"/> of its ordinary reserved-boss
-    /// fit; the Capacity−1 reserved cells fill a block just right of the allies, two on the front foot line and the rest in
-    /// one raised rank, each column a body wide. Four cells therefore stand in the native-like 2×2 (two on the floor, two
-    /// behind and above), never in the boss's column; the raised rank's bar hangs above the front rank's intent row thanks
-    /// to <paramref name="rowTail"/>. The short canvas caps the cell body so the raised rank's body still starts under the
-    /// stage top, where the tall canvas has room for the full cell.
+    /// The stage for a boss that keeps fighting beside its summons (the Fabricator's bots, the Living Fog's bombs). On a
+    /// tall canvas whose band has room for the native-like arc, the boss is centred in the band at
+    /// <see cref="SummonBossFitShare"/> of its ordinary fit, bot1/bot4 stand low on its flanks and bot2/bot3 raised above its
+    /// top, left and right of its centre. Where that arc does not fit (the 9:16 canvas never has the vertical room), the
+    /// boss keeps a column at the right and the Capacity−1 reserved cells fill a block just right of the allies, two on the
+    /// front foot line and the rest in one raised rank. Both are frozen geometry: a summon lands in its reserved slot and
+    /// nothing moves afterwards.
     /// </summary>
     public static PortraitSummonStage ComputeSummonStage(
+        int capacity,
+        PortraitCombatBands bands,
+        float allyRight,
+        float ordinaryBossWidth,
+        float ordinaryBossHeight,
+        float rowTail)
+    {
+        int lanes = Math.Max(1, capacity - 1);
+        if (lanes == 4 && SummonArcFits(bands, allyRight, ordinaryBossWidth, ordinaryBossHeight, rowTail))
+            return ComputeSummonArc(bands, allyRight, ordinaryBossWidth, ordinaryBossHeight, rowTail);
+        return ComputeSummonBlock(capacity, bands, allyRight, ordinaryBossWidth, rowTail);
+    }
+
+    /// <summary>
+    /// Whether the native-like arc fits this canvas's enemy band: the boss keeps at least 85% of its ordinary fit, each of
+    /// the four summon cells stays a legible column, and the raised rank's body starts at or under the stage top (its bar
+    /// then hangs above the boss's intent row). A pure canvas-geometry decision, so the frozen plan chooses the same shape
+    /// on every frame and no orientation or device name is involved.
+    /// </summary>
+    public static bool SummonArcFits(
+        PortraitCombatBands bands,
+        float allyRight,
+        float ordinaryBossWidth,
+        float ordinaryBossHeight,
+        float rowTail)
+    {
+        return TrySummonArcMetrics(bands, allyRight, ordinaryBossWidth, ordinaryBossHeight,
+                   out PortraitSummonArcMetrics arc)
+               && arc.BossTop - rowTail - MathF.Min(arc.CellWidth, SummonMaxCellBody) >= bands.StageTopY;
+    }
+
+    /// <summary>The arc's frozen measurements: the band, the boss's centred column and the four equal cells.</summary>
+    private readonly record struct PortraitSummonArcMetrics(
+        float BandLeft, float BossCentre, float BossWidth, float BossHeight, float CellWidth, float BossTop);
+
+    private static bool TrySummonArcMetrics(
+        PortraitCombatBands bands,
+        float allyRight,
+        float ordinaryBossWidth,
+        float ordinaryBossHeight,
+        out PortraitSummonArcMetrics arc)
+    {
+        arc = default;
+        if (ordinaryBossWidth < 1f)
+            return false;
+        float right = EnemyStageRight;
+        float bandLeft = MathF.Round(Math.Clamp(allyRight + SummonAllyGap, 12f, right - 2f * SummonMinCellWidth));
+        float band = right - bandLeft;
+        float maxBossWidth = MathF.Max(150f, band - 2f * (SummonMinCellWidth + SummonCellGap));
+        float bossWidth = MathF.Round(Math.Clamp(ordinaryBossWidth * SummonBossFitShare, 150f, maxBossWidth));
+        if (bossWidth < ordinaryBossWidth * 0.85f)
+            return false;
+        float cellWidth = (band - bossWidth) * 0.5f - SummonCellGap;
+        if (cellWidth < SummonMinCellWidth)
+            return false;
+        float bossHeight = ordinaryBossHeight * bossWidth / ordinaryBossWidth;
+        float bossTop = bands.FrontFeetY - bossHeight;
+        arc = new PortraitSummonArcMetrics(bandLeft, (bandLeft + right) * 0.5f, bossWidth, bossHeight, cellWidth,
+            bossTop);
+        return true;
+    }
+
+    private static PortraitSummonStage ComputeSummonArc(
+        PortraitCombatBands bands,
+        float allyRight,
+        float ordinaryBossWidth,
+        float ordinaryBossHeight,
+        float rowTail)
+    {
+        if (!TrySummonArcMetrics(bands, allyRight, ordinaryBossWidth, ordinaryBossHeight,
+                out PortraitSummonArcMetrics arc))
+            return ComputeSummonBlock(5, bands, allyRight, ordinaryBossWidth, rowTail);
+        float cellBodyCap = MathF.Min(arc.CellWidth, SummonMaxCellBody);
+        float highFeet = arc.BossTop - rowTail;
+        float flankFeet = bands.FrontFeetY - SummonArcFlankRise;
+        float highOffset = arc.BossWidth * SummonArcHighSpread;
+        var slots = new PortraitCreatureSlot[5];
+        slots[0] = new PortraitCreatureSlot(arc.BossCentre, bands.FrontFeetY, 0.94f, 0);
+        // bot1 low-left, bot2 high-left, bot3 high-right, bot4 low-right: the encounter's own slot order, so a re-summon
+        // into a freed slot lands where native puts that bot.
+        slots[1] = new PortraitCreatureSlot(arc.BandLeft + arc.CellWidth * 0.5f, flankFeet, 0.90f, 1);
+        slots[2] = new PortraitCreatureSlot(arc.BossCentre - highOffset, highFeet, 0.86f, 2);
+        slots[3] = new PortraitCreatureSlot(arc.BossCentre + highOffset, highFeet, 0.86f, 2);
+        slots[4] = new PortraitCreatureSlot(EnemyStageRight - arc.CellWidth * 0.5f, flankFeet, 0.90f, 1);
+        return new PortraitSummonStage(slots, arc.BossWidth, arc.CellWidth, cellBodyCap,
+            arc.BandLeft, EnemyStageRight, arc.BossCentre - arc.BossWidth * 0.5f,
+            arc.BossCentre + arc.BossWidth * 0.5f, Arc: true);
+    }
+
+    private static PortraitSummonStage ComputeSummonBlock(
         int capacity,
         PortraitCombatBands bands,
         float allyRight,
@@ -1344,7 +1443,7 @@ public static class PortraitCombatMath
                 row == 0 ? 1 : 0);
         }
         return new PortraitSummonStage(slots, bossWidth, cellWidth, bodyCap,
-            blockLeft, cellRight, bossLeft);
+            blockLeft, cellRight, bossLeft, EnemyStageRight, Arc: false);
     }
 
     /// <summary>Where a lone player stands (its feet), in canvas units from the left edge.</summary>

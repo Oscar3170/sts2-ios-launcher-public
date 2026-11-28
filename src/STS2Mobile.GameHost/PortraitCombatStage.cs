@@ -366,15 +366,18 @@ internal sealed class PortraitCombatStage
                 float ordinaryFit = CellFit(bossNode, plan.DominantStage.BossWidth, 900f, refl, bands);
                 if (roomScale > 0.01f)
                     ordinaryFit = Math.Min(ordinaryFit, roomScale);
-                float ordinaryWidth = refl.GetCreatureFootprintSize(bossNode).X * ordinaryFit;
+                Vector2 bossFootprint = refl.GetCreatureFootprintSize(bossNode);
                 PortraitCombatMath.PortraitSummonStage summon = PortraitCombatMath.ComputeSummonStage(
-                    plan.Capacity, bands, Math.Max(playersRight, alliesRight), ordinaryWidth, SummonRowTail);
+                    plan.Capacity, bands, Math.Max(playersRight, alliesRight), bossFootprint.X * ordinaryFit,
+                    bossFootprint.Y * ordinaryFit, SummonRowTail);
                 plan.EnemySlots = summon.Slots;
                 plan.SummonBossWidth = summon.BossWidth;
                 plan.SummonCellWidth = summon.CellWidth;
                 plan.SummonCellLeft = summon.CellLeft;
                 plan.SummonCellRight = summon.CellRight;
                 plan.SummonBossLeft = summon.BossLeft;
+                plan.SummonBossRight = summon.BossRight;
+                plan.SummonArc = summon.Arc;
                 plan.SummonCellHeight = summon.CellBodyCap + (bands.Compact ? 0f : IntentBandHeight);
                 plan.SummonComputed = true;
             }
@@ -605,9 +608,10 @@ internal sealed class PortraitCombatStage
                      $"shared={plan.SharedBodyScale:F3} locked={plan.SharedLocked} left={plan.CrowdLeft:F0} " +
                      $"cells=[{string.Join(",", cellWidths)}]" +
                      (plan.SummonBlock
-                         ? $" summonBlock=true boss={plan.SummonBossWidth:F0} cell={plan.SummonCellWidth:F0} " +
-                           $"cap={plan.SummonCellHeight:F0} band={plan.SummonCellLeft:F0}-{plan.SummonCellRight:F0} " +
-                           $"bossLeft={plan.SummonBossLeft:F0}"
+                         ? $" summonBlock=true arc={plan.SummonArc} boss={plan.SummonBossWidth:F0} " +
+                           $"cell={plan.SummonCellWidth:F0} cap={plan.SummonCellHeight:F0} " +
+                           $"band={plan.SummonCellLeft:F0}-{plan.SummonCellRight:F0} " +
+                           $"bossX={plan.SummonBossLeft:F0}-{plan.SummonBossRight:F0}"
                          : ""));
             plan.StageLogged = true;
         }
@@ -1952,11 +1956,11 @@ internal sealed class PortraitCombatStage
         {
             if (plan.SummonBlock)
             {
-                // The boss's column holds its ordinary fit; each reserved cell holds one summon in its own frame. CellFit
-                // subtracts the intent band from the cell height on the tall canvas; the short canvas fits the body by width
-                // and its cap already leaves the raised rank under the stage top.
+                // The boss's own frame (right-aligned in the 2x2, centred in the arc) and one summon's frame per reserved cell.
+                // CellFit subtracts the intent band from the cell height on the tall canvas; the short canvas fits the body by
+                // width and its cap already leaves the raised rank under the stage top.
                 return index == plan.BossSlot
-                    ? (plan.SummonBossWidth, 900f, plan.SummonBossLeft, PortraitCombatMath.EnemyStageRight)
+                    ? (plan.SummonBossWidth, 900f, plan.SummonBossLeft, plan.SummonBossRight)
                     : (plan.SummonCellWidth, plan.SummonCellHeight, plan.SummonCellLeft, plan.SummonCellRight);
             }
             float lane = SafeAreaCanvas.PortraitWidth * 0.635f / Math.Max(1, plan.Capacity - 1);
@@ -2565,17 +2569,19 @@ internal sealed class PortraitCombatStage
         public PortraitCombatMath.PortraitDominantStage DominantStage;
         /// <summary>
         /// A reserved boss whose summon slots the encounter authored on their own depth rank (the Fabricator's bots, the
-        /// Living Fog's bombs): the boss keeps a column at the right of the canvas and the reserved cells a block just
-        /// right of the allies, two on the floor and two raised. <see cref="DominantStage"/> is only the fallback frame.
+        /// Living Fog's bombs): the boss keeps a column (right-aligned in the 2x2, centred in the tall-canvas arc) and the
+        /// reserved cells a block beside the allies. <see cref="DominantStage"/> is only the fallback frame.
         /// </summary>
         public bool SummonBlock;
         public bool SummonComputed;
+        public bool SummonArc;
         public float SummonBossWidth;
         public float SummonCellWidth;
         public float SummonCellHeight;
         public float SummonCellLeft;
         public float SummonCellRight;
         public float SummonBossLeft;
+        public float SummonBossRight;
         /// <summary>A tall-thin 3–4 body roster drawn in the crowded single row instead of the tall table.</summary>
         public bool SingleRow;
         public bool Pier;

@@ -1188,62 +1188,131 @@ public class PortraitCombatMathTests
     }
 
     [Fact]
-    public void SummonStageKeepsABossColumnAndTwoRanksOfCellsBesideTheAlly()
+    public void SummonStageUsesTheTwoByTwoOnTheShortCanvas()
     {
-        // The Fabricator: four reserved bot slots on a rank of their own. The boss keeps 86% of its ordinary reserved-boss
-        // fit in a column at the right end of the canvas; the four cells fill the rest of the band in a 2x2, two on the
-        // front line and two raised, with the raised rank's body still under the stage top on the short canvas.
+        // 9:16 has no vertical room for the arc: the boss keeps a column at the right and the four cells a 2x2 just right
+        // of the ally, two on the front line and two raised, with the raised bodies still under the stage top.
         const float rowTail = 160f;
         const float allyRight = 315f;
-        foreach (float canvasHeight in new[] { 2340f, 1920f })
+        const float ordinaryBossWidth = 464f;
+        const float ordinaryBossHeight = 342f;
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(1920f, stageTopY: 612f);
+        Assert.True(bands.Compact);
+        Assert.False(PortraitCombatMath.SummonArcFits(bands, allyRight, ordinaryBossWidth, ordinaryBossHeight, rowTail));
+        PortraitCombatMath.PortraitSummonStage stage = PortraitCombatMath.ComputeSummonStage(
+            5, bands, allyRight, ordinaryBossWidth, ordinaryBossHeight, rowTail);
+        Assert.False(stage.Arc);
+        Assert.Equal(5, stage.Slots.Length);
+
+        // The boss's column keeps at least 85% of its ordinary fit and ends at the canvas's right stage edge.
+        Assert.InRange(stage.BossWidth / ordinaryBossWidth, 0.85f, 0.90f);
+        Assert.Equal(PortraitCombatMath.EnemyStageRight, stage.BossRight, 0.6f);
+        Assert.Equal(PortraitCombatMath.EnemyStageRight, stage.BossLeft + stage.BossWidth, 0.6f);
+        Assert.Equal(stage.BossLeft + stage.BossWidth * 0.5f, stage.Slots[0].CanvasX, 0.6f);
+        Assert.Equal(bands.FrontFeetY, stage.Slots[0].CanvasFeetY);
+        Assert.Equal(0, stage.Slots[0].RowDepth);
+
+        // Every cell fits between the ally and the boss column; neither its body nor its shared HUD column can reach
+        // the boss.
+        for (int i = 1; i < stage.Slots.Length; i++)
         {
-            bool compact = canvasHeight < 2000f;
-            PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(canvasHeight, stageTopY: 612f);
-            Assert.Equal(compact, bands.Compact);
-            float ordinaryBossWidth = compact ? 464f : 502f;
-            PortraitCombatMath.PortraitSummonStage stage =
-                PortraitCombatMath.ComputeSummonStage(5, bands, allyRight, ordinaryBossWidth, rowTail);
-            Assert.Equal(5, stage.Slots.Length);
-
-            // The boss's column keeps at least 85% of its ordinary fit and ends at the canvas's right stage edge, its feet
-            // on the front line.
-            Assert.InRange(stage.BossWidth / ordinaryBossWidth, 0.85f, 0.90f);
-            Assert.Equal(PortraitCombatMath.EnemyStageRight, stage.BossLeft + stage.BossWidth, 0.6f);
-            Assert.Equal(stage.BossLeft + stage.BossWidth * 0.5f, stage.Slots[0].CanvasX, 0.6f);
-            Assert.Equal(bands.FrontFeetY, stage.Slots[0].CanvasFeetY);
-            Assert.Equal(0, stage.Slots[0].RowDepth);
-
-            // Every cell fits between the ally and the boss column; neither its body nor its shared HUD column can reach
-            // the boss.
-            for (int i = 1; i < stage.Slots.Length; i++)
-            {
-                Assert.True(stage.Slots[i].CanvasX + stage.CellWidth * 0.5f <= stage.BossLeft - 0.5f,
-                    $"cell {i} right={stage.Slots[i].CanvasX + stage.CellWidth * 0.5f} bossLeft={stage.BossLeft}");
-                Assert.True(stage.Slots[i].CanvasX - stage.CellWidth * 0.5f >= stage.CellLeft - 0.01f);
-                Assert.True(stage.Slots[i].CanvasX - stage.CellWidth * 0.5f >= allyRight);
-            }
-            Assert.True(stage.CellWidth >= 120f, $"cell width={stage.CellWidth}");
-            Assert.True(stage.CellBodyCap >= 90f, $"cell body cap={stage.CellBodyCap}");
-
-            // Two ranks: the front pair on the foot line and the back pair one row step above, with the raised body still
-            // starting under the stage top on both shapes.
-            var feet = stage.Slots.Skip(1).Select(s => s.CanvasFeetY).Distinct().OrderBy(y => y).ToArray();
-            Assert.Equal(2, feet.Length);
-            Assert.Equal(bands.FrontFeetY, feet[1], 0.5f);
-            Assert.Equal(bands.FrontFeetY - (stage.CellBodyCap + rowTail), feet[0], 0.5f);
-            Assert.True(feet[0] - stage.CellBodyCap >= bands.StageTopY - 0.75f,
-                $"raised body top={feet[0] - stage.CellBodyCap} stageTop={bands.StageTopY}");
-            Assert.Equal(0, stage.Slots[3].RowDepth);
-            Assert.Equal(1, stage.Slots[1].RowDepth);
+            Assert.True(stage.Slots[i].CanvasX + stage.CellWidth * 0.5f <= stage.BossLeft - 0.5f,
+                $"cell {i} right={stage.Slots[i].CanvasX + stage.CellWidth * 0.5f} bossLeft={stage.BossLeft}");
+            Assert.True(stage.Slots[i].CanvasX - stage.CellWidth * 0.5f >= stage.CellLeft - 0.01f);
+            Assert.True(stage.Slots[i].CanvasX - stage.CellWidth * 0.5f >= allyRight);
         }
+        Assert.True(stage.CellWidth >= 120f, $"cell width={stage.CellWidth}");
+        Assert.True(stage.CellBodyCap >= 90f, $"cell body cap={stage.CellBodyCap}");
 
-        // The Living Fog's five bomb slots use three cells in the front rank and two in the raised one on the tall canvas.
+        // Two ranks: the front pair on the foot line and the back pair one row step above, with the raised body still
+        // starting under the stage top.
+        var feet = stage.Slots.Skip(1).Select(s => s.CanvasFeetY).Distinct().OrderBy(y => y).ToArray();
+        Assert.Equal(2, feet.Length);
+        Assert.Equal(bands.FrontFeetY, feet[1], 0.5f);
+        Assert.Equal(bands.FrontFeetY - (stage.CellBodyCap + rowTail), feet[0], 0.5f);
+        Assert.True(feet[0] - stage.CellBodyCap >= bands.StageTopY - 0.75f,
+            $"raised body top={feet[0] - stage.CellBodyCap} stageTop={bands.StageTopY}");
+        // bot1..bot4 in the encounter's order: bot1/bot2 are the front pair and bot3/bot4 the raised one.
+        Assert.Equal(1, stage.Slots[1].RowDepth);
+        Assert.Equal(1, stage.Slots[2].RowDepth);
+        Assert.Equal(0, stage.Slots[3].RowDepth);
+        Assert.Equal(0, stage.Slots[4].RowDepth);
+        Assert.Equal(bands.FrontFeetY, stage.Slots[1].CanvasFeetY);
+        Assert.Equal(bands.FrontFeetY, stage.Slots[2].CanvasFeetY);
+
+        // The Living Fog's five bomb slots cannot use the four-slot arc: three cells in the front rank and two raised.
         PortraitCombatBands tall = PortraitCombatMath.ComputeCombatBands(2340f, stageTopY: 612f);
-        PortraitCombatMath.PortraitSummonStage fog =
-            PortraitCombatMath.ComputeSummonStage(6, tall, allyRight, 502f, rowTail);
+        PortraitCombatMath.PortraitSummonStage fog = PortraitCombatMath.ComputeSummonStage(
+            6, tall, allyRight, 502f, 369.4f, rowTail);
+        Assert.False(fog.Arc);
         Assert.Equal(6, fog.Slots.Length);
-        Assert.Equal(2, fog.Slots.Skip(1).Select(s => s.CanvasFeetY).Distinct().Count());
         Assert.Equal(3, fog.Slots.Count(s => s.RowDepth == 1));
+    }
+
+    [Fact]
+    public void SummonStageUsesTheNativeArcOnTheTallCanvas()
+    {
+        // 9:19.5 has the height for the native-like arc: the boss is centred in the band at 86% of its ordinary fit,
+        // bot1/bot4 stand low on its flanks and bot2/bot3 raised above its top, left and right of its centre. Slot order is
+        // the encounter's own (bot1..bot4), so a re-summon into a freed slot lands where native puts that bot.
+        const float rowTail = 160f;
+        const float allyRight = 315f;
+        const float ordinaryBossWidth = 502f;
+        const float ordinaryBossHeight = 369.4f;
+        PortraitCombatBands bands = PortraitCombatMath.ComputeCombatBands(2340f, stageTopY: 612f);
+        Assert.False(bands.Compact);
+        Assert.True(PortraitCombatMath.SummonArcFits(bands, allyRight, ordinaryBossWidth, ordinaryBossHeight, rowTail));
+        PortraitCombatMath.PortraitSummonStage stage = PortraitCombatMath.ComputeSummonStage(
+            5, bands, allyRight, ordinaryBossWidth, ordinaryBossHeight, rowTail);
+        Assert.True(stage.Arc);
+        Assert.Equal(5, stage.Slots.Length);
+        Assert.InRange(stage.BossWidth / ordinaryBossWidth, 0.85f, 0.90f);
+
+        // The boss sits in the middle of the enemy band (339..1072 at this ally), not at the canvas's right edge.
+        float bandLeft = allyRight + PortraitCombatMath.SummonAllyGap;
+        float bossCentre = (bandLeft + PortraitCombatMath.EnemyStageRight) * 0.5f;
+        Assert.Equal(bossCentre, stage.Slots[0].CanvasX, 1f);
+        Assert.Equal(bossCentre - stage.BossWidth * 0.5f, stage.BossLeft, 0.6f);
+        Assert.Equal(bossCentre + stage.BossWidth * 0.5f, stage.BossRight, 0.6f);
+        Assert.Equal(bands.FrontFeetY, stage.Slots[0].CanvasFeetY);
+        Assert.Equal(0, stage.Slots[0].RowDepth);
+
+        // bot1 low-left, bot2 high-left, bot3 high-right, bot4 low-right.
+        float floor = bands.FrontFeetY;
+        Assert.Equal(1, stage.Slots[1].RowDepth);
+        Assert.Equal(2, stage.Slots[2].RowDepth);
+        Assert.Equal(2, stage.Slots[3].RowDepth);
+        Assert.Equal(1, stage.Slots[4].RowDepth);
+        Assert.True(stage.Slots[1].CanvasX < bossCentre);
+        Assert.True(stage.Slots[4].CanvasX > bossCentre);
+        Assert.True(stage.Slots[2].CanvasX < bossCentre);
+        Assert.True(stage.Slots[3].CanvasX > bossCentre);
+        Assert.Equal(floor - PortraitCombatMath.SummonArcFlankRise, stage.Slots[1].CanvasFeetY, 0.5f);
+        Assert.Equal(floor - PortraitCombatMath.SummonArcFlankRise, stage.Slots[4].CanvasFeetY, 0.5f);
+        Assert.Equal(stage.Slots[2].CanvasFeetY, stage.Slots[3].CanvasFeetY, 0.5f);
+
+        // The raised pair's bodies are entirely above the boss's body top, and the raised body starts under the stage top
+        // (its bar then hangs above the boss's intent row).
+        float bossHeight = ordinaryBossHeight * stage.BossWidth / ordinaryBossWidth;
+        float bossTop = floor - bossHeight;
+        Assert.True(stage.Slots[2].CanvasFeetY < bossTop, $"high feet={stage.Slots[2].CanvasFeetY} boss top={bossTop}");
+        Assert.True(stage.Slots[2].CanvasFeetY - stage.CellBodyCap >= bands.StageTopY - 0.75f,
+            $"raised body top={stage.Slots[2].CanvasFeetY - stage.CellBodyCap} stageTop={bands.StageTopY}");
+
+        // The flanks clear the boss's frame; the raised pair straddles its centre inside the band.
+        Assert.True(stage.Slots[1].CanvasX + stage.CellWidth * 0.5f <= stage.BossLeft - 0.5f);
+        Assert.True(stage.Slots[4].CanvasX - stage.CellWidth * 0.5f >= stage.BossRight + 0.5f);
+        Assert.True(stage.Slots[2].CanvasX - stage.CellWidth * 0.5f >= stage.CellLeft - 0.01f);
+        Assert.True(stage.Slots[2].CanvasX + stage.CellWidth * 0.5f <= bossCentre);
+        Assert.True(stage.Slots[3].CanvasX - stage.CellWidth * 0.5f >= bossCentre);
+        Assert.True(stage.CellWidth >= 120f, $"cell width={stage.CellWidth}");
+        Assert.True(stage.CellBodyCap >= 90f, $"cell body cap={stage.CellBodyCap}");
+
+        // The arc is used only where the raised rank clears the stage top: 9:16 falls back to the 2x2, and a band squeezed
+        // by a huge ally cannot keep the boss at 85% with four legible cells.
+        Assert.False(PortraitCombatMath.SummonArcFits(
+            PortraitCombatMath.ComputeCombatBands(1920f, stageTopY: 612f), allyRight, 464f, 342f, rowTail));
+        Assert.False(PortraitCombatMath.SummonArcFits(bands, 700f, ordinaryBossWidth, ordinaryBossHeight, rowTail));
     }
 
     [Fact]
