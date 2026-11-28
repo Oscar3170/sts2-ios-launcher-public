@@ -6,6 +6,7 @@ using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Commands;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.MonsterMoves.MonsterMoveStateMachine;
 using MegaCrit.Sts2.Core.Nodes.Combat;
 using MegaCrit.Sts2.Core.Nodes.Rooms;
 using MegaCrit.Sts2.Core.Rooms;
@@ -29,8 +30,10 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// hitbox reachable (its centre not covered by another creature's hitbox), and no health label or intent row over any other
 /// creature's HUD or body. The fixture's own <c>CheckStageHud</c> and <c>CheckCreatureClearance</c> answers run on the same
 /// settled state, so the Fabricator is held to the stage-encounters HUD rules where its raised rank can meet them. Each
-/// summon is captured. When the full roster has arrived two bots are killed and the next summon turns are run, so the freed
-/// reserved slots are exercised too.
+/// summon is captured. The fight picks its one- or two-bot summon move 50/50, so while fewer than four bots are alive the
+/// pass asks the boss's own move state machine for the move whose spawns fill the remaining reserved slots; a pinned
+/// full-roster state checks all four slots and is captured before two bots are killed and the next summon turns are run, so
+/// the freed reserved slots are exercised too.
 /// </para>
 /// <para>
 /// Portrait gets the geometry checks; landscape runs the same summons and captures as the native reference and only fails
@@ -42,6 +45,9 @@ internal sealed partial class TestDriver
     private const string FabricatorEncounter = "FabricatorNormal";
     private const string FabricatorMonster = "Fabricator";
     private const int FabricatorMaxMinions = 4;
+    // The Fabricator's own move-state ids (v0.114.0): Fabricate spawns two bots, the strike one.
+    private const string FabricateMoveId = "FABRICATE_MOVE";
+    private const string FabricatingStrikeMoveId = "FABRICATING_STRIKE_MOVE";
     // The stage-clearance tolerance the room's own checks use: touching by less than this is not an overlap.
     private const float FabricatorBodyTolerance = 4f;
     private const int FabricatorTurnLimit = 12;
@@ -87,8 +93,18 @@ internal sealed partial class TestDriver
         var seen = FabricatorMinions(room).Select(c => c.GetInstanceId()).ToHashSet();
         int summonPhase = 0;
         int quietTurns = 0;
-        for (int turn = 1; turn <= FabricatorTurnLimit && summonPhase < FabricatorMaxMinions; turn++)
+        for (int turn = 1; turn <= FabricatorTurnLimit; turn++)
         {
+            List<NCreature> before = FabricatorMinions(room);
+            if (before.Count >= FabricatorMaxMinions) break;
+            // While fewer than four living teammates exist the fight rolls Fabricate (two spawns) or Fabricating Strike
+            // (one) 50/50, so the full roster depends on the roll. Ask the game's own move state machine for the move that
+            // fills the remaining reserved slots exactly: two spawns with two bots alive, one with three.
+            if (before.Count > 0)
+            {
+                string forced = ForceSummonMove(room, before.Count);
+                _report.Pass("stage_fabricator_force_" + turn, $"alive={before.Count} {forced}");
+            }
             me.Creature.SetCurrentHpInternal(me.Creature.MaxHp);
             await EndFabricatorTurnAsync(room, "Fabricator turn " + turn);
             // The bots fall into their slot with the encounter's own arrival animation; it is not a root tween, so wait
@@ -103,7 +119,7 @@ internal sealed partial class TestDriver
                 $"slots={string.Join(",", minions.Select(c => c.Entity.SlotName))}");
             if (added.Count == 0)
             {
-                // A Disintegrate turn adds nothing; a run of them means the encounter will not summon again.
+                // Nothing was added even with the forced move: stop after a run of empty turns rather than spin.
                 if (++quietTurns >= 3) break;
                 continue;
             }
@@ -112,12 +128,24 @@ internal sealed partial class TestDriver
             await WaitUntilStableAsync(CombatSettledSignature, "Fabricator summon " + summonPhase + " settle", ShortWait);
             await CheckFabricatorFrameAsync("stage_fabricator_summon_" + summonPhase, room);
             await CaptureAsync("stage_fabricator_summon_" + summonPhase);
+            if (minions.Count >= FabricatorMaxMinions) break;
         }
 
-        int maxMinions = FabricatorMinions(room).Count;
-        _report.Check("stage_fabricator_summoned_its_roster", maxMinions >= 3,
-            $"minions={maxMinions} of {FabricatorMaxMinions}; " +
-            $"slots={string.Join(",", FabricatorMinions(room).Select(c => c.Entity.SlotName))}");
+        List<NCreature> roster = FabricatorMinions(room);
+        string[] fullSlots = roster.Select(c => c.Entity.SlotName ?? "")
+            .OrderBy(s => s, StringComparer.Ordinal).ToArray();
+        string[] expectedSlots = { "bot1", "bot2", "bot3", "bot4" };
+        bool fullRoster = roster.Count == FabricatorMaxMinions && fullSlots.SequenceEqual(expectedSlots);
+        _report.Check("stage_fabricator_summoned_its_roster", fullRoster,
+            $"minions={roster.Count} of {FabricatorMaxMinions}; slots={string.Join(",", fullSlots)}");
+        int fullCount = roster.Count;
+        if (fullRoster)
+        {
+            // The pinned full-roster state: every check the fixture has, on the four-slot arc/2x2.
+            await WaitUntilStableAsync(CombatSettledSignature, "Fabricator full roster settle", ShortWait);
+            await CheckFabricatorFrameAsync("stage_fabricator_full_roster", room);
+            await CaptureAsync("stage_fabricator_full_roster");
+        }
 
         // Two deaths are needed to make CanFabricate true again when all four bots arrived (it stops at four living
         // teammates, the boss included). The next summon must land in a freed reserved slot and keep the same clearance.
@@ -162,8 +190,28 @@ internal sealed partial class TestDriver
         }
 
         _report.Pass("stage_fabricator_completed", IsPortraitHost()
-            ? $"summons={summonPhase} peakMinions={maxMinions} freedSlots={string.Join(",", freedSlots)}"
-            : $"landscape native reference: summons={summonPhase} peakMinions={maxMinions}");
+            ? $"summons={summonPhase} peakMinions={fullCount} freedSlots={string.Join(",", freedSlots)}"
+            : $"landscape native reference: summons={summonPhase} peakMinions={fullCount}");
+    }
+
+    /// <summary>
+    /// Asks the Fabricator's own move state machine for the summon move that fills the remaining reserved slots: FABRICATE
+    /// spawns two bots (one defensive, one aggressive), FABRICATING_STRIKE one. The fight picks between them 50/50 while
+    /// fewer than four living teammates exist, so the full roster would otherwise depend on the roll; SetMoveImmediate is
+    /// the game's own "set the next move" API (its stun path uses it too).
+    /// </summary>
+    private string ForceSummonMove(NCombatRoom room, int alive)
+    {
+        NCreature? boss = FabricatorBoss(room);
+        if (boss?.Entity.Monster is not MonsterModel monster)
+            return "force skipped: no boss model";
+        MonsterMoveStateMachine? machine = monster.MoveStateMachine;
+        string moveId = alive >= 3 ? FabricatingStrikeMoveId : FabricateMoveId;
+        if (machine == null || !machine.States.TryGetValue(moveId, out MonsterState? state) ||
+            state is not MoveState move)
+            return $"force skipped: {moveId} not found";
+        monster.SetMoveImmediate(move, forceTransition: true);
+        return $"forced {moveId}";
     }
 
     private async Task EndFabricatorTurnAsync(NCombatRoom room, string name)
