@@ -186,8 +186,8 @@ internal sealed partial class TestDriver
                                                && c.Entity.IsAlive && c.Entity.Monster?.GetType().Name == FabricatorMonster);
 
     /// <summary>The drawn body, hit box and HUD of one living creature, in canvas coordinates.</summary>
-    private readonly record struct FabricatorBody(ulong Id, string Name, bool IsBoss, Rect2 Hitbox, Rect2 Visual,
-        Rect2[] Hud)
+    private readonly record struct FabricatorBody(ulong Id, string Name, string Slot, bool IsBoss, Rect2 Hitbox,
+        Rect2 Visual, Rect2[] Hud)
     {
         // The stage fits and targets a creature by its footprint: the hit box merged with the visual bounds. Using the
         // same union here measures what the stage placed, not just the tappable control.
@@ -375,6 +375,125 @@ internal sealed partial class TestDriver
             CheckStageHud(phase + "_" + slot, enemy, enemies, bands, room);
         }
         CheckCreatureClearance(phase);
+        if (bands.Compact)
+            CheckFabricatorTwoByTwo(phase, boss[0], drawn, bands);
+        else
+            CheckFabricatorArc(phase, boss[0], drawn, bands);
+    }
+
+    /// <summary>How far off the front foot line a low flank bot may stand and still count as on the floor (native raises
+    /// its side bots slightly).</summary>
+    private const float ArcFloorTolerance = 96f;
+
+    /// <summary>
+    /// The tall canvas's native-like arc: bot1 and bot4 low on the boss's left and right flanks, bot2 and bot3 raised above
+    /// the boss's top, left and right of its centre, with the boss centred in the band the two flanks span. Slots are
+    /// identified by the encounter's own names (bot1..bot4), so a re-summon into a freed slot must land where native would
+    /// put that bot; slots not on stage yet are reserved and simply not measured.
+    /// </summary>
+    private void CheckFabricatorArc(string phase, FabricatorBody boss, List<FabricatorBody> drawn,
+        PortraitCombatBands bands)
+    {
+        Dictionary<string, FabricatorBody> bots = SummonBots(drawn);
+        if (bots.Count == 0)
+        {
+            _report.Pass(phase + "_arc_shape", "no summon slot is on stage yet; the arc positions are reserved");
+            return;
+        }
+        var failures = new List<string>();
+        float bossCentre = boss.Body.GetCenter().X;
+        if (bots.TryGetValue("bot1", out FabricatorBody bot1))
+        {
+            if (bot1.Body.GetCenter().X >= bossCentre)
+                failures.Add($"bot1 centre={bot1.Body.GetCenter().X:F1} not left of the boss centre {bossCentre:F1}");
+            if (bot1.Body.End.X > boss.Body.Position.X + 4f)
+                failures.Add($"bot1 body={bot1.Body} reaches the boss body={boss.Body}");
+            if (MathF.Abs(bot1.Body.End.Y - bands.FrontFeetY) > ArcFloorTolerance)
+                failures.Add($"bot1 feet={bot1.Body.End.Y:F1} not near the floor line {bands.FrontFeetY:F1}");
+        }
+        if (bots.TryGetValue("bot4", out FabricatorBody bot4))
+        {
+            if (bot4.Body.GetCenter().X <= bossCentre)
+                failures.Add($"bot4 centre={bot4.Body.GetCenter().X:F1} not right of the boss centre {bossCentre:F1}");
+            if (bot4.Body.Position.X < boss.Body.End.X - 4f)
+                failures.Add($"bot4 body={bot4.Body} reaches the boss body={boss.Body}");
+            if (MathF.Abs(bot4.Body.End.Y - bands.FrontFeetY) > ArcFloorTolerance)
+                failures.Add($"bot4 feet={bot4.Body.End.Y:F1} not near the floor line {bands.FrontFeetY:F1}");
+        }
+        if (bots.TryGetValue("bot2", out FabricatorBody bot2))
+        {
+            if (bot2.Body.End.Y > boss.Body.Position.Y)
+                failures.Add($"bot2 bottom={bot2.Body.End.Y:F1} not above the boss top {boss.Body.Position.Y:F1}");
+            if (bot2.Body.GetCenter().X >= bossCentre)
+                failures.Add($"bot2 centre={bot2.Body.GetCenter().X:F1} not left of the boss centre {bossCentre:F1}");
+        }
+        if (bots.TryGetValue("bot3", out FabricatorBody bot3))
+        {
+            if (bot3.Body.End.Y > boss.Body.Position.Y)
+                failures.Add($"bot3 bottom={bot3.Body.End.Y:F1} not above the boss top {boss.Body.Position.Y:F1}");
+            if (bot3.Body.GetCenter().X <= bossCentre)
+                failures.Add($"bot3 centre={bot3.Body.GetCenter().X:F1} not right of the boss centre {bossCentre:F1}");
+        }
+        if (bots.Count == 4 && bots.TryGetValue("bot1", out bot1) && bots.TryGetValue("bot4", out bot4))
+        {
+            // "Centred in the band": the two low flanks span the band; the boss sits in its middle third.
+            float left = bot1.Body.Position.X;
+            float right = bot4.Body.End.X;
+            float third = (right - left) / 3f;
+            if (bossCentre < left + third || bossCentre > left + 2f * third)
+                failures.Add($"boss centre={bossCentre:F1} outside the band's middle third " +
+                             $"[{left + third:F1}, {left + 2f * third:F1}] of [{left:F1}, {right:F1}]");
+        }
+        _report.Check(phase + "_arc_shape", failures.Count == 0,
+            failures.Count == 0
+                ? $"{bots.Count} summon slot(s) on the native arc; boss centre={bossCentre:F1} " +
+                  $"floor={bands.FrontFeetY:F1}"
+                : string.Join(" | ", failures));
+    }
+
+    /// <summary>
+    /// The short canvas's 2x2: bot1 and bot2 stand on the front foot line (the low rank) and bot3 and bot4 in the raised
+    /// rank above it. Slot identity follows the encounter's names, so a freed slot is reused in the same place.
+    /// </summary>
+    private void CheckFabricatorTwoByTwo(string phase, FabricatorBody boss, List<FabricatorBody> drawn,
+        PortraitCombatBands bands)
+    {
+        _ = boss;
+        Dictionary<string, FabricatorBody> bots = SummonBots(drawn);
+        if (bots.Count == 0)
+        {
+            _report.Pass(phase + "_two_by_two", "no summon slot is on stage yet; the 2x2 positions are reserved");
+            return;
+        }
+        var failures = new List<string>();
+        foreach (string slot in new[] { "bot1", "bot2" })
+        {
+            if (!bots.TryGetValue(slot, out FabricatorBody bot)) continue;
+            if (MathF.Abs(bot.Body.End.Y - bands.FrontFeetY) > ArcFloorTolerance)
+                failures.Add($"{slot} feet={bot.Body.End.Y:F1} not on the front line {bands.FrontFeetY:F1}");
+        }
+        foreach (string slot in new[] { "bot3", "bot4" })
+        {
+            if (!bots.TryGetValue(slot, out FabricatorBody bot)) continue;
+            if (bot.Body.End.Y > bands.FrontFeetY - 100f)
+                failures.Add($"{slot} feet={bot.Body.End.Y:F1} not in the raised rank above {bands.FrontFeetY - 100f:F1}");
+        }
+        _report.Check(phase + "_two_by_two", failures.Count == 0,
+            failures.Count == 0
+                ? $"{bots.Count} summon slot(s) in the 2x2; front={bands.FrontFeetY:F1}"
+                : string.Join(" | ", failures));
+    }
+
+    /// <summary>The alive summon slots of the drawn frame, keyed by the encounter's slot name.</summary>
+    private static Dictionary<string, FabricatorBody> SummonBots(List<FabricatorBody> drawn)
+    {
+        var bots = new Dictionary<string, FabricatorBody>(StringComparer.Ordinal);
+        foreach (FabricatorBody body in drawn)
+        {
+            if (body.IsBoss || !body.Slot.StartsWith("bot", StringComparison.Ordinal)) continue;
+            bots[body.Slot] = body;
+        }
+        return bots;
     }
 
     private PortraitCombatBands CurrentBands()
@@ -397,7 +516,7 @@ internal sealed partial class TestDriver
                 ? creature.Visuals.Bounds.GetGlobalRect()
                 : default;
             string name = creature.Entity.Monster?.GetType().Name ?? "player";
-            bodies.Add(new FabricatorBody(creature.GetInstanceId(), name,
+            bodies.Add(new FabricatorBody(creature.GetInstanceId(), name, creature.Entity.SlotName ?? "",
                 name == FabricatorMonster, hitbox, visual, EnemyHud(creature).ToArray()));
         }
         return bodies;
