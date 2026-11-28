@@ -212,6 +212,9 @@ internal sealed partial class TestDriver
                 $"{name}={rect} stone={stone} topRowBottom={rowBottom:F0} safeCap={cap:F0}");
         }
         Control? hpNode = statusRow[0].Node, settingsNode = statusRow[5].Node;
+        _report.Check("header_standard_run_has_no_modifier_button",
+            TopBarControl(topBar, ModifierButtonName) is null,
+            "a standard run has no modifiers, so portrait shows no modifier button");
         if (settingsNode is not null)
         {
             Rect2 touch = settingsNode.GetGlobalRect();
