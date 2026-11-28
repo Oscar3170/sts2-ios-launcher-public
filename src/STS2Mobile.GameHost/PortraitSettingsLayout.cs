@@ -362,6 +362,13 @@ internal sealed class PortraitSettingsLayout
     /// <summary>
     /// The game scrolls a panel by its own height, not its drawn one: a spacer at the end of a scaled panel's rows makes the
     /// panel as tall to the scroll as its rows are drawn, so the last row can be scrolled into view.
+    /// <para>
+    /// The game also sizes a panel taller than its rows area as its rows plus 40% of that area
+    /// (<c>NSettingsPanel.RefreshSize</c>), so a controller can bring its last row to the middle. This page is drawn
+    /// <see cref="Scale"/> times larger, so that padding would be that fraction of the rows area of empty scroll below the
+    /// last row (the phone rows are also what make the Graphics tab taller than that area). The spacer already makes the
+    /// panel's minimum size the rows' drawn height, so the panel is sized to that instead and the scroll ends with the rows.
+    /// </para>
     /// </summary>
     private void UpdateScrollRoom(NSettingsScreen settings)
     {
@@ -378,19 +385,29 @@ internal sealed class PortraitSettingsLayout
             }
             content.MoveChild(spacer, content.GetChildCount() - 1);
             spacer.Visible = true;
-            float rows = 0f;
-            int count = 0;
-            foreach (Node row in content.GetChildren())
-            {
-                if (row == spacer || row is not Control control || !control.Visible) continue;
-                rows += control.GetCombinedMinimumSize().Y;
-                count++;
-            }
-            rows += Math.Max(0, count - 1) * content.GetThemeConstant("separation");
+            float rows = RowsHeight(content, spacer);
             float room = MathF.Ceiling(rows * (Scale - 1f));
             if (Math.Abs(spacer.CustomMinimumSize.Y - room) > 0.5f) spacer.CustomMinimumSize = new Vector2(0f, room);
             panel.Call(NSettingsPanel.MethodName.RefreshSize);
+            // The native call has just read the content's minimum size, so the spacer is counted: take that height for the
+            // page and drop the native viewport padding, which draws nothing here.
+            float drawnRows = content.GetMinimumSize().Y;
+            if (panel.Size.Y > drawnRows + 0.5f) panel.Size = new Vector2(panel.Size.X, drawnRows);
         }
+    }
+
+    /// <summary>The rows' height in the page's own units: every visible row and divider, and the gaps between them.</summary>
+    private static float RowsHeight(Control content, Control? spacer)
+    {
+        float rows = 0f;
+        int count = 0;
+        foreach (Node child in content.GetChildren())
+        {
+            if (child == spacer || child is not Control control || !control.Visible) continue;
+            rows += control.GetCombinedMinimumSize().Y;
+            count++;
+        }
+        return rows + Math.Max(0, count - 1) * content.GetThemeConstant("separation");
     }
 
     /// <summary>Gives each touch target of a panel drawn <paramref name="drawnScale"/> times larger a touch area of 44 points.</summary>
