@@ -12,6 +12,7 @@ using MegaCrit.Sts2.Core.Nodes.Orbs;
 using MegaCrit.Sts2.Core.Nodes.Potions;
 using MegaCrit.Sts2.Core.Nodes.Relics;
 using MegaCrit.Sts2.Core.Nodes.Screens.InspectScreens;
+using MegaCrit.Sts2.Core.Nodes.TopBar;
 using MegaCrit.Sts2.Core.Runs;
 using STS2Mobile.GameHost;
 using STS2Mobile.Platform;
@@ -29,6 +30,7 @@ internal sealed partial class TestDriver
     private const string StoneHeaderName = "PhoneStoneHeader";
     private const string PotionRowName = "PhonePotionRow";
     private const string RelicRowName = "PhoneRelicRow";
+    private const string ModifierButtonName = "PhoneModifierButton";
     private const string RemovedRelicPagerName = "PortraitRelicPager";
 
     /// <summary>The torn edge under the stone may reach this far past the band it covers.</summary>
@@ -186,11 +188,12 @@ internal sealed partial class TestDriver
                 $"the stretched native bar no longer shows past the stone: {background?.GetGlobalRect()}");
         }
 
-        // The status row: health, gold, floor and boss, then the settings button, all above the potion row.
+        // The status row: health, gold, room, floor and boss, then the settings button, all above the potion row.
         (string Name, Control? Node)[] statusRow =
         {
             ("hp", TopBarControl(topBar, "%TopBarHp")),
             ("gold", TopBarControl(topBar, "%TopBarGold")),
+            ("room", TopBarControl(topBar, "%RoomIcon")),
             ("floor", TopBarControl(topBar, "%FloorIcon")),
             ("boss", TopBarControl(topBar, "%BossIcon")),
             ("settings", TopBarControl(topBar, "%PauseButton")),
@@ -208,7 +211,7 @@ internal sealed partial class TestDriver
                     && rect.End.Y <= rowBottom + 4f && rect.Position.Y >= MathF.Max(0f, cap - TopRowRise(cap)),
                 $"{name}={rect} stone={stone} topRowBottom={rowBottom:F0} safeCap={cap:F0}");
         }
-        Control? hpNode = statusRow[0].Node, settingsNode = statusRow[4].Node;
+        Control? hpNode = statusRow[0].Node, settingsNode = statusRow[5].Node;
         if (settingsNode is not null)
         {
             Rect2 touch = settingsNode.GetGlobalRect();
@@ -294,10 +297,10 @@ internal sealed partial class TestDriver
 
     /// <summary>
     /// The stone header's top row for a locked ascension run: the native ascension badge (and its number) and the
-    /// achievement lock, beside the health, gold, floor, boss and settings the header always shows - and the run's native
-    /// modifier chips, which portrait keeps hidden. Each visible indicator is inside the stone
-    /// and the row, inside the phone's width and clear of every other one; the potion row below keeps its band and map and
-    /// deck keep their 44 point buttons beside it.
+    /// achievement lock, beside the health, gold, room, floor and boss icons and the settings button the header always shows,
+    /// plus the run's one launcher-owned modifier button in place of the native chips. Each visible indicator is inside the
+    /// stone and the row, inside the phone's width and clear of every other one; the potion row below keeps its band and map
+    /// and deck keep their 44 point buttons beside it.
     /// </summary>
     partial void CheckHeaderIndicatorLayout(Control topBar, RunState state, string phase)
     {
@@ -313,17 +316,19 @@ internal sealed partial class TestDriver
         float rowBottom = cap + PortraitBands.TopBarRowHeight;
         float rowTop = MathF.Max(0f, cap + PortraitBands.TopBarRowInset - TopRowRise(cap));
 
-        (string Name, Control? Node)[] entries =
-        {
+        List<(string Name, Control? Node)> entries =
+        [
             ("hp", TopBarControl(topBar, "%TopBarHp")),
             ("gold", TopBarControl(topBar, "%TopBarGold")),
+            ("room", TopBarControl(topBar, "%RoomIcon")),
             ("floor", TopBarControl(topBar, "%FloorIcon")),
             ("boss", TopBarControl(topBar, "%BossIcon")),
             ("ascension", TopBarControl(topBar, "%AscensionIcon")),
             ("ascension_number", TopBarControl(topBar, "%AscensionLabel")),
             ("lock", TopBarControl(topBar, "%AchievementLock")),
             ("settings", TopBarControl(topBar, "%PauseButton")),
-        };
+        ];
+        if (state.Modifiers.Count > 0) entries.Add(("modifiers", TopBarControl(topBar, ModifierButtonName)));
         var boxes = new List<(string Name, Rect2 Rect)>();
         foreach ((string name, Control? node) in entries)
         {
@@ -386,6 +391,69 @@ internal sealed partial class TestDriver
                 && chips.All(chip => !chip.IsVisibleInTree()),
             $"container={modifierBox?.IsVisibleInTree()} chips={chips.Count(chip => chip.IsVisibleInTree())}/{chips.Length} visible");
 
+        // The native room icon sits in the row immediately left of the floor number, at the boss icon's size.
+        Control? roomIcon = TopBarControl(topBar, "%RoomIcon");
+        Control? floorBox = TopBarControl(topBar, "%FloorIcon");
+        if (roomIcon is NTopBarRoomIcon && floorBox is not null)
+        {
+            Rect2 roomRect = roomIcon.GetGlobalRect();
+            Rect2 floorRect = floorBox.GetGlobalRect();
+            TextureRect? roomArt = roomIcon.GetNodeOrNull<TextureRect>("Icon");
+            TextureRect? floorArt = floorBox.GetNodeOrNull<TextureRect>("FloorIconPositioner/FloorInfoIcon");
+            TextureRect? bossArt = TopBarControl(topBar, "%BossIcon")?.GetNodeOrNull<TextureRect>("Icon");
+            Rect2 roomInk = roomArt is null ? default : DrawnTextureRect(roomArt);
+            Rect2 floorInk = floorArt is null ? default : DrawnTextureRect(floorArt);
+            Rect2 bossInk = bossArt is null ? default : DrawnTextureRect(bossArt);
+            bool texture = roomArt?.Texture is not null;
+            bool sized = texture && roomInk.Size.X >= 40f && roomInk.Size.X <= 64f
+                && (bossInk.Size.X <= 0f || Mathf.Abs(roomInk.Size.X - bossInk.Size.X) <= 8f)
+                && (floorInk.Size.X <= 0f || roomInk.Size.X <= floorInk.Size.X + 1f);
+            _report.Check($"header_indicators_{phase}_room_icon",
+                roomIcon.IsVisibleInTree() && texture && sized
+                && (bossInk.Size.Y <= 0f || Mathf.Abs(roomInk.GetCenter().Y - bossInk.GetCenter().Y) <= 8f),
+                $"room={roomRect} ink={roomInk} bossInk={bossInk} floorInk={floorInk} texture={roomArt?.Texture?.ResourcePath}");
+            _report.Check($"header_indicators_{phase}_room_left_of_floor",
+                roomRect.End.X <= floorRect.Position.X + 1f && floorRect.Position.X - roomRect.End.X <= 12f,
+                $"room={roomRect} floor={floorRect}");
+            Control? gold = TopBarControl(topBar, "%TopBarGold");
+            Rect2 goldRect = gold?.GetGlobalRect() ?? default;
+            Rect2 settingsTouch = TopBarControl(topBar, "%PauseButton")?.GetGlobalRect() ?? default;
+            _report.Check($"header_indicators_{phase}_room_clear_of_gold_settings",
+                gold is not null && roomRect.Position.X >= goldRect.End.X + 4f
+                && settingsTouch.Size.X > 1f && roomRect.End.X <= settingsTouch.Position.X - 4f,
+                $"room={roomRect} gold={goldRect} settingsTouch={settingsTouch}");
+        }
+        else
+        {
+            _report.Check($"header_indicators_{phase}_room_icon", false,
+                $"room={roomIcon?.GetType().Name ?? "missing"} floor={floorBox?.GetType().Name ?? "missing"}");
+        }
+
+        // One launcher-owned button carries every modifier chip: the first chip's icon and a count. Tapping it stacks the
+        // chips' native tips under the header.
+        Control? modifierButton = TopBarControl(topBar, ModifierButtonName);
+        if (state.Modifiers.Count > 0)
+        {
+            TextureRect? buttonArt = modifierButton?.GetNodeOrNull<TextureRect>("Icon");
+            TextureRect? firstChipArt = chips.FirstOrDefault()?.GetNodeOrNull<TextureRect>("Icon");
+            Label? countBadge = modifierButton?.GetNodeOrNull<Label>("Count");
+            Rect2 touch = modifierButton is null ? default : HostTouchTargetBox(modifierButton);
+            int buttons = FindAll<Control>(topBar)
+                .Count(node => node.Name == ModifierButtonName && !node.IsQueuedForDeletion());
+            bool badge = chips.Length > 1
+                ? countBadge is { Visible: true } && countBadge.Text.Trim() == chips.Length.ToString()
+                : countBadge is null || !countBadge.Visible;
+            _report.Check($"header_indicators_{phase}_modifier_button",
+                buttons == 1 && modifierButton is not null && modifierButton.IsVisibleInTree()
+                && buttonArt is { Texture: not null } icon && firstChipArt is { Texture: not null } chipIcon
+                && icon.Texture == chipIcon.Texture && badge
+                && touch.Size.X >= PortraitBands.MinTarget - 1f && touch.Size.Y >= PortraitBands.MinTarget - 1f
+                && stone.Encloses(touch),
+                $"button={modifierButton?.GetGlobalRect()} touch={touch} buttons={buttons} " +
+                $"icon={buttonArt?.Texture?.ResourcePath} chipIcon={firstChipArt?.Texture?.ResourcePath} " +
+                $"badge='{countBadge?.Text}' visible={countBadge?.IsVisibleInTree()} count={chips.Length}");
+        }
+
         ScrollContainer? potionRow = PotionRow();
         if (potionRow is not null)
         {
@@ -406,6 +474,91 @@ internal sealed partial class TestDriver
                 && !boxes.Any(box => box.Rect.Intersects(rect)),
                 $"{name}={rect} minimum={PortraitBands.MinTarget:F0}");
         }
+    }
+
+    /// <summary>
+    /// The part of a <see cref="TextureRect"/>'s box the texture is actually drawn in, in canvas units, for the keep-aspect
+    /// stretch modes the header icons use. A 44 x 88 box holding a square icon draws a 44 x 44 picture centred in it.
+    /// </summary>
+    private static Rect2 DrawnTextureRect(TextureRect rect)
+    {
+        Rect2 box = rect.GetGlobalRect();
+        if (rect.Texture is not { } texture) return box;
+        Vector2 texel = texture.GetSize();
+        if (texel.X <= 0f || texel.Y <= 0f) return box;
+        TextureRect.StretchModeEnum mode = rect.StretchMode;
+        if (mode is not (TextureRect.StretchModeEnum.KeepAspectCentered or TextureRect.StretchModeEnum.KeepAspectCovered))
+            return box;
+        float fit = mode == TextureRect.StretchModeEnum.KeepAspectCovered
+            ? Mathf.Max(box.Size.X / texel.X, box.Size.Y / texel.Y)
+            : Mathf.Min(box.Size.X / texel.X, box.Size.Y / texel.Y);
+        Vector2 drawn = texel * fit;
+        return new Rect2(box.GetCenter() - drawn * 0.5f, drawn);
+    }
+
+    /// <summary>
+    /// The one modifier button a custom/daily run shows in portrait: a tap stacks every run modifier's native hover tip
+    /// (name and description) under the header; a second tap, or a tap anywhere else, closes them again. The tips are
+    /// owned by the button and are found through the game's own tip container.
+    /// </summary>
+    private partial async Task CheckHeaderModifierTipsAsync(Control topBar, RunState state, string phase)
+    {
+        if (!SafeAreaCanvas.IsPortrait) return;
+        string id = $"header_indicators_{phase}_modifier";
+        Control? button = TopBarControl(topBar, ModifierButtonName);
+        if (button is null || state.Modifiers.Count == 0)
+        {
+            _report.Check(id + "_tips", false,
+                $"button={button?.GetType().Name ?? "missing"} modifiers={state.Modifiers.Count}");
+            return;
+        }
+        Control tapTarget = button.GetNodeOrNull<Control>("Icon") ?? button;
+        await _pointer.TapAsync(CenterOf(tapTarget));
+        NHoverTipSet? tipSet = null;
+        bool shown = await WaitOrFalseAsync(() =>
+        {
+            NHoverTipSet? found = FindNativeTip(button);
+            if (found is null || !found.IsVisibleInTree()) return false;
+            tipSet = found;
+            return true;
+        }, ShortWait);
+        _report.Check(id + "_tips_shown", shown, shown ? "a tap opened the modifier tips" : "no tip set appeared for the button");
+        if (!shown || tipSet is null) return;
+        await WaitFramesAsync(3);
+        tipSet = FindNativeTip(button) ?? tipSet;
+        Control? text = tipSet.GetNodeOrNull<Control>("textHoverTipContainer");
+        Control[] tips = text?.GetChildren().OfType<Control>()
+            .Where(child => !child.IsQueuedForDeletion() && child.Visible && child.Size.X > 1f && child.Size.Y > 1f)
+            .ToArray() ?? [];
+        string[] titles = tips
+            .Select(tip => (tip.FindChild("Title", true, false) as Label)?.Text?.Trim() ?? "")
+            .OrderBy(title => title, StringComparer.Ordinal).ToArray();
+        string[] expected = state.Modifiers.Select(modifier => modifier.Title.GetFormattedText().Trim())
+            .OrderBy(title => title, StringComparer.Ordinal).ToArray();
+        bool descriptions = tips.All(tip =>
+            tip.FindChild("Description", true, false) is RichTextLabel description
+            && !string.IsNullOrWhiteSpace(description.Text));
+        float cap = PortraitLayout.ComputeCapHeight(_tree.Root);
+        float headerBottom = cap + PortraitBands.TopBarHeight;
+        Rect2 tipRect = text?.GetGlobalRect() ?? default;
+        bool placed = text is not null && tipRect.Size.X > 1f && tipRect.Size.Y > 1f
+            && tipRect.Position.Y >= headerBottom - 2f && PortraitSafeRect().Encloses(tipRect);
+        _report.Check(id + "_tips",
+            shown && tips.Length == state.Modifiers.Count && titles.SequenceEqual(expected) && descriptions && placed,
+            $"tips={tips.Length}/{state.Modifiers.Count} titles=[{string.Join("|", titles)}] expected=[{string.Join("|", expected)}] " +
+            $"descriptions={descriptions} rect={tipRect} headerBottom={headerBottom:F0}");
+
+        await _pointer.TapAsync(CenterOf(tapTarget));
+        bool closed = await WaitOrFalseAsync(() => FindNativeTip(button) is null, ShortWait);
+        _report.Check(id + "_second_tap_closes", closed, closed ? "the second tap closed the tips" : "the tips stayed open");
+
+        await _pointer.TapAsync(CenterOf(tapTarget));
+        bool reopened = await WaitOrFalseAsync(() => FindNativeTip(button) is not null, ShortWait);
+        Vector2 outside = _tree.Root.GetVisibleRect().GetCenter() with { Y = PortraitSafeRect().Position.Y + 60f };
+        await _pointer.TapAsync(outside);
+        bool outsideClosed = await WaitOrFalseAsync(() => FindNativeTip(button) is null, ShortWait);
+        _report.Check(id + "_outside_tap_closes", reopened && outsideClosed,
+            $"reopened={reopened} closedOutside={outsideClosed} outside={outside}");
     }
 
     /// <summary>
@@ -466,9 +619,19 @@ internal sealed partial class TestDriver
         if (stone is null)
             _report.Check(prefix + "_panel_in_safe_frame", safe.Encloses(visual), $"popup={visual} safe={safe}");
         else
-            _report.Check(prefix + "_panel_below_relic_band",
-                visual.Position.Y >= bandBottom - 2f && safe.Encloses(visual) && !visual.Intersects(stone.GetGlobalRect()),
-                $"popup={visual} bandBottom={bandBottom:F0} safe={safe} stone={stone.GetGlobalRect()}");
+        {
+            // The game opens the popup 1.5 holder heights below the holder's top, centred on it. Portrait keeps that place
+            // (the popup is top level, so it can draw past the potion row) and may let it cover the relic band; it must stay
+            // inside the screen and off the stone. It is not pushed below the band.
+            Control? holder = popup.GetParent() as Control;
+            Rect2 holderRect = holder?.GetGlobalRect() ?? default;
+            float naturalTop = holderRect.Position.Y + holderRect.Size.Y * 1.5f;
+            bool underSlot = holder is not null && Mathf.Abs(visual.Position.Y - naturalTop) <= 2f;
+            bool overlapsBand = visual.Position.Y < bandBottom - 1f && visual.End.Y > cap + PortraitBands.TopBarHeight;
+            _report.Check(prefix + "_panel_under_slot",
+                underSlot && overlapsBand && safe.Encloses(visual) && !visual.Intersects(stone.GetGlobalRect()),
+                $"popup={visual} naturalTop={naturalTop:F0} bandBottom={bandBottom:F0} safe={safe} stone={stone.GetGlobalRect()}");
+        }
         _report.Check(prefix + "_phone_touch_targets",
             use.Size.X >= PortraitBands.MinTarget - 1f && use.Size.Y >= PortraitBands.MinTarget - 1f
             && discard.Size.X >= PortraitBands.MinTarget - 1f && discard.Size.Y >= PortraitBands.MinTarget - 1f

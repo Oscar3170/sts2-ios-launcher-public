@@ -24,8 +24,8 @@ namespace STS2Mobile.DesktopHost.Harness;
 /// <c>header-indicators</c>: the run header with the native indicators an ordinary run never shows - the ascension badge,
 /// run-modifier chips and the achievement lock. The run is a custom singleplayer run at max ascension holding three
 /// modifiers, which is what makes all three native indicators visible at once; the Dread icon is then applied through the
-/// game's own icon config. Both portrait hosts hide the native chips by design (the phone row has no room for them), so the
-/// scenario asserts that hide and leaves their native landscape presentation to the native bar. The launcher's top-row
+/// game's own icon config. Portrait hides the native chip row and shows one launcher-owned modifier button instead (the
+/// first chip's icon and a count, with all chips' tips on a tap); landscape keeps the native row. The launcher's top-row
 /// geometry is a host partial (LauncherHeaderChecks.cs).
 /// </summary>
 internal sealed partial class TestDriver
@@ -206,7 +206,8 @@ internal sealed partial class TestDriver
         _report.Check("header_indicators_modifier_chip_count", chips.Length == state.Modifiers.Count,
             $"native chips={chips.Length} run modifiers={state.Modifiers.Count}");
 
-        // Both portrait headers hide the native chips; a landscape run keeps the bar's own presentation.
+        // Portrait hides the native chip row and shows one launcher-owned button; a landscape run keeps the bar's own
+        // presentation.
         bool chipsShown = modifierBox is not null && modifierBox.IsVisibleInTree()
             && chips.Length > 0 && chips.All(chip => chip.IsVisibleInTree());
         if (IsPortraitHost())
@@ -219,6 +220,7 @@ internal sealed partial class TestDriver
         await EnterCombatAsync();
         await WaitSecondsAsync(1);
         CheckHeaderIndicatorLayout(topBar, state, "ascension");
+        await CheckHeaderModifierTipsAsync(topBar, state, "ascension");
         await CaptureAsync("header_indicators_top_row");
 
         // Dread styling on the same badge: Dread runs show the dread icon instead of the ascension flame and dim the bar
@@ -262,4 +264,8 @@ internal sealed partial class TestDriver
     // potion row's clearance around the ascension badge, the lock and the (hidden) modifier chips. A host without the
     // stone header does not get this call.
     partial void CheckHeaderIndicatorLayout(Control topBar, RunState state, string phase);
+
+    // Implemented by the launcher only: the one top-row button a custom or daily run gets for its modifiers, and the
+    // tips a tap stacks under the header. Landscape has no such button and keeps the native chips.
+    private partial Task CheckHeaderModifierTipsAsync(Control topBar, RunState state, string phase);
 }
