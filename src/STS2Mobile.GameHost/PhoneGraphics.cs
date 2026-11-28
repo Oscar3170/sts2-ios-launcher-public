@@ -69,6 +69,9 @@ public sealed partial class PhoneGraphics : Node
             GetTree().Root.WindowInput += OnWindowInput;
             GetTree().NodeAdded += OnNodeAdded;
             _portraitLayout.Attach(GetTree(), _settings.StartInPortrait);
+            // After the portrait layout's own handler: a window that turns resizes the rows area, the game sizes each page
+            // for it then, and the phone rows make the Graphics page taller than that area (see FitPanelToRows).
+            GetTree().Root.SizeChanged += OnRootSizeChanged;
             _touchCards.Attach(GetTree());
             _touchScroll.Attach(GetTree());
             GetTree().ProcessFrame += OnTouchFrame;
@@ -307,8 +310,9 @@ public sealed partial class PhoneGraphics : Node
             // Moving the relic inventory into its clip from this Ready callback made AddChild/Reparent fail and left the
             // inventory detached (no new relic holders, AnimateRelic throwing on every acquisition). Apply after setup.
             _portraitLayout.QueueApply();
-            // The panel sizes its scroll area and builds controller navigation in its own _Ready.
-            panel.Call(NSettingsPanel.MethodName.RefreshSize);
+            // The panel sizes its scroll area and builds controller navigation in its own _Ready. FitPanelToRows refreshes
+            // that size after the rows above exist (in portrait the scaled page is PortraitSettingsLayout's to size).
+            FitPanelToRows(panel);
             panel.Call(NSettingsPanel.MethodName.UpdateNavigation);
         }
         catch (Exception error)
@@ -325,9 +329,38 @@ public sealed partial class PhoneGraphics : Node
         if (_portraitDefaultDivider != null && IsInstanceValid(_portraitDefaultDivider)) _portraitDefaultDivider.Visible = show;
         if (_activeGraphicsPanel != null && IsInstanceValid(_activeGraphicsPanel) && _activeGraphicsPanel.IsNodeReady())
         {
-            _activeGraphicsPanel.Call(NSettingsPanel.MethodName.RefreshSize);
+            FitPanelToRows(_activeGraphicsPanel);
             _activeGraphicsPanel.Call(NSettingsPanel.MethodName.UpdateNavigation);
         }
+    }
+
+    /// <summary>
+    /// The rows area scrolls against the page's own height, and the game grows a page taller than that area by 40% of it
+    /// (<c>NSettingsPanel.RefreshSize</c>), so a controller can bring its last row to the middle. The phone rows above are
+    /// what make the Graphics page overflow, so in landscape that padding is a third of the screen of scrollable empty
+    /// space below the last setting: size the page to its visible rows instead. Portrait is different: the page is drawn
+    /// 1.55 times larger there and <see cref="PortraitSettingsLayout"/> sizes it (with the spacer its drawn rows need), so
+    /// this leaves the page alone.
+    /// </summary>
+    private static void FitPanelToRows(NSettingsPanel panel)
+    {
+        if (SafeAreaCanvas.IsPortrait) return;
+        if (!GodotObject.IsInstanceValid(panel)) return;
+        panel.Call(NSettingsPanel.MethodName.RefreshSize);
+        if (panel.GetNodeOrNull<VBoxContainer>("VBoxContainer") is not { } content) return;
+        float rows = content.GetMinimumSize().Y;
+        if (panel.Size.Y > rows + 0.5f) panel.Size = new Vector2(panel.Size.X, rows);
+    }
+
+    /// <summary>
+    /// The window turned: the game has just resized every page to the new rows area (padding included), and the deferred fit
+    /// runs after that work, not in this signal's own handler order (the game's panels connect to it after this node does).
+    /// </summary>
+    private void OnRootSizeChanged() => Callable.From(FitActiveGraphicsPanel).CallDeferred();
+
+    private void FitActiveGraphicsPanel()
+    {
+        if (_activeGraphicsPanel != null) FitPanelToRows(_activeGraphicsPanel);
     }
 
     private int AddRow(VBoxContainer content, Control template, Control divider, int index, string title, Func<string[]> choices,
