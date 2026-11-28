@@ -99,6 +99,10 @@ public static class LauncherHostEntry
 
         var wiring = new LauncherHostWiring();
         Exception? wiringError = null;
+        // The menus scenario measures the phone's Graphics page. This host does not compile PhoneGraphics, so a fixture adds
+        // that page's rows the way the phone does: before the game creates its settings screens, so their Ready callbacks add
+        // the rows before the portrait layout's first pass sees them.
+        if (options?.Scenario == "menus") PhoneGraphicsRows.Install(tree);
         // Decided once, at attach: portrait when the requested test window (else the window as it is now) is taller than wide.
         Vector2I window = options?.WindowSize ?? DisplayServer.WindowGetSize();
         bool portrait = window.Y > window.X;

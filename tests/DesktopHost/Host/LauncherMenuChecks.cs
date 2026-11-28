@@ -865,11 +865,12 @@ internal sealed partial class TestDriver
     /// rows plus 40% of that area (<c>NSettingsPanel.RefreshSize</c>), so a controller can bring its last row to the middle,
     /// and a page within 50 units of fitting gets the same padding. The launcher draws the portrait page 1.55 times larger
     /// and the scroll view measures the page's own height, so that padding becomes that fraction of the rows area of
-    /// scrollable empty space below the last setting. The phone rows are what make the Graphics tab overflow on a phone; on
-    /// this host its portrait page is padded at 720x1280, and the General tab at both portrait sizes. Put the page's own
-    /// target at its limit, let the native scroll settle, and require its last visible row to end on the clip inside the
-    /// game's own 20 + 30 unit padding, rounding included, instead of half a screen above it. Landscape is the game's own
-    /// page and its own padding, which is the control.
+    /// scrollable empty space below the last setting. The <c>menus</c> scenario installs the phone's Graphics rows, so that
+    /// page overflows at both portrait sizes and in landscape; the same fixture leaves the General page to the game's own
+    /// layout in portrait, where it is padded. Put the page's own target at its limit, let the native scroll settle, and
+    /// require its last visible row to end on the clip inside the game's own 20 + 30 unit padding, rounding included, not a
+    /// fraction of the rows area below it. Then fire the viewport SizeChanged the phone gets after it has laid the screen
+    /// out and require the same; the game's panels re-add their padding from that signal, after the launcher's handler.
     /// </summary>
     private partial async Task CheckSettingsScrollEndAsync(Control settings, string tab, Control page)
     {
@@ -918,6 +919,24 @@ internal sealed partial class TestDriver
             return bottom;
         }
         float clipBottom = clip.GetGlobalRect().End.Y;
+        bool phoneRows = tab == "Graphics" && PhoneGraphicsRows.IsInstalledOn(page);
+        string Describe() => $"page={page.Size.Y:F0}/{page.Scale.Y:F2} content-min={rows.GetMinimumSize().Y:F0} clip={clip.Size.Y:F0}";
+        string PageRows() => phoneRows ? $"; {PhoneGraphicsRows.Describe(page)}" : "";
+        // The native clamp is [min(limit, 0), max(limit, 0)] and a tab switch starts the target at 0. Put the target at the
+        // limit, let the native scroll settle, and measure where the page's last visible row stopped.
+        async Task<(float Gap, float Moved, float MaxScroll, float RestBottom, float Scrolled)> RunToLimitAsync()
+        {
+            if (limitProperty.GetValue(scroll) is not float atLimit || targetField.GetValue(scroll) is not float from)
+                return (float.NaN, 0f, 0f, RowsBottom(), float.NaN);
+            float rest = RowsBottom();
+            float travel = MathF.Max(from - MathF.Min(atLimit, 0f), 0f);
+            targetField.SetValue(scroll, MathF.Min(atLimit, 0f));
+            await WaitSecondsAsync(0.65);
+            float now = RowsBottom();
+            targetField.SetValue(scroll, from);
+            await WaitSecondsAsync(0.35);
+            return (clipBottom - now, rest - now, travel, rest, now);
+        }
         float rowsBottom = RowsBottom();
         if (!float.IsFinite(rowsBottom))
         {
@@ -928,7 +947,6 @@ internal sealed partial class TestDriver
         // and a tab switch inside the page may already have lifted them.
         float lifted = page.Position.Y - paddingTop;
         bool fits = rowsBottom - lifted <= clipBottom + 1f;
-        // The native clamp is [min(limit, 0), max(limit, 0)] and a tab switch starts the target at 0.
         float maxScroll = MathF.Max(target - MathF.Min(limit, 0f), 0f);
         targetField.SetValue(scroll, MathF.Min(limit, 0f));
         await WaitSecondsAsync(0.65);
@@ -942,9 +960,35 @@ internal sealed partial class TestDriver
         const float margin = 60f;
         bool stopped = MathF.Abs(gap) <= margin;
         bool travelled = MathF.Abs(moved - maxScroll) <= 4f;
-        _report.Check(step, fits ? maxScroll <= margin : stopped && travelled,
+        bool ok = fits ? maxScroll <= margin : stopped && travelled;
+        _report.Check(step, ok,
             $"limit={limit:F0} (max scroll {maxScroll:F0}) moved {moved:F0}; last row {gap:F0} above the clip bottom " +
-            $"{clipBottom:F0} at {rowsNow:F0} (rest {rowsBottom:F0}, lifted {lifted:F0}); clip {clip.GetGlobalRect()}");
+            $"{clipBottom:F0} at {rowsNow:F0} (rest {rowsBottom:F0}, lifted {lifted:F0}); {Describe()}" +
+            (ok ? "" : PageRows()));
+        if (!phoneRows || settings.GetTree().Root is not { } root) return;
+        // The phone's viewport changes size after this page is laid out (safe area, render scale, app resume). The game's
+        // panels re-add their 40% padding from that same signal, so this is the ordering the device gets: the launcher's
+        // sizing has to be the last word, in portrait and in landscape.
+        root.EmitSignal(Window.SignalName.SizeChanged);
+        await WaitSecondsAsync(0.5);
+        targetField.SetValue(scroll, 0f);
+        await WaitSecondsAsync(0.3);
+        float rest2 = RowsBottom();
+        if (!float.IsFinite(rest2))
+        {
+            _report.Fail(step + "_after_resize", "the page has no visible row after the viewport changed size");
+            return;
+        }
+        float lifted2 = page.Position.Y - paddingTop;
+        bool fits2 = rest2 - lifted2 <= clipBottom + 1f;
+        var second = await RunToLimitAsync();
+        bool stopped2 = MathF.Abs(second.Gap) <= margin;
+        bool travelled2 = MathF.Abs(second.Moved - second.MaxScroll) <= 4f;
+        bool ok2 = fits2 ? second.MaxScroll <= margin : stopped2 && travelled2;
+        _report.Check(step + "_after_resize", ok2,
+            $"after viewport SizeChanged: max scroll {second.MaxScroll:F0} moved {second.Moved:F0}; last row " +
+            $"{second.Gap:F0} above the clip bottom {clipBottom:F0} at {second.Scrolled:F0} " +
+            $"(rest {rest2:F0}, lifted {lifted2:F0}); {Describe()}" + (ok2 ? "" : PageRows()));
     }
 
     // ---- pause ---------------------------------------------------------------------------------------
